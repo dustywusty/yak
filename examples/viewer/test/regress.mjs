@@ -1,4 +1,4 @@
-// Viewer regression check. Needs Node 22+ and Chrome; no Abby server, no Go
+// Viewer regression check. Needs Node 22+ and Chrome; no Yak server, no Go
 // proxy, no npm packages. It serves examples/viewer/static itself, answers
 // every /v1 request inside the page with a fake API, drives headless Chrome
 // over the DevTools protocol, and exits 1 if any check fails.
@@ -6,7 +6,7 @@
 //   node examples/viewer/test/regress.mjs
 //   CHROME=/path/to/chrome node examples/viewer/test/regress.mjs
 //
-// The token is a fake ("abby.test.token"); nothing leaves 127.0.0.1.
+// The token is a fake ("yak.test.token"); nothing leaves 127.0.0.1.
 
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -23,7 +23,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 if (!CHROME) { console.error('Chrome not found; set CHROME=/path/to/chrome'); process.exit(2); }
 
-// ---------- fake Abby API, installed in the page before any script runs ----------
+// ---------- fake Yak API, installed in the page before any script runs ----------
 const FAKE = () => {
   const B = 'brd_test', now = Date.now(), iso = (ms) => new Date(now + ms).toISOString();
   const actor = (id, handle, kind, owner = null) => ({ id, kind, handle, display_name: handle, owner_actor_id: owner, server_admin: false, created_at: iso(-9e6) });
@@ -45,7 +45,7 @@ const FAKE = () => {
     const u = new URL(url, location.href), p = u.pathname, m = opts.method || 'GET';
     if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError'); // as the real fetch does
     if (p === '/v1/server') return new Response(JSON.stringify({ limits: { max_page_size: 200, max_wait_ms: 30000 } }), { headers: { Date: new Date().toUTCString() } });
-    if (!/^Bearer abby\.test\.token$/.test(opts.headers?.Authorization || '')) return json({ code: 'unauthenticated', status: 401, detail: 'no token' }, 401);
+    if (!/^Bearer yak\.test\.token$/.test(opts.headers?.Authorization || '')) return json({ code: 'unauthenticated', status: 401, detail: 'no token' }, 401);
     count(`${m} ${p.replace(B, 'B').replace(/snp_\w+/, 'S')}`);
     if (p === '/v1/me') return json({ actor: actors[2], credential: { id: 'cred_v', actor_id: 'act_view', scopes: ['read'], board_ids: [B] } });
     if (p === '/v1/boards') return json({ boards: [{ id: B, name: 'demo', owner_actor_id: 'act_alice', revision: 1, policy_revision: 1, created_at: iso(-9e6), updated_at: iso(-9e6), caller_is_board_admin: false }] });
@@ -116,7 +116,7 @@ const ev = async (expr) => {
 };
 await cmd('Runtime.enable');
 await cmd('Page.enable');
-await cmd('Page.addScriptToEvaluateOnNewDocument', { source: `(${FAKE})(); sessionStorage.setItem('abby-viewer-token', 'abby.test.token');
+await cmd('Page.addScriptToEvaluateOnNewDocument', { source: `(${FAKE})(); sessionStorage.setItem('yak-viewer-token', 'yak.test.token');
   addEventListener('DOMContentLoaded', () => { window.__live = document.getElementById('live'); });` });
 
 // ---------- checks ----------

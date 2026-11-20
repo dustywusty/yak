@@ -25,7 +25,7 @@ func TestDiscovery(t *testing.T) { // DISC-001..003
 			t.Fatalf("discovery missing %q", k)
 		}
 	}
-	if strings.Contains(string(c.do("GET", "/v1/server", nil).Raw), "abby.") && strings.Contains(string(c.do("GET", "/v1/server", nil).Raw), "token\"") {
+	if strings.Contains(string(c.do("GET", "/v1/server", nil).Raw), "yak.") && strings.Contains(string(c.do("GET", "/v1/server", nil).Raw), "token\"") {
 		t.Fatal("discovery must not expose secrets")
 	}
 }
@@ -34,7 +34,7 @@ func TestAuthentication(t *testing.T) { // AUTH-001..005
 	skipIfUnconfigured(t)
 	anon := &actorClient{t: t}
 	anon.wantProblem(401, "unauthenticated", anon.do("GET", "/v1/me", nil))
-	bad := &actorClient{t: t, token: "abby.cred_nope.secret"}
+	bad := &actorClient{t: t, token: "yak.cred_nope.secret"}
 	bad.wantProblem(401, "unauthenticated", bad.do("GET", "/v1/me", nil))
 
 	u := newActor(t, "auth")
@@ -312,7 +312,7 @@ func TestCT006LabelCompareAndSet(t *testing.T) {
 		t.Fatalf("want one labels_changed event, got %d", len(evs))
 	}
 	// Reserved namespace.
-	a.wantProblem(400, "validation_failed", a.do("PATCH", f.p("/messages/"+mid+"/labels"), J{"operations": []J{{"op": "set", "key": "abby.task.state", "value": "done"}}}))
+	a.wantProblem(400, "validation_failed", a.do("PATCH", f.p("/messages/"+mid+"/labels"), J{"operations": []J{{"op": "set", "key": "yak.task.state", "value": "done"}}}))
 }
 
 func TestCT013NoPermanentSkips(t *testing.T) {
@@ -670,4 +670,26 @@ func TestReadOnlyCredential(t *testing.T) { // AUTH-020
 	ro := credential(t, a.id, "read")
 	ro.must(200, ro.do("GET", f.p("/threads"), nil))
 	ro.wantProblem(403, "forbidden", ro.do("POST", f.p("/threads"), J{"channel": "c", "title": "t", "text": "x"}, newKey()))
+}
+
+// The prefix is an envelope around the same credential id and verifier.
+func TestRenameTokenCompatibility(t *testing.T) {
+	skipIfUnconfigured(t)
+	u := newActor(t, "rename")
+	if !strings.HasPrefix(u.token, "yak.") {
+		t.Fatal("new credentials must use yak prefix")
+	}
+	legacy := &actorClient{t: t, token: "abby." + strings.TrimPrefix(u.token, "yak.")}
+	for _, c := range []*actorClient{u, legacy} {
+		me := c.must(200, c.do("GET", "/v1/me", nil)).Body
+		if me["actor"].(J)["id"] != u.id {
+			t.Fatal("prefix changed identity")
+		}
+	}
+	legacy.wantProblem(401, "unauthenticated", (&actorClient{t: t, token: legacy.token + "wrong"}).do("GET", "/v1/me", nil))
+	credID := u.must(200, u.do("GET", "/v1/me", nil)).Body["credential"].(J)["id"].(string)
+	u.must(200, u.do("DELETE", "/v1/credentials/"+credID, nil))
+	for _, c := range []*actorClient{u, legacy} {
+		c.wantProblem(401, "unauthenticated", c.do("GET", "/v1/me", nil))
+	}
 }

@@ -3,7 +3,7 @@ package domain_test
 // Reference-implementation tests against real Postgres. They are separate
 // from the black-box conformance suite because they inspect storage and
 // drive operator actions (retention sweep, epoch rotation) directly.
-// Set ABBY_TEST_DATABASE_URL to a disposable database.
+// Set YAK_TEST_DATABASE_URL to a disposable database.
 
 import (
 	"context"
@@ -15,17 +15,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dustywusty/abby/internal/domain"
-	"github.com/dustywusty/abby/internal/events"
-	"github.com/dustywusty/abby/internal/postgres"
-	"github.com/dustywusty/abby/internal/workers"
+	"github.com/dustywusty/yak/internal/domain"
+	"github.com/dustywusty/yak/internal/events"
+	"github.com/dustywusty/yak/internal/postgres"
+	"github.com/dustywusty/yak/internal/workers"
 )
 
 func setup(t *testing.T) (*domain.Service, *domain.Principal, string) {
 	t.Helper()
-	url := os.Getenv("ABBY_TEST_DATABASE_URL")
+	url := os.Getenv("YAK_TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("set ABBY_TEST_DATABASE_URL")
+		t.Skip("set YAK_TEST_DATABASE_URL")
 	}
 	ctx := context.Background()
 	if _, err := postgres.Migrate(ctx, url); err != nil {

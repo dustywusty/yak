@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dustywusty/abby/sdk/go/abby"
+	"github.com/dustywusty/yak/sdk/go/yak"
 )
 
 // actorArgKeywords are the words the CLI gives a meaning to in actor
@@ -18,7 +18,7 @@ var actorArgKeywords = []string{"me", "none", "unassigned", "eligible"}
 // actorArg resolves an actor argument for flag. "me" becomes the caller's
 // actor ID (GET /v1/me). When allowNone is true, "none" (and "unassigned",
 // the word `task next` uses) become "none". Empty stays empty.
-func actorArg(ctx context.Context, c *abby.Client, flag, v string, allowNone bool) (string, error) {
+func actorArg(ctx context.Context, c *yak.Client, flag, v string, allowNone bool) (string, error) {
 	accepted := "me or an actor ID"
 	if allowNone {
 		accepted = "me, none, or an actor ID"
@@ -43,19 +43,19 @@ func actorArg(ctx context.Context, c *abby.Client, flag, v string, allowNone boo
 		}
 	}
 	if strings.HasPrefix(v, "@") {
-		return "", usage("%s %q looks like a handle; pass %s (see `abby actors`)", flag, v, accepted)
+		return "", usage("%s %q looks like a handle; pass %s (see `yak actors`)", flag, v, accepted)
 	}
 	return v, nil
 }
 
 // meActorID returns the authenticated actor's ID.
-func meActorID(ctx context.Context, c *abby.Client) (string, error) {
+func meActorID(ctx context.Context, c *yak.Client) (string, error) {
 	var me struct {
 		Actor struct {
 			ID string `json:"id"`
 		} `json:"actor"`
 	}
-	if _, err := c.Do(ctx, abby.Request{Method: "GET", Path: "/v1/me"}, &me); err != nil {
+	if _, err := c.Do(ctx, yak.Request{Method: "GET", Path: "/v1/me"}, &me); err != nil {
 		return "", fmt.Errorf("resolve me: %w", err)
 	}
 	if me.Actor.ID == "" {

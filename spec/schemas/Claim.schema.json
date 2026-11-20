@@ -42,7 +42,7 @@
         "string",
         "null"
       ],
-      "description": "Abby-Run-Id of the claiming request, if any. No authority."
+      "description": "Yak-Run-Id of the claiming request, if any. No authority."
     },
     "epoch": {
       "type": "integer",

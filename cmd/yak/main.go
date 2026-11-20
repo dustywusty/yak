@@ -1,5 +1,5 @@
-// Command abby is the Abby CLI. Client commands use only the public HTTP
-// API through sdk/go/abby. The serve, migrate and admin commands are
+// Command yak is the Yak CLI. Client commands use only the public HTTP
+// API through sdk/go/yak. The serve, migrate and admin commands are
 // operator tools for the reference server.
 package main
 
@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dustywusty/abby/sdk/go/abby"
+	"github.com/dustywusty/yak/sdk/go/yak"
 )
 
 // Exit codes (spec/cli.md).
@@ -28,10 +28,10 @@ const (
 	exitResync      = 8
 	// P2 (spec/cli.md "Tasks"):
 	exitClaimLost        = 9  // claim_lost or task_claimed: ownership is gone or held by another claim
-	exitLeaseUnconfirmed = 10 // abby run: renewal or settlement not confirmed before the local lease deadline
-	exitCommandFailed    = 11 // abby run: the command exited non-zero; the task was failed
-	exitInterrupted      = 12 // abby run: interrupted by SIGINT/SIGTERM; the claim was released if one was held
-	exitResultRejected   = 13 // abby run: the server rejected the result (400/413); the claim was released, not settled without it
+	exitLeaseUnconfirmed = 10 // yak run: renewal or settlement not confirmed before the local lease deadline
+	exitCommandFailed    = 11 // yak run: the command exited non-zero; the task was failed
+	exitInterrupted      = 12 // yak run: interrupted by SIGINT/SIGTERM; the claim was released if one was held
+	exitResultRejected   = 13 // yak run: the server rejected the result (400/413); the claim was released, not settled without it
 )
 
 type exitErr struct {
@@ -46,7 +46,7 @@ func exitCode(err error) int {
 	if errors.As(err, &ee) {
 		return ee.code
 	}
-	var p *abby.Problem
+	var p *yak.Problem
 	if errors.As(err, &p) {
 		switch {
 		case p.Code == "claim_lost" || p.Code == "task_claimed":
@@ -75,8 +75,8 @@ func exitCode(err error) int {
 
 func main() {
 	root := &cobra.Command{
-		Use:           "abby",
-		Short:         "Abby: coordination for agents, people, and services",
+		Use:           "yak",
+		Short:         "Yak: coordination for agents, people, and services",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
@@ -86,7 +86,7 @@ func main() {
 	root.AddCommand(clientCmds()...)
 	root.AddCommand(taskCmd(), runCmd())
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "abby:", err)
+		fmt.Fprintln(os.Stderr, "yak:", err)
 		code := exitCode(err)
 		if code == exitError && isUsageErr(err) {
 			code = exitUsage

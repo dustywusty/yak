@@ -15,7 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dustywusty/abby/sdk/go/abby"
+	"github.com/dustywusty/yak/sdk/go/yak"
 )
 
 func printJSON(v any) error {
@@ -27,7 +27,7 @@ func printJSON(v any) error {
 }
 
 // call runs one request and prints the JSON result.
-func call(cmd *cobra.Command, r abby.Request) (map[string]any, error) {
+func call(cmd *cobra.Command, r yak.Request) (map[string]any, error) {
 	c, _, err := client()
 	if err != nil {
 		return nil, err
@@ -39,7 +39,7 @@ func call(cmd *cobra.Command, r abby.Request) (map[string]any, error) {
 	return out, nil
 }
 
-func callPrint(cmd *cobra.Command, r abby.Request) error {
+func callPrint(cmd *cobra.Command, r yak.Request) error {
 	out, err := call(cmd, r)
 	if err != nil {
 		return err
@@ -51,14 +51,14 @@ func idemKey(cmd *cobra.Command) string {
 	if k, _ := cmd.Flags().GetString("idempotency-key"); k != "" {
 		return k
 	}
-	return abby.NewIdempotencyKey()
+	return yak.NewIdempotencyKey()
 }
 
 func addIdem(cmd *cobra.Command) {
 	cmd.Flags().String("idempotency-key", "", "Idempotency-Key to use (default: random). Reuse it to retry safely.")
 }
 
-func boardCmd(use, short string, args cobra.PositionalArgs, run func(cmd *cobra.Command, args []string, c *abby.Client, board string) error) *cobra.Command {
+func boardCmd(use, short string, args cobra.PositionalArgs, run func(cmd *cobra.Command, args []string, c *yak.Client, board string) error) *cobra.Command {
 	return &cobra.Command{Use: use, Short: short, Args: args, RunE: func(cmd *cobra.Command, a []string) error {
 		c, p, err := client()
 		if err != nil {
@@ -144,7 +144,7 @@ func clientCmds() []*cobra.Command {
 	cmds = append(cmds, &cobra.Command{
 		Use: "server", Short: "Show server discovery (protocol, capabilities, limits)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: "/v1/server"})
+			return callPrint(cmd, yak.Request{Method: "GET", Path: "/v1/server"})
 		},
 	})
 
@@ -157,7 +157,7 @@ func clientCmds() []*cobra.Command {
 			}
 			name := profileName(cfg)
 			p := cfg.Profiles[name]
-			if v := os.Getenv("ABBY_URL"); v != "" {
+			if v := yakEnv("YAK_URL"); v != "" {
 				p.URL = v
 			}
 			if gf.url != "" {
@@ -167,19 +167,19 @@ func clientCmds() []*cobra.Command {
 				p.Board = gf.board
 			}
 			if p.URL == "" {
-				return usage("--url (or ABBY_URL) is required")
+				return usage("--url (or YAK_URL) is required")
 			}
 			tok, err := readSecret(os.Stdin)
 			if err != nil {
 				return err
 			}
 			if tok == "" {
-				return usage("pipe the token on stdin, e.g. `abby login --url URL < token.txt`")
+				return usage("pipe the token on stdin, e.g. `yak login --url URL < token.txt`")
 			}
 			p.Token = tok
-			c := abby.New(p.URL, p.Token)
+			c := yak.New(p.URL, p.Token)
 			var me map[string]any
-			if _, err := c.Do(cmd.Context(), abby.Request{Method: "GET", Path: "/v1/me"}, &me); err != nil {
+			if _, err := c.Do(cmd.Context(), yak.Request{Method: "GET", Path: "/v1/me"}, &me); err != nil {
 				return err
 			}
 			cfg.Profiles[name] = p
@@ -196,7 +196,7 @@ func clientCmds() []*cobra.Command {
 
 	cmds = append(cmds, &cobra.Command{Use: "me", Short: "Show the authenticated actor and credential",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: "/v1/me"})
+			return callPrint(cmd, yak.Request{Method: "GET", Path: "/v1/me"})
 		}})
 
 	// actors
@@ -205,7 +205,7 @@ func clientCmds() []*cobra.Command {
 		kind, _ := cmd.Flags().GetString("kind")
 		handle, _ := cmd.Flags().GetString("handle")
 		dn, _ := cmd.Flags().GetString("display-name")
-		return callPrint(cmd, abby.Request{Method: "POST", Path: "/v1/actors", IdempotencyKey: idemKey(cmd),
+		return callPrint(cmd, yak.Request{Method: "POST", Path: "/v1/actors", IdempotencyKey: idemKey(cmd),
 			Body: map[string]any{"kind": kind, "handle": handle, "display_name": dn}})
 	}}
 	actorCreate.Flags().String("kind", "agent", "human | agent | service")
@@ -213,7 +213,7 @@ func clientCmds() []*cobra.Command {
 	actorCreate.Flags().String("display-name", "", "display name")
 	addIdem(actorCreate)
 	actor.AddCommand(actorCreate, &cobra.Command{Use: "list", Short: "List all actors", RunE: func(cmd *cobra.Command, args []string) error {
-		return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/actors"}, "actors")
+		return callPrintPages(cmd, yak.Request{Method: "GET", Path: "/v1/actors"}, "actors")
 	}})
 	cmds = append(cmds, actor)
 
@@ -229,7 +229,7 @@ func clientCmds() []*cobra.Command {
 		if boards != "" {
 			body["board_ids"] = splitList(boards)
 		}
-		out, err := call(cmd, abby.Request{Method: "POST", Path: "/v1/credentials", IdempotencyKey: idemKey(cmd), Body: body})
+		out, err := call(cmd, yak.Request{Method: "POST", Path: "/v1/credentials", IdempotencyKey: idemKey(cmd), Body: body})
 		if err != nil {
 			return err
 		}
@@ -257,12 +257,12 @@ func clientCmds() []*cobra.Command {
 		if a != "" {
 			q.Set("actor_id", a)
 		}
-		return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/credentials", Query: q}, "credentials")
+		return callPrintPages(cmd, yak.Request{Method: "GET", Path: "/v1/credentials", Query: q}, "credentials")
 	}}
 	credList.Flags().String("actor", "", "actor ID (server administrators)")
 	cred.AddCommand(credCreate, credList, &cobra.Command{Use: "revoke ID", Short: "Revoke a credential", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return callPrint(cmd, abby.Request{Method: "DELETE", Path: "/v1/credentials/" + url.PathEscape(args[0])})
+			return callPrint(cmd, yak.Request{Method: "DELETE", Path: "/v1/credentials/" + url.PathEscape(args[0])})
 		}})
 	cmds = append(cmds, cred)
 
@@ -271,17 +271,17 @@ func clientCmds() []*cobra.Command {
 	boardCreate := &cobra.Command{Use: "create NAME", Short: "Create a board (server administration)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			owner, _ := cmd.Flags().GetString("owner")
-			return callPrint(cmd, abby.Request{Method: "POST", Path: "/v1/boards", IdempotencyKey: idemKey(cmd),
+			return callPrint(cmd, yak.Request{Method: "POST", Path: "/v1/boards", IdempotencyKey: idemKey(cmd),
 				Body: map[string]any{"name": args[0], "owner_actor_id": owner}})
 		}}
 	boardCreate.Flags().String("owner", "", "owner actor ID (default: yourself)")
 	addIdem(boardCreate)
 	board.AddCommand(boardCreate,
 		&cobra.Command{Use: "list", Short: "List visible boards", RunE: func(cmd *cobra.Command, args []string) error {
-			return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/boards"}, "boards")
+			return callPrintPages(cmd, yak.Request{Method: "GET", Path: "/v1/boards"}, "boards")
 		}},
-		boardCmd("show", "Show the selected board", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "")})
+		boardCmd("show", "Show the selected board", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+			return callPrint(cmd, yak.Request{Method: "GET", Path: yak.BoardPath(b, "")})
 		}),
 		&cobra.Command{Use: "use ID", Short: "Select the default board for the current profile", Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
@@ -299,25 +299,25 @@ func clientCmds() []*cobra.Command {
 
 	// channels
 	channel := &cobra.Command{Use: "channel", Short: "Manage channels"}
-	chCreate := boardCmd("create PATH", "Create a channel", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	chCreate := boardCmd("create PATH", "Create a channel", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		priv, _ := cmd.Flags().GetBool("private")
 		mode := "inherited"
 		if priv {
 			mode = "private"
 		}
-		return callPrint(cmd, abby.Request{Method: "POST", Path: abby.BoardPath(b, "/channels"), IdempotencyKey: idemKey(cmd),
+		return callPrint(cmd, yak.Request{Method: "POST", Path: yak.BoardPath(b, "/channels"), IdempotencyKey: idemKey(cmd),
 			Body: map[string]any{"path": args[0], "access_mode": mode}})
 	})
 	chCreate.Flags().Bool("private", false, "create a private channel (allow-inheritance boundary)")
 	addIdem(chCreate)
-	channel.AddCommand(chCreate, boardCmd("list", "List channels", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-		return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/channels")}, "channels")
+	channel.AddCommand(chCreate, boardCmd("list", "List channels", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+		return callPrintPages(cmd, yak.Request{Method: "GET", Path: yak.BoardPath(b, "/channels")}, "channels")
 	}))
 	cmds = append(cmds, channel)
 
 	// grants
 	grant := &cobra.Command{Use: "grant", Short: "Manage channel grants (board_admin)"}
-	grCreate := boardCmd("create", "Create a grant", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	grCreate := boardCmd("create", "Create a grant", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		actorID, _ := cmd.Flags().GetString("actor")
 		anyActor, _ := cmd.Flags().GetBool("any")
 		pattern, _ := cmd.Flags().GetString("pattern")
@@ -334,7 +334,7 @@ func clientCmds() []*cobra.Command {
 		if deny {
 			effect = "deny"
 		}
-		return callPrint(cmd, abby.Request{Method: "POST", Path: abby.BoardPath(b, "/grants"), IdempotencyKey: idemKey(cmd),
+		return callPrint(cmd, yak.Request{Method: "POST", Path: yak.BoardPath(b, "/grants"), IdempotencyKey: idemKey(cmd),
 			Body: map[string]any{"subject": subject, "pattern": pattern, "capabilities": splitList(caps), "effect": effect}})
 	})
 	grCreate.Flags().String("actor", "", "subject actor ID")
@@ -344,28 +344,28 @@ func clientCmds() []*cobra.Command {
 	grCreate.Flags().Bool("deny", false, "create a deny grant")
 	addIdem(grCreate)
 	grant.AddCommand(grCreate,
-		boardCmd("list", "List grants", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/grants")}, "grants")
+		boardCmd("list", "List grants", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+			return callPrintPages(cmd, yak.Request{Method: "GET", Path: yak.BoardPath(b, "/grants")}, "grants")
 		}),
-		boardCmd("revoke ID", "Revoke a grant", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrint(cmd, abby.Request{Method: "DELETE", Path: abby.BoardPath(b, "/grants/"+url.PathEscape(args[0]))})
+		boardCmd("revoke ID", "Revoke a grant", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+			return callPrint(cmd, yak.Request{Method: "DELETE", Path: yak.BoardPath(b, "/grants/"+url.PathEscape(args[0]))})
 		}))
 	cmds = append(cmds, grant)
 
 	cmds = append(cmds,
-		boardCmd("permissions CHANNEL", "Show your effective capabilities on a channel path", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/permissions"), Query: url.Values{"channel": {args[0]}}})
+		boardCmd("permissions CHANNEL", "Show your effective capabilities on a channel path", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+			return callPrint(cmd, yak.Request{Method: "GET", Path: yak.BoardPath(b, "/permissions"), Query: url.Values{"channel": {args[0]}}})
 		}),
-		boardCmd("actors", "List board participants visible to you", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/actors")}, "actors")
+		boardCmd("actors", "List board participants visible to you", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+			return callPrintPages(cmd, yak.Request{Method: "GET", Path: yak.BoardPath(b, "/actors")}, "actors")
 		}),
-		boardCmd("audit", "Show board audit events (board_admin)", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/audit-events")}, "audit_events")
+		boardCmd("audit", "Show board audit events (board_admin)", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+			return callPrintPages(cmd, yak.Request{Method: "GET", Path: yak.BoardPath(b, "/audit-events")}, "audit_events")
 		}),
 	)
 
 	// messaging
-	post := boardCmd("post CHANNEL", "Start a thread (text from --text or stdin)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	post := boardCmd("post CHANNEL", "Start a thread (text from --text or stdin)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		title, _ := cmd.Flags().GetString("title")
 		text, err := textArg(cmd)
 		if err != nil {
@@ -377,7 +377,7 @@ func clientCmds() []*cobra.Command {
 			return err
 		}
 		mentions, _ := cmd.Flags().GetStringArray("mention")
-		out, err := call(cmd, abby.Request{Method: "POST", Path: abby.BoardPath(b, "/threads"), IdempotencyKey: idemKey(cmd),
+		out, err := call(cmd, yak.Request{Method: "POST", Path: yak.BoardPath(b, "/threads"), IdempotencyKey: idemKey(cmd),
 			Body: map[string]any{"channel": args[0], "title": title, "text": text, "labels": lm, "mentions": mentions}})
 		if err != nil {
 			return err
@@ -395,7 +395,7 @@ func clientCmds() []*cobra.Command {
 	post.Flags().StringArray("mention", nil, "mentioned actor ID (repeatable)")
 	addIdem(post)
 
-	reply := boardCmd("reply THREAD", "Reply to a thread", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	reply := boardCmd("reply THREAD", "Reply to a thread", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		text, err := textArg(cmd)
 		if err != nil {
 			return err
@@ -415,7 +415,7 @@ func clientCmds() []*cobra.Command {
 		if ifLatest != "" {
 			body["expect_latest_message_id"] = ifLatest
 		}
-		out, err := call(cmd, abby.Request{Method: "POST", Path: abby.BoardPath(b, "/threads/"+url.PathEscape(args[0])+"/messages"), IdempotencyKey: idemKey(cmd), Body: body})
+		out, err := call(cmd, yak.Request{Method: "POST", Path: yak.BoardPath(b, "/threads/"+url.PathEscape(args[0])+"/messages"), IdempotencyKey: idemKey(cmd), Body: body})
 		if err != nil {
 			return err
 		}
@@ -432,14 +432,14 @@ func clientCmds() []*cobra.Command {
 	reply.Flags().StringArray("mention", nil, "mentioned actor ID (repeatable)")
 	addIdem(reply)
 
-	threads := boardCmd("threads", "List threads", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	threads := boardCmd("threads", "List threads", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		q := filterValues(cmd)
 		var page struct {
 			Threads []map[string]any `json:"threads"`
 			Next    *string          `json:"next_page_token"`
 		}
 		for {
-			if _, err := c.Do(cmd.Context(), abby.Request{Method: "GET", Path: abby.BoardPath(b, "/threads"), Query: q}, &page); err != nil {
+			if _, err := c.Do(cmd.Context(), yak.Request{Method: "GET", Path: yak.BoardPath(b, "/threads"), Query: q}, &page); err != nil {
 				return err
 			}
 			for _, t := range page.Threads {
@@ -457,9 +457,9 @@ func clientCmds() []*cobra.Command {
 	})
 	filterFlags(threads)
 
-	read := boardCmd("read THREAD", "Print a thread and all its messages", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	read := boardCmd("read THREAD", "Print a thread and all its messages", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		var tw map[string]any
-		if _, err := c.Do(cmd.Context(), abby.Request{Method: "GET", Path: abby.BoardPath(b, "/threads/"+url.PathEscape(args[0]))}, &tw); err != nil {
+		if _, err := c.Do(cmd.Context(), yak.Request{Method: "GET", Path: yak.BoardPath(b, "/threads/"+url.PathEscape(args[0]))}, &tw); err != nil {
 			return err
 		}
 		var all []map[string]any
@@ -472,7 +472,7 @@ func clientCmds() []*cobra.Command {
 				Messages []map[string]any `json:"messages"`
 				Next     *string          `json:"next_page_token"`
 			}
-			if _, err := c.Do(cmd.Context(), abby.Request{Method: "GET", Path: abby.BoardPath(b, "/threads/"+url.PathEscape(args[0])+"/messages"), Query: q}, &page); err != nil {
+			if _, err := c.Do(cmd.Context(), yak.Request{Method: "GET", Path: yak.BoardPath(b, "/threads/"+url.PathEscape(args[0])+"/messages"), Query: q}, &page); err != nil {
 				return err
 			}
 			all = append(all, page.Messages...)
@@ -502,28 +502,28 @@ func clientCmds() []*cobra.Command {
 	})
 
 	msg := &cobra.Command{Use: "message", Aliases: []string{"msg"}, Short: "Show, edit, or delete a message"}
-	msgEdit := boardCmd("edit ID", "Edit your message (requires --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	msgEdit := boardCmd("edit ID", "Edit your message (requires --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		text, err := textArg(cmd)
 		if err != nil {
 			return err
 		}
 		rev, _ := cmd.Flags().GetString("if-revision")
-		return callPrint(cmd, abby.Request{Method: "PATCH", Path: abby.BoardPath(b, "/messages/"+url.PathEscape(args[0])), IfMatch: rev, Body: map[string]any{"text": text}})
+		return callPrint(cmd, yak.Request{Method: "PATCH", Path: yak.BoardPath(b, "/messages/"+url.PathEscape(args[0])), IfMatch: rev, Body: map[string]any{"text": text}})
 	})
 	msgEdit.Flags().String("text", "", "new text")
 	msgEdit.Flags().String("if-revision", "", "expected current revision (required)")
-	msgDel := boardCmd("delete ID", "Tombstone a message (requires --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	msgDel := boardCmd("delete ID", "Tombstone a message (requires --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		rev, _ := cmd.Flags().GetString("if-revision")
 		reason, _ := cmd.Flags().GetString("reason")
-		return callPrint(cmd, abby.Request{Method: "DELETE", Path: abby.BoardPath(b, "/messages/"+url.PathEscape(args[0])), IfMatch: rev, Body: map[string]any{"reason": reason}})
+		return callPrint(cmd, yak.Request{Method: "DELETE", Path: yak.BoardPath(b, "/messages/"+url.PathEscape(args[0])), IfMatch: rev, Body: map[string]any{"reason": reason}})
 	})
 	msgDel.Flags().String("if-revision", "", "expected current revision (required)")
 	msgDel.Flags().String("reason", "", "reason (required to redact another actor's message)")
-	msg.AddCommand(boardCmd("show ID", "Show a message", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-		return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/messages/"+url.PathEscape(args[0]))})
+	msg.AddCommand(boardCmd("show ID", "Show a message", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+		return callPrint(cmd, yak.Request{Method: "GET", Path: yak.BoardPath(b, "/messages/"+url.PathEscape(args[0]))})
 	}), msgEdit, msgDel)
 
-	label := boardCmd("label MESSAGE", "Set or unset labels atomically, with optional expectations", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	label := boardCmd("label MESSAGE", "Set or unset labels atomically, with optional expectations", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		sets, _ := cmd.Flags().GetStringArray("set")
 		unsets, _ := cmd.Flags().GetStringArray("unset")
 		absent, _ := cmd.Flags().GetStringArray("expect-absent")
@@ -563,7 +563,7 @@ func clientCmds() []*cobra.Command {
 			}
 			ops = append(ops, op)
 		}
-		return callPrint(cmd, abby.Request{Method: "PATCH", Path: abby.BoardPath(b, "/messages/"+url.PathEscape(args[0])+"/labels"), IfMatch: rev,
+		return callPrint(cmd, yak.Request{Method: "PATCH", Path: yak.BoardPath(b, "/messages/"+url.PathEscape(args[0])+"/labels"), IfMatch: rev,
 			Body: map[string]any{"operations": ops}})
 	})
 	label.Flags().StringArray("set", nil, "key=value to set (repeatable)")
@@ -601,7 +601,7 @@ func writeCursorFile(path, cursor string) error {
 	return os.Rename(tmp, path)
 }
 
-func printEvent(e abby.Event) {
+func printEvent(e yak.Event) {
 	if gf.json {
 		_ = json.NewEncoder(os.Stdout).Encode(e)
 		return
@@ -635,7 +635,7 @@ func printEvent(e abby.Event) {
 }
 
 func eventCmds() []*cobra.Command {
-	events := boardCmd("events", "Read one page of committed events", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	events := boardCmd("events", "Read one page of committed events", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		cursor, _ := cmd.Flags().GetString("cursor")
 		from, _ := cmd.Flags().GetString("from")
 		limit, _ := cmd.Flags().GetInt("limit")
@@ -657,7 +657,7 @@ func eventCmds() []*cobra.Command {
 	events.Flags().Int("limit", 50, "max events")
 	filterFlags(events)
 
-	wait := boardCmd("wait", "Wait for one matching event; exit 7 on timeout", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	wait := boardCmd("wait", "Wait for one matching event; exit 7 on timeout", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		cf, _ := cmd.Flags().GetString("cursor-file")
 		cursor, _ := cmd.Flags().GetString("cursor")
 		timeout, _ := cmd.Flags().GetDuration("timeout")
@@ -700,7 +700,7 @@ func eventCmds() []*cobra.Command {
 	wait.Flags().Duration("timeout", 30*time.Second, "maximum total wait")
 	filterFlags(wait)
 
-	tail := boardCmd("tail", "Follow matching events until interrupted", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	tail := boardCmd("tail", "Follow matching events until interrupted", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		cf, _ := cmd.Flags().GetString("cursor-file")
 		from, _ := cmd.Flags().GetString("from")
 		cursor, err := readCursorFile(cf)
@@ -719,11 +719,11 @@ func eventCmds() []*cobra.Command {
 				return nil
 			}
 			if err != nil {
-				var p *abby.Problem
+				var p *yak.Problem
 				if errors.As(err, &p) {
 					return err // auth, resync and cursor errors need the operator
 				}
-				fmt.Fprintf(os.Stderr, "abby: %v; reconnecting in %s\n", err, backoff)
+				fmt.Fprintf(os.Stderr, "yak: %v; reconnecting in %s\n", err, backoff)
 				select {
 				case <-ctx.Done():
 					return nil
@@ -747,13 +747,13 @@ func eventCmds() []*cobra.Command {
 	tail.Flags().String("from", "latest", "earliest | latest when no cursor is stored")
 	filterFlags(tail)
 
-	snap := boardCmd("snapshot", "Capture a consistent snapshot; prints items and the continuation cursor", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	snap := boardCmd("snapshot", "Capture a consistent snapshot; prints items and the continuation cursor", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		cf, _ := cmd.Flags().GetString("cursor-file")
 		q := filterValues(cmd)
 		var info struct {
 			ID string `json:"id"`
 		}
-		if _, err := c.Do(cmd.Context(), abby.Request{Method: "POST", Path: abby.BoardPath(b, "/snapshots"), Query: q}, &info); err != nil {
+		if _, err := c.Do(cmd.Context(), yak.Request{Method: "POST", Path: yak.BoardPath(b, "/snapshots"), Query: q}, &info); err != nil {
 			return err
 		}
 		pq := url.Values{}
@@ -767,7 +767,7 @@ func eventCmds() []*cobra.Command {
 				Next         *string           `json:"next_page_token"`
 				Continuation *string           `json:"continuation_cursor"`
 			}
-			if _, err := c.Do(context.Background(), abby.Request{Method: "GET", Path: abby.BoardPath(b, "/snapshots/"+info.ID), Query: pq}, &pg); err != nil {
+			if _, err := c.Do(context.Background(), yak.Request{Method: "GET", Path: yak.BoardPath(b, "/snapshots/"+info.ID), Query: pq}, &pg); err != nil {
 				return err
 			}
 			items = append(items, pg.Items...)
@@ -775,7 +775,7 @@ func eventCmds() []*cobra.Command {
 				if err := writeCursorFile(cf, *pg.Continuation); err != nil {
 					return err
 				}
-				_, _ = c.Do(cmd.Context(), abby.Request{Method: "DELETE", Path: abby.BoardPath(b, "/snapshots/"+info.ID)}, nil)
+				_, _ = c.Do(cmd.Context(), yak.Request{Method: "DELETE", Path: yak.BoardPath(b, "/snapshots/"+info.ID)}, nil)
 				return printJSON(map[string]any{"snapshot_id": info.ID, "items": items, "continuation_cursor": *pg.Continuation})
 			}
 			pq.Set("page_token", *pg.Next)

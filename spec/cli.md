@@ -1,7 +1,7 @@
-# Abby CLI (P1)
+# Yak CLI (P1)
 
-The `abby` client commands use only the public HTTP API (through
-`sdk/go/abby`). They work against any server that advertises the needed
+The `yak` client commands use only the public HTTP API (through
+`sdk/go/yak`). They work against any server that advertises the needed
 capabilities. `serve`, `migrate`, and `admin` are operator commands of the
 reference server and talk to Postgres directly.
 
@@ -11,14 +11,22 @@ Precedence (highest first): flags, environment, profile in the config file.
 
 | Setting | Flag | Environment | Config profile |
 |---|---|---|---|
-| Server URL | `--url` | `ABBY_URL` | `url` |
-| Token | `--token-file F` | `ABBY_TOKEN_FILE`, `ABBY_TOKEN` | `token` (set by `abby login`) |
-| Board | `--board` | `ABBY_BOARD` | `board` (set by `abby board use`) |
-| Profile | `--profile` | `ABBY_PROFILE` | `current` |
-| Config file | — | `ABBY_CONFIG` | default `~/.config/abby/config.json` (mode 0600) |
-| Run ID | `--run-id` | `ABBY_RUN_ID` | — (attribution only, no authority) |
+| Server URL | `--url` | `YAK_URL` | `url` |
+| Token | `--token-file F` | `YAK_TOKEN_FILE`, `YAK_TOKEN` | `token` (set by `yak login`) |
+| Board | `--board` | `YAK_BOARD` | `board` (set by `yak board use`) |
+| Profile | `--profile` | `YAK_PROFILE` | `current` |
+| Config file | — | `YAK_CONFIG` | default `~/.config/yak/config.json` (mode 0600) |
+| Run ID | `--run-id` | `YAK_RUN_ID` | — (attribution only, no authority) |
 
-Tokens are never accepted as command-line arguments. `abby login` reads the
+During the rename transition, every `YAK_*` setting also accepts its `ABBY_*`
+alias. A nonempty `YAK_*` value wins; an empty value falls back to the alias.
+Flags still win over both. For credentials, a nonempty `YAK_TOKEN_FILE` wins
+over `YAK_TOKEN`; either new setting wins over both legacy token settings.
+Within the legacy pair, `ABBY_TOKEN_FILE` wins over `ABBY_TOKEN`.
+If neither explicit config variable is set and the new default file is absent,
+the CLI reads `~/.config/abby/config.json`. Saves go to the new default file.
+
+Tokens are never accepted as command-line arguments. `yak login` reads the
 token from stdin and verifies it with `GET /v1/me` before saving.
 
 ## Commands
@@ -79,13 +87,13 @@ Human-readable by default; `--json` prints JSON (NDJSON for `threads`,
 ## Cursor files
 
 `wait`, `tail`, and `snapshot` keep the read position in `--cursor-file`
-(written atomically). On exit 8, run `abby snapshot --cursor-file F` with
+(written atomically). On exit 8, run `yak snapshot --cursor-file F` with
 the same filters, reconcile, and continue.
 
-## Tasks (P2, profile `abby.p2.tasks`)
+## Tasks (P2, profile `yak.p2.tasks`)
 
 These commands implement `spec/p2-tasks.md` and the wire shapes of
-ADR-0016. They use only the public HTTP API through `sdk/go/abby`
+ADR-0016. They use only the public HTTP API through `sdk/go/yak`
 (`Client.Tasks(board)`).
 
 ### Task commands
@@ -131,8 +139,8 @@ revision (`ETag`); it is required where the server requires `If-Match`.
 stdout (in the JSON document with `--json`), or write it to
 `--proof-file F` with mode 0600. Claimant commands (`renew`, `release`,
 `complete`, `fail`, `block --claimant`) read the proof from
-`--proof-file F` or `ABBY_CLAIM_PROOF`. A proof is never a command-line
-value. The CLI sends it only in the `Abby-Claim-Proof` header.
+`--proof-file F` or `YAK_CLAIM_PROOF`. A proof is never a command-line
+value. The CLI sends it only in the `Yak-Claim-Proof` header.
 
 **Unknown states.** `task show` and `task list` exit 1 if a task has a
 state that is not in the v1 set (TASK-020). They print the task first.
@@ -162,10 +170,10 @@ item has the `CreateTaskBatchRequest` shape: `ref`, `thread` (`channel`,
   receipts and a lost progress file). If only some exist, it stops with an
   error.
 
-### Runner: `abby run`
+### Runner: `yak run`
 
 ```
-abby run [TASK_ID] [claim-next filters] [--wait D] [--lease D]
+yak run [TASK_ID] [claim-next filters] [--wait D] [--lease D]
          [--grace D] [--summary S] [--evidence kind:ref[:note]]… [--commit SHA]…
          -- COMMAND [ARGS…]
 ```
@@ -181,12 +189,12 @@ The runner implements spec §17 (RUN-001..007, PAR-033).
    request was sent, so only a renew gives a deadline from a known send
    time.
 3. **Run.** The command runs in its own process group with
-   `ABBY_TASK_ID`, `ABBY_CLAIM_ID`, `ABBY_EXECUTION_ID`, `ABBY_CLAIM_EPOCH`,
-   `ABBY_RUN_ID`, `ABBY_BOARD`, `ABBY_BRIEF_REVISION`, `ABBY_BRIEF_FILE`
-   (the claimed brief text), and `ABBY_RESULT_FILE`. The proof stays in
-   runner memory. The runner removes `ABBY_CLAIM_PROOF` from the
-   environment of the command. If `--run-id`/`ABBY_RUN_ID` is not set, the
-   runner makes a run ID and sends it as `Abby-Run-Id`.
+   `YAK_TASK_ID`, `YAK_CLAIM_ID`, `YAK_EXECUTION_ID`, `YAK_CLAIM_EPOCH`,
+   `YAK_RUN_ID`, `YAK_BOARD`, `YAK_BRIEF_REVISION`, `YAK_BRIEF_FILE`
+   (the claimed brief text), and `YAK_RESULT_FILE`. The proof stays in
+   runner memory. The runner removes `YAK_CLAIM_PROOF` from the
+   environment of the command. If `--run-id`/`YAK_RUN_ID` is not set, the
+   runner makes a run ID and sends it as `Yak-Run-Id`.
 4. **Renew.** The runner renews at one third of the granted lease, ±10 %
    random jitter. It sends `--lease` on each renewal if it was given;
    otherwise it omits `lease_seconds`, and the claim keeps the lease it was
@@ -198,7 +206,7 @@ The runner implements spec §17 (RUN-001..007, PAR-033).
    status (or signal) in the reason and in `data.exit_status`. Every
    settlement retry uses the same key until the outcome is known.
 
-The command can write a result file to `$ABBY_RESULT_FILE`:
+The command can write a result file to `$YAK_RESULT_FILE`:
 
 ```json
 {"summary": "...", "reason": "...", "evidence": [{"kind": "commit", "ref": "abc123", "note": "..."}], "data": {}}
@@ -227,7 +235,7 @@ it was given. It does not settle in these two cases:
 
 - The server rejects `complete` or `fail` with 400 or 413. Examples are
   too many evidence items, or `data` that is too large.
-- `$ABBY_RESULT_FILE` exists, but the runner cannot use it. The file is
+- `$YAK_RESULT_FILE` exists, but the runner cannot use it. The file is
   unusable if one of these conditions is true:
   - The runner cannot read the file.
   - The file is larger than 1 MiB.
@@ -269,13 +277,13 @@ SIGTERM to the runner sends SIGKILL at once.
 | No eligible task before `--wait` ends | — | 7 |
 | `claim_lost`, 401, 403, or 404 on renew or settle; `task_claimed` on claim; claim replay without a proof | Stop the command at once. No more writes. | 9 |
 | No renewal confirmed by local deadline − max(5 s, lease/6) | Stop the command. No more writes; the claim lapses at expiry. | 10 |
-| Settlement not confirmed before the local deadline | Outcome unknown; read the task (`abby task show`). | 10 |
+| Settlement not confirmed before the local deadline | Outcome unknown; read the task (`yak task show`). | 10 |
 | Command exits non-zero, `fail` confirmed | — | 11 |
 | SIGINT/SIGTERM to the runner | Stop the command (renewals continue), then `release` | 12 |
 | Server rejects the `complete` or `fail` result with 400 or 413, or the result file exists but is unusable | Do not settle without it. Renew, then `release` with a reason that names the problem. | 13 (also if the release fails) |
 
 After exit 10, do not continue from local belief (RUN-007). Keep notes
-and patches outside Abby, read the task, and claim again.
+and patches outside Yak, read the task, and claim again.
 
 With `--json`, stdout holds only the run report (`task_id`, `claim_id`,
 `execution_id`, `epoch`, `run_id`, `outcome`, `exit_status`, `renewals`,
@@ -289,11 +297,17 @@ The runner is for Unix (it uses process groups).
 | Code | Meaning |
 |---|---|
 | 9 | Claim lost or task claimed by another claim (`claim_lost`, `task_claimed`) |
-| 10 | `abby run`: renewal or settlement not confirmed before the local lease deadline |
-| 11 | `abby run`: the command failed; the task was failed |
-| 12 | `abby run`: interrupted; the claim was released if one was held |
-| 13 | `abby run`: the server rejected the result (400/413), or the result file was unusable; the task was not settled without the result, and the claim was released (`release_error` in the report if the release failed) |
+| 10 | `yak run`: renewal or settlement not confirmed before the local lease deadline |
+| 11 | `yak run`: the command failed; the task was failed |
+| 12 | `yak run`: interrupted; the claim was released if one was held |
+| 13 | `yak run`: the server rejected the result (400/413), or the result file was unusable; the task was not settled without the result, and the claim was released (`release_error` in the report if the release failed) |
 
-`task next` and `abby run` use exit 7 when there is no work.
+`task next` and `yak run` use exit 7 when there is no work.
 `claim_lost` and `task_claimed` used exit 5 before P2; they now use 9.
 Other 409, 412, and 428 problems still use 5.
+
+## Rename transition for runner children
+
+The runner provides both `YAK_*` claim metadata and matching `ABBY_*` aliases
+to child commands. Both result-file variables name the same file. It removes
+inherited claim proofs and stale claim metadata from both namespaces.

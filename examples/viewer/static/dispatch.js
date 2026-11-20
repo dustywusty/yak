@@ -8,7 +8,7 @@ export function dispatch(root, { threadHref }) {
   let bars = [];
 
   const chips = (st, t) => {
-    const all = Object.entries(st.labels(t)).filter(([k]) => !k.startsWith('abby.'));
+    const all = Object.entries(st.labels(t)).filter(([k]) => !k.startsWith('yak.'));
     return [all.slice(0, 3).map(([k, v]) => h('span', { class: 'd-chip' }, k, v === '' ? '' : h('b', {}, `=${v}`))),
       all.length > 3 ? h('span', { class: 'd-chip', title: all.slice(3).map(([k, v]) => `${k}=${v}`).join(' ') }, `+${all.length - 3}`) : null];
   };

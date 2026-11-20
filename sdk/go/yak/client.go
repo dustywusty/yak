@@ -1,6 +1,6 @@
-// Package abby is a minimal Go client for the Abby HTTP protocol. It uses
+// Package yak is a minimal Go client for the Yak HTTP protocol. It uses
 // only the public API: no server packages, no database access.
-package abby
+package yak
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// Problem is an RFC 9457 problem response with Abby's stable code.
+// Problem is an RFC 9457 problem response with Yak's stable code.
 type Problem struct {
 	Status    int            `json:"status"`
 	Code      string         `json:"code"`
@@ -39,7 +39,7 @@ func IsCode(err error, code string) bool {
 type Client struct {
 	BaseURL   string // e.g. http://localhost:8080
 	Token     string
-	RunID     string // optional Abby-Run-Id attribution (no authority)
+	RunID     string // optional Yak-Run-Id attribution (no authority)
 	HTTP      *http.Client
 	UserAgent string
 	// MaxRetries bounds retries of 503/network failures. Retries reuse the
@@ -49,7 +49,7 @@ type Client struct {
 }
 
 func New(baseURL, token string) *Client {
-	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, HTTP: &http.Client{Timeout: 60 * time.Second}, UserAgent: "abby-go-sdk/0.1", MaxRetries: 3}
+	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, HTTP: &http.Client{Timeout: 60 * time.Second}, UserAgent: "yak-go-sdk/0.1", MaxRetries: 3}
 }
 
 // NewIdempotencyKey returns a random key. Keep it until the outcome is known.
@@ -114,7 +114,7 @@ func (c *Client) Do(ctx context.Context, r Request, out any) (*Response, error) 
 			req.Header.Set("Authorization", "Bearer "+c.Token)
 		}
 		if c.RunID != "" {
-			req.Header.Set("Abby-Run-Id", c.RunID)
+			req.Header.Set("Yak-Run-Id", c.RunID)
 		}
 		if c.UserAgent != "" {
 			req.Header.Set("User-Agent", c.UserAgent)

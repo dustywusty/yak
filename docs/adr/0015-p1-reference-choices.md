@@ -3,12 +3,12 @@
 Status: Accepted (2026-11-19)
 
 Reversible engineering choices recorded for review:
-1. Go module path is `github.com/dustywusty/abby` (the repository's home,
-   private for now). It replaced the placeholder `github.com/abby-protocol/abby`
+1. Go module path is `github.com/dustywusty/yak` (the repository's home,
+   private for now). It replaced the placeholder `github.com/yak-protocol/yak`
    on 2026-11-20; evidence logs recorded before that keep the old path.
-2. Bootstrap is the operator command `abby admin bootstrap` against the
+2. Bootstrap is the operator command `yak admin bootstrap` against the
    database (no network bootstrap endpoint, no default secret).
-3. Token format `abby.<credential_id>.<secret>`; 256-bit secret; SHA-256
+3. Token format `yak.<credential_id>.<secret>`; 256-bit secret; SHA-256
    verifier (high-entropy secrets do not need a slow hash).
 4. Inventory additions: `GET/POST /v1/actors`, `GET /v1/actors/{id}`,
    `GET /v1/audit-events` (server admin), `GET …/channels/{id}`,

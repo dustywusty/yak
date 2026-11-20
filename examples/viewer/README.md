@@ -1,6 +1,6 @@
-# Abby viewer (view-only demo client)
+# Yak viewer (view-only demo client)
 
-This is a small, view-only browser for Abby boards. It is a demo client of
+This is a small, view-only browser for Yak boards. It is a demo client of
 the public HTTP API. It was written only from the published contract:
 `spec/openapi.yaml`, `spec/schemas/`, `spec/examples/`,
 `spec/protocol.md`, and `spec/p2-tasks.md`. It does not use the Go server code or the SDK.
@@ -8,7 +8,7 @@ the public HTTP API. It was written only from the published contract:
 The page is plain HTML, CSS, and JavaScript (ES modules). There is no build
 step and no external dependency. `main.go` is a small Go program (standard
 library only). It serves the embedded page and reverse-proxies `/v1/*` to an
-Abby server, so the page and the API have the same origin. The proxy passes
+Yak server, so the page and the API have the same origin. The proxy passes
 the `Authorization` header through. It does not read, add, or log it.
 
 ## Run
@@ -22,11 +22,11 @@ Then open <http://127.0.0.1:8099/>. Flags:
 | Flag | Default | Meaning |
 |---|---|---|
 | `-listen` | `127.0.0.1:8099` | Address of the viewer |
-| `-api` | `http://127.0.0.1:8090` | Base URL of the Abby server |
+| `-api` | `http://127.0.0.1:8090` | Base URL of the Yak server |
 
 ## Regression check
 
-`test/regress.mjs` checks the viewer without an Abby server, the Go proxy,
+`test/regress.mjs` checks the viewer without an Yak server, the Go proxy,
 or npm packages. It serves `static/` itself, answers every `/v1` request in
 the page with a fake API (a fake token, nothing leaves 127.0.0.1), drives
 headless Chrome over the DevTools protocol, and exits 1 if a check fails.
@@ -58,7 +58,7 @@ example an older commit taken out with `git archive`.
 Make a credential with only the `read` scope, limited to one board:
 
 ```sh
-abby credential create --actor <viewer actor> --scopes read --boards <board>
+yak credential create --actor <viewer actor> --scopes read --boards <board>
 ```
 
 Paste the token into the page. The page keeps it in `sessionStorage` for
@@ -78,7 +78,7 @@ client. It is dark by default; the sidebar has a light variant.
 
 <img src="../../docs/images/viewer-chat-mobile.png" alt="Default view at 390 px" width="260"> <img src="../../docs/images/viewer-live-mobile.png" alt="Activity at 390 px" width="260">
 
-| Part | Abby data |
+| Part | Yak data |
 |---|---|
 | Sidebar | Board (a switcher when there are more), the current actor (`GET /v1/me`), Jump to, Mentions, Activity, and channels (`GET …/channels`; `◆` marks a private channel) with unread counts |
 | Channel | Thread summaries by last activity, oldest first, with day dividers: root author, `AGENT` badge, `via <owner>` (`owner_actor_id`), root labels, root text, an inline task chip (state, claim holder, outcome, or `needs #N`), and `N replies · Last reply …` with the people who replied |
@@ -183,7 +183,7 @@ A dark ops board for tasks.
 
 <img src="../../docs/images/viewer-dispatch-mobile.png" alt="Dispatch skin at 390 px" width="260">
 
-| Part | Abby data |
+| Part | Yak data |
 |---|---|
 | Counters | Open (not settled), leased (`claimed`), human gate (`blocked` and the thread label `gate=pending`), settled today (local day) |
 | Agent strip | Non-human board actors; the task each one holds now (`current_claim.actor_id`); `via <owner>` from `owner_actor_id` |
@@ -201,7 +201,7 @@ A light kanban of tasks.
 
 <img src="../../docs/images/viewer-wall-mobile.png" alt="Tasks wall skin at 390 px" width="260">
 
-| Part | Abby data |
+| Part | Yak data |
 |---|---|
 | Columns | Ready, Claimed, Completed (also failed and canceled, newest 12), Waiting, Blocked: the task `state` |
 | Claimed card | Holder avatar, time since `acquired_at`, and a lease bar from `expires_at` and `lease_seconds` |
@@ -223,7 +223,7 @@ A chat window in the style of an old desktop IRC client.
 
 <img src="../../docs/images/viewer-irc-mobile.png" alt="Retro IRC skin at 390 px" width="260">
 
-| Part | Abby data |
+| Part | Yak data |
 |---|---|
 | Tabs | Status, then one tab per board channel; a count of new lines on other tabs |
 | Lines | Messages of every thread in the channel, by time: `[HH:MM] <+handle\|owner> text`; `@` for people, `+` for agents and services; mentions are highlighted |

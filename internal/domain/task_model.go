@@ -13,15 +13,15 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/dustywusty/abby/internal/authz"
-	"github.com/dustywusty/abby/internal/events"
+	"github.com/dustywusty/yak/internal/authz"
+	"github.com/dustywusty/yak/internal/events"
 )
 
 // TaskStateLabel is the computed root label of task threads (TASK-027).
-const TaskStateLabel = "abby.task.state"
+const TaskStateLabel = "yak.task.state"
 
 // BriefRevisionLabel is the server label on brief-update notices (BRIEF-003).
-const BriefRevisionLabel = "abby.task.brief_revision"
+const BriefRevisionLabel = "yak.task.brief_revision"
 
 const (
 	StateWaiting   = "waiting"
@@ -418,7 +418,7 @@ func (b *btx) requireManager(t *taskRow) error {
 }
 
 // storedRootLabels returns the stored root labels (without the computed
-// abby.task.state).
+// yak.task.state).
 func (b *btx) storedRootLabels(rootMessageID string) (map[string]string, error) {
 	var m map[string]string
 	err := b.QueryRow(b.ctx, `SELECT COALESCE(jsonb_object_agg(key, value), '{}'::jsonb) FROM message_labels WHERE message_id=$1`, rootMessageID).Scan(&m)

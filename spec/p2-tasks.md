@@ -1,7 +1,7 @@
-# Abby protocol, version 1 (draft) — P2 profile `abby.p2.tasks`
+# Yak protocol, version 1 (draft) — P2 profile `yak.p2.tasks`
 
 Status: draft, approved by the owner for implementation on 2026-11-20. This document is normative for the P2
-profile. It extends `spec/protocol.md` (profile `abby.p1.core`); every P1
+profile. It extends `spec/protocol.md` (profile `yak.p1.core`); every P1
 requirement still applies unless a requirement here amends it by ID. The
 wire shapes are in ADR-0016 until `spec/openapi.yaml` and `spec/schemas/`
 gain the task components. The decisions behind this text are ADR-0004
@@ -11,7 +11,7 @@ gain the task components. The decisions behind this text are ADR-0004
 The key words MUST, MUST NOT, SHOULD, and MAY are used as in RFC 2119.
 Every MUST maps to a check in the traceability table (§20).
 
-Design baseline: `docs/design/Abby_Design.md` §3.1, §4.1, §5.1, §7, §8,
+Design baseline: `docs/design/Yak_Design.md` §3.1, §4.1, §5.1, §7, §8,
 §11.2, §11.3, §14.1, §15.2.
 
 ## 0 Owner constraints (non-negotiable)
@@ -37,7 +37,7 @@ owner decision, not an ADR alone.
 | Claim | Expiring, exclusive right of one actor to work on one task for one execution attempt. |
 | Execution | The attempt that a claim binds. One claim = one execution, identified by `execution_id`. |
 | Epoch | Per-task integer, incremented by every new claim. A fencing token for external systems. |
-| Proof | Secret returned once with a new claim. Presented in `Abby-Claim-Proof` to act as the claimant. |
+| Proof | Secret returned once with a new claim. Presented in `Yak-Claim-Proof` to act as the claimant. |
 | Manager | For a given task: its owner while holding `task_manage` on the task channel, or any actor holding `task_admin` there. Both also need current `read`. |
 | Active claim | A claim whose recorded status is `active` and whose `expires_at` is later than server time. |
 | Effective view | The task as it is at server time `now`, with any lapsed lease applied (§7.6). |
@@ -47,7 +47,7 @@ owner decision, not an ADR alone.
 ## 2 Discovery
 
 - **TASK-001** A server that implements this profile MUST list
-  `abby.p2.tasks` in `protocol.profiles` of `GET /v1/server`.
+  `yak.p2.tasks` in `protocol.profiles` of `GET /v1/server`.
 - **TASK-002** Discovery MUST add these `limits`:
   `claim_lease_default_seconds` (reference 120), `claim_lease_min_seconds`
   (15), `claim_lease_max_seconds` (300), `max_batch_tasks` (100),
@@ -55,7 +55,7 @@ owner decision, not an ADR alone.
   `max_evidence_items` (50), and `max_claim_wait_ms` (30000).
 - **TASK-003** Discovery `capabilities` stays the P1 array of capability
   identifiers. A server whose replayed claim responses can return the proof
-  (CLAIM-041) MUST list `abby.tasks.claim_proof_replay` in it; a server
+  (CLAIM-041) MUST list `yak.tasks.claim_proof_replay` in it; a server
   that cannot MUST NOT list it, and then a replay always returns
   `proof_unavailable`. In this document, "`claim_proof_replay` is true"
   means that the identifier is listed.
@@ -117,17 +117,17 @@ owner decision, not an ADR alone.
   `assignee` (actor ID or `none`), `owner`, and `label` (P1 syntax,
   evaluated on root labels). Pagination follows PAGE-001.
 
-### 4.1 Reserved label `abby.task.state`
+### 4.1 Reserved label `yak.task.state`
 
 - **TASK-027** The root message of a task thread MUST expose the label
-  `abby.task.state` whose value is the effective task state. The label is
+  `yak.task.state` whose value is the effective task state. The label is
   therefore a root label of the thread (LBL-003) and applies to every
   message of the thread for filtering.
-- **TASK-028** Clients MUST NOT set, change, or remove any `abby.*` label;
+- **TASK-028** Clients MUST NOT set, change, or remove any `yak.*` label;
   the server MUST reject such an attempt with `400 validation_failed`
   (LBL-002). The label is a projection of task state. It is never an input.
-- **TASK-029** Threads without a task MUST NOT have `abby.task.state`.
-  `label=abby.task.state` therefore selects task threads.
+- **TASK-029** Threads without a task MUST NOT have `yak.task.state`.
+  `label=yak.task.state` therefore selects task threads.
 
 ## 5 Lifecycle
 
@@ -227,7 +227,7 @@ any change to `completed` except root redaction.
   epoch plus one, including a re-acquisition by the same actor after
   release or lapse. Epochs of one task MUST strictly increase.
 - **CLAIM-004** The claim MUST record `actor_id`, `credential_id`,
-  `run_id` (from `Abby-Run-Id`, optional, no authority), `epoch`,
+  `run_id` (from `Yak-Run-Id`, optional, no authority), `epoch`,
   `execution_id`, `brief_revision` (the task's current brief revision),
   `lease_seconds`, `acquired_at`, and `expires_at`.
 - **CLAIM-005** An optional `expect_brief_revision` in the claim request
@@ -243,7 +243,7 @@ any change to `completed` except root redaction.
   proof MUST NOT appear in task views, claim views, events, snapshots,
   audit records, logs, or error documents.
 - **CLAIM-012** Clients present the proof in the request header
-  `Abby-Claim-Proof: <proof>`. It MUST NOT be accepted in a body or query
+  `Yak-Claim-Proof: <proof>`. It MUST NOT be accepted in a body or query
   parameter.
 - **CLAIM-013** A claimant operation without the header MUST return
   `428 precondition_required`. A malformed proof MUST return
@@ -301,7 +301,7 @@ any change to `completed` except root redaction.
 - **CLAIM-041** A replay of a claim or claim-next MUST return the original
   claim (same claim ID, execution ID, epoch) and MUST NOT create a claim,
   emit events, or change `expires_at`. The `proof` MUST be returned only if
-  all hold: discovery lists `abby.tasks.claim_proof_replay`, the claim is active
+  all hold: discovery lists `yak.tasks.claim_proof_replay`, the claim is active
   at replay time, and the caller currently holds `read` and `claim`.
   Otherwise the response MUST have `proof: null` and
   `proof_unavailable: true`.
@@ -312,7 +312,7 @@ any change to `completed` except root redaction.
   encrypted at rest with a key not stored in the database, and MUST be
   destroyed in the transaction that ends the claim (or by the sweeper for a
   lapsed claim). Without such a key the server MUST NOT list
-  `abby.tasks.claim_proof_replay` (TASK-003).
+  `yak.tasks.claim_proof_replay` (TASK-003).
 - **CLAIM-044** A replay of complete, fail, or release MUST return the
   current task view with `Idempotent-Replayed: true`, even if the claim
   has ended since. This is how a client that lost a completion response
@@ -328,7 +328,7 @@ any change to `completed` except root redaction.
   before it evaluates preconditions (TASK-031).
 - **CLAIM-051** Effective view of a task whose recorded state is `claimed`
   and whose claim has `expires_at ≤ now`: `state` = `ready`,
-  `abby.task.state` = `ready`, `current_claim` = null, `last_claim` = that
+  `yak.task.state` = `ready`, `current_claim` = null, `last_claim` = that
   claim with `status: "expired"`, `ended_at = expires_at`, and
   `end_recorded_at: null`; `revision` = recorded revision + 1;
   `updated_at` and `state_changed_at` = `expires_at`.
@@ -342,7 +342,7 @@ any change to `completed` except root redaction.
 - **CLAIM-054** The reference sweeper SHOULD materialize lapses within 30
   seconds of `expires_at`. Event consumers MUST NOT assume that
   `effective_at` is monotonic in stream order.
-- **CLAIM-055** Leases govern Abby state only. Abby MUST NOT claim to stop
+- **CLAIM-055** Leases govern Yak state only. Yak MUST NOT claim to stop
   external processes. External systems SHOULD fence with `epoch` or
   `execution_id`.
 
@@ -474,7 +474,7 @@ any change to `completed` except root redaction.
 - **BRIEF-003** On a nonterminal task the update MUST, in one transaction:
   store brief revision n+1; append a reply in the thread, authored by the
   caller, that states the new revision and the reason (it does not carry
-  the brief text) and has the server label `abby.task.brief_revision=<n+1>`;
+  the brief text) and has the server label `yak.task.brief_revision=<n+1>`;
   revoke any active claim; and set or keep `blocked` with `block.cause =
   "brief_updated"`. The task stays `blocked` until a manager unblocks it.
 - **BRIEF-004** A brief update on `completed` MUST return `409
@@ -487,7 +487,7 @@ any change to `completed` except root redaction.
   …/messages/{root}` and `PATCH …/threads/{id}` MUST return `409
   task_root_protected` and commit nothing, for every caller including the
   root author and board administrators. This amends AUTH-020 for task
-  threads. Replies, reactions, and non-`abby.` root labels are unaffected.
+  threads. Replies, reactions, and non-`yak.` root labels are unaffected.
 - **BRIEF-011** Ordinary message authorship MUST NOT revoke a claim or
   change a brief.
 - **BRIEF-020** `POST …/tasks/{id}/root-redaction` with `{reason}` and
@@ -538,7 +538,7 @@ any change to `completed` except root redaction.
   `channel_id` and `thread_id` MUST be set.
 - **TASK-083** Task events are thread-scoped for filtering: the channel,
   subtree, thread, label (root labels, before and after, including
-  `abby.task.state`), and type clauses apply; the author, mention, and text
+  `yak.task.state`), and type clauses apply; the author, mention, and text
   clauses do not exclude them (same as P1 `thread.view_invalidated`).
 - **TASK-084** Event payloads MUST NOT contain proofs or brief text, and
   MUST be projected per reader for dependency IDs (DEP-010).
@@ -573,7 +573,7 @@ projection of `dependencies`). Additional fields:
 ### 15.2 Thread view invalidation
 
 - **TASK-085** Every change of effective task state changes the root label
-  `abby.task.state`, so the server MUST emit `thread.view_invalidated`
+  `yak.task.state`, so the server MUST emit `thread.view_invalidated`
   with `reason: "task_state_changed"` and `labels_before`/`labels_after`
   right after the task event (EVT-006). A new task created with a new
   thread (L1) does not need it: its `thread.created` already shows the
@@ -606,18 +606,18 @@ projection of `dependencies`). Additional fields:
   revision, and ignores a view with a lower revision, always has the newest
   task fields. (`dependencies[].state` shows each prerequisite's state; it
   follows the prerequisite's own revision, not this task's.)
-- **TASK-093** A snapshot with label filter `abby.task.state=<s>` MUST use
+- **TASK-093** A snapshot with label filter `yak.task.state=<s>` MUST use
   the effective state at capture time.
 
 ## 17 Runner helper (reference CLI)
 
-These requirements apply to the reference CLI runner (`abby run`, PAR-033)
+These requirements apply to the reference CLI runner (`yak run`, PAR-033)
 and to any client that claims to implement the managed-runner behavior.
 
 - **RUN-001** The runner MUST obtain work only through claim or claim-next,
   and MUST keep the proof in memory only. It MUST NOT pass the proof to the
-  managed subprocess. It SHOULD pass `ABBY_TASK_ID`, `ABBY_EXECUTION_ID`,
-  and `ABBY_CLAIM_EPOCH`.
+  managed subprocess. It SHOULD pass `YAK_TASK_ID`, `YAK_EXECUTION_ID`,
+  and `YAK_CLAIM_EPOCH`.
 - **RUN-002** The runner MUST renew at about one third of the granted lease
   with random jitter (±10 %), using a new `Idempotency-Key` per renewal.
 - **RUN-003** The runner MUST compute its local deadline as (local
@@ -643,7 +643,7 @@ and to any client that claims to implement the managed-runner behavior.
 - **RUN-007** After an outage the runner MUST NOT resume work from local
   belief. It MUST read the task, and resume only if a renew with its proof
   succeeds; otherwise it MUST discard the attempt and keep notes outside
-  Abby.
+  Yak.
 
 ## 18 Error catalog additions (P2)
 
@@ -659,7 +659,7 @@ and to any client that claims to implement the managed-runner behavior.
 | 409 | `already_exists` | Thread already has a task | `task_id` (if readable) |
 | 412 | `revision_conflict` | Stale `If-Match` or `expect_brief_revision` | `revision` |
 | 413 | `limit_exceeded` | Batch, dependencies, evidence, or result too large | `limit` |
-| 428 | `precondition_required` | Missing `If-Match` or missing `Abby-Claim-Proof` | `header` |
+| 428 | `precondition_required` | Missing `If-Match` or missing `Yak-Claim-Proof` | `header` |
 
 `task_claimed` and `claim_lost` were already named in design §5.3; the
 others are new in P2.
@@ -763,7 +763,7 @@ others are new in P2.
 }
 ```
 
-The client then sends `Abby-Claim-Proof:
+The client then sends `Yak-Claim-Proof:
 acp1.claim_example.k3Jx…` on renew, release, complete, fail, and
 claimant block. A replay after the lease lapsed returns the same `claim`
 (with `status: "expired"`), `"proof": null`, and `"proof_unavailable":
@@ -783,7 +783,7 @@ script. New scenario IDs CT-029..CT-038 extend design §14.1.
 | CT-032 | Lapsed lease read before any sweep | Read after `expires_at` shows effective `ready`, `current_claim: null`; another actor claims at once |
 | CT-033 | Hidden prerequisite | No ID or count leaks; `unreadable_dependencies_pending` matches; readiness still follows completion |
 | CT-034 | Root protection and root redaction | P1 edit/delete/title on task root → `task_root_protected`; root redaction cancels and scrubs briefs |
-| CT-035 | Messages and labels cannot drive tasks | `abby.*` label writes rejected; "done" text changes nothing |
+| CT-035 | Messages and labels cannot drive tasks | `yak.*` label writes rejected; "done" text changes nothing |
 | CT-036 | Task snapshot then replay | Snapshot task items plus replay reach the live task view, including a lapse during the gap |
 | CT-037 | Dependency edits | Cycle → `dependency_cycle`; edit during claim → `task_claim_active`; edit on terminal → `invalid_transition` |
 | CT-038 | Proof hygiene | Proof absent from views, events, snapshots, errors; missing header → 428; other actor → 403 |
@@ -794,7 +794,7 @@ script. New scenario IDs CT-029..CT-038 extend design §14.1.
 | TASK-010, TASK-012, TASK-014..016 | CT TestTaskCreateAndConvert; CT TestCT002 pattern applied to task create |
 | TASK-011, TASK-013 | CT TestCT025ConversionAuthority |
 | TASK-020..026 | CT TestCT029LifecycleWalk; schema checks; CT TestCT032LapsedLeaseRead |
-| TASK-027..029 | CT TestCT035MessagesCannotDriveTasks; CT TestCT014-style label enter/leave on `abby.task.state` (TestTaskStateLabelFilter) |
+| TASK-027..029 | CT TestCT035MessagesCannotDriveTasks; CT TestCT014-style label enter/leave on `yak.task.state` (TestTaskStateLabelFilter) |
 | TASK-030..038 | CT TestCT029LifecycleWalk; REF TestLifecycleTableExhaustive |
 | TASK-040..044 | CT TestTaskAuthorization (deny, ceiling, owner without `task_manage`, assignee not manager); CT TestCT038ProofHygiene |
 | TASK-050..054 | CT TestCT027AssignmentVsClaim |
@@ -812,7 +812,7 @@ script. New scenario IDs CT-029..CT-038 extend design §14.1.
 | CLAIM-043 | REF TestClaimReplayMaterialEncrypted (ciphertext only; destroyed on end); OPS discovery shows `claim_proof_replay` matches key config |
 | CLAIM-050..053 | CT TestCT032LapsedLeaseRead; CT TestCT008; REF TestExpiryProjectionMatchesMaterialization (sweeper disabled) |
 | CLAIM-054 | REF TestSweeperMaterializesWithEffectiveAt; OPS expiry-lag metric |
-| CLAIM-055 | Documentation (`examples/build-abby/` runner recipe); BOOT-04 evidence |
+| CLAIM-055 | Documentation (`examples/build-yak/` runner recipe); BOOT-04 evidence |
 | DEP-001..003 | CT TestCT012AtomicBatchRejection; CT TestCT037DependencyEdits; CT TestCT033HiddenPrerequisite |
 | DEP-004, DEP-007..008 | CT TestCT011PrerequisiteFailReopenComplete |
 | DEP-005..006 | CT TestCT037DependencyEdits |

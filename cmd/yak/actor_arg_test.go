@@ -42,16 +42,16 @@ func runTaskCLI(t *testing.T, args ...string) (*actorArgServer, error) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("ABBY_CONFIG", filepath.Join(t.TempDir(), "config.json"))
-	t.Setenv("ABBY_URL", srv.URL)
-	t.Setenv("ABBY_TOKEN", "tok")
-	t.Setenv("ABBY_TOKEN_FILE", "")
-	t.Setenv("ABBY_BOARD", "b")
-	t.Setenv("ABBY_PROFILE", "")
+	t.Setenv("YAK_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	t.Setenv("YAK_URL", srv.URL)
+	t.Setenv("YAK_TOKEN", "tok")
+	t.Setenv("YAK_TOKEN_FILE", "")
+	t.Setenv("YAK_BOARD", "b")
+	t.Setenv("YAK_PROFILE", "")
 	saved := gf // addGlobalFlags resets gf to the flag defaults
 	t.Cleanup(func() { gf = saved })
 
-	root := &cobra.Command{Use: "abby", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "yak", SilenceUsage: true, SilenceErrors: true}
 	addGlobalFlags(root)
 	root.AddCommand(taskCmd())
 	root.SetArgs(args)

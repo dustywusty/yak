@@ -91,7 +91,7 @@ func TestSpecSchemasCompile(t *testing.T) {
 		"CreateActorRequest", "CreateCredentialRequest", "CreateBoardRequest", "PatchBoardRequest", "CreateChannelRequest",
 		"CreateGrantRequest", "PatchGrantRequest", "CreateThreadRequest", "PatchThreadRequest", "ReplyRequest",
 		"EditMessageRequest", "DeleteMessageRequest", "LabelsRequest", "CreateSnapshotRequest",
-		// P2 (abby.p2.tasks)
+		// P2 (yak.p2.tasks)
 		"TaskState", "Task", "TaskPage", "Claim", "ClaimPage", "ClaimResponse", "ClaimNextResult", "Brief", "BriefWithTask",
 		"BriefPage", "TaskBatch", "CreateTaskRequest", "CreateTaskBatchRequest", "PatchTaskRequest", "ClaimRequest",
 		"ClaimNextRequest", "RenewClaimRequest", "ReleaseTaskRequest", "CompleteTaskRequest", "FailTaskRequest",
@@ -151,7 +151,7 @@ func TestSpecSchemasRejectInvalid(t *testing.T) {
 		{"CreateChannelRequest", `{"path":"Eng"}`},
 		{"CreateGrantRequest", `{"subject":{"type":"actor"},"pattern":"*","capabilities":["read"]}`},
 		{"LabelsRequest", `{"operations":[{"op":"unset","key":"a","value":"b"}]}`},
-		{"LabelsRequest", `{"operations":[{"op":"set","key":"abby.task.state","value":"x"}]}`},
+		{"LabelsRequest", `{"operations":[{"op":"set","key":"yak.task.state","value":"x"}]}`},
 		{"ReplyRequest", `{"text":""}`},
 		{"CreateCredentialRequest", `{"scopes":["read"],"expires_in_seconds":30}`},
 		{"CreateSnapshotRequest", `{"filter":{"channel":"eng"}}`},
@@ -165,7 +165,7 @@ func TestSpecSchemasRejectInvalid(t *testing.T) {
 		{"CreateTaskRequest", `{"thread_id":"t","thread":{"channel":"eng","title":"x","text":"y"}}`},
 		{"CreateTaskRequest", `{}`},
 		{"CreateTaskRequest", `{"thread":{"channel":"eng","title":"x"}}`},
-		{"CreateTaskRequest", `{"thread":{"channel":"eng","title":"x","text":"y","labels":{"abby.task.state":"done"}}}`},
+		{"CreateTaskRequest", `{"thread":{"channel":"eng","title":"x","text":"y","labels":{"yak.task.state":"done"}}}`},
 		{"CreateTaskBatchRequest", `{"tasks":[]}`},
 		{"CreateTaskBatchRequest", `{"tasks":[{"ref":"bad ref","thread":{"channel":"eng","title":"x","text":"y"}}]}`},
 		{"CreateTaskBatchRequest", `{"tasks":[{"ref":"a","thread":{"channel":"eng","title":"x","text":"y"},"depends_on":[{"ref":"b","task_id":"t"}]}]}`},
@@ -360,7 +360,7 @@ func TestSpecOpenAPI(t *testing.T) {
 		}
 	}
 
-	// Operations: unique operationId, responses, and an x-abby contract on
+	// Operations: unique operationId, responses, and an x-yak contract on
 	// every mutating operation.
 	paths, _ := doc["paths"].(map[string]any)
 	if len(paths) == 0 {
@@ -387,24 +387,24 @@ func TestSpecOpenAPI(t *testing.T) {
 				t.Errorf("%s: no responses", where)
 			}
 			if method == "post" || method == "patch" || method == "put" || method == "delete" {
-				x, _ := op["x-abby"].(map[string]any)
+				x, _ := op["x-yak"].(map[string]any)
 				if x == nil {
-					t.Errorf("%s: missing x-abby", where)
+					t.Errorf("%s: missing x-yak", where)
 					continue
 				}
 				params := opParams(item.(map[string]any), op)
 				switch x["idempotency"] {
 				case "required":
 					if !params["IdempotencyKey"] {
-						t.Errorf("%s: x-abby.idempotency required but no IdempotencyKey parameter", where)
+						t.Errorf("%s: x-yak.idempotency required but no IdempotencyKey parameter", where)
 					}
 				case "optional":
 					if !params["IdempotencyKeyOptional"] {
-						t.Errorf("%s: x-abby.idempotency optional but no IdempotencyKeyOptional parameter", where)
+						t.Errorf("%s: x-yak.idempotency optional but no IdempotencyKeyOptional parameter", where)
 					}
 				case "not_applicable":
 				default:
-					t.Errorf("%s: x-abby.idempotency %v", where, x["idempotency"])
+					t.Errorf("%s: x-yak.idempotency %v", where, x["idempotency"])
 				}
 				switch pre := x["precondition"]; pre {
 				case nil, "none":
@@ -417,30 +417,30 @@ func TestSpecOpenAPI(t *testing.T) {
 						t.Errorf("%s: precondition %v but no IfMatchOptional parameter", where, pre)
 					}
 				default:
-					t.Errorf("%s: x-abby.precondition %v", where, pre)
+					t.Errorf("%s: x-yak.precondition %v", where, pre)
 				}
-				// P2: the Abby-Claim-Proof header and x-abby.claim_proof agree.
+				// P2: the Yak-Claim-Proof header and x-yak.claim_proof agree.
 				switch cp := x["claim_proof"]; cp {
 				case nil:
-					if params["AbbyClaimProof"] || params["AbbyClaimProofOptional"] {
-						t.Errorf("%s: takes Abby-Claim-Proof but x-abby.claim_proof is not set", where)
+					if params["YakClaimProof"] || params["YakClaimProofOptional"] {
+						t.Errorf("%s: takes Yak-Claim-Proof but x-yak.claim_proof is not set", where)
 					}
 				case "required":
-					if !params["AbbyClaimProof"] {
-						t.Errorf("%s: x-abby.claim_proof required but no AbbyClaimProof parameter", where)
+					if !params["YakClaimProof"] {
+						t.Errorf("%s: x-yak.claim_proof required but no YakClaimProof parameter", where)
 					}
 				case "optional":
-					if !params["AbbyClaimProofOptional"] {
-						t.Errorf("%s: x-abby.claim_proof optional but no AbbyClaimProofOptional parameter", where)
+					if !params["YakClaimProofOptional"] {
+						t.Errorf("%s: x-yak.claim_proof optional but no YakClaimProofOptional parameter", where)
 					}
 				default:
-					t.Errorf("%s: x-abby.claim_proof %v", where, cp)
+					t.Errorf("%s: x-yak.claim_proof %v", where, cp)
 				}
 				if a, _ := x["authorization"].(string); a == "" {
-					t.Errorf("%s: x-abby.authorization missing", where)
+					t.Errorf("%s: x-yak.authorization missing", where)
 				}
 				if _, ok := x["events"].([]any); !ok {
-					t.Errorf("%s: x-abby.events must be a list", where)
+					t.Errorf("%s: x-yak.events must be a list", where)
 				}
 			}
 		}
@@ -556,7 +556,7 @@ func TestSpecLiveResponses(t *testing.T) {
 	}
 
 	rr := sendJSON(t, bob, "ReplyRequest", "POST", f.p("/threads/"+tid+"/messages"),
-		J{"text": "ack", "reply_to_message_id": rootID}, newKey(), header("Abby-Run-Id", "run-schema-1"))
+		J{"text": "ack", "reply_to_message_id": rootID}, newKey(), header("Yak-Run-Id", "run-schema-1"))
 	liveCheck(t, "POST /threads/{id}/messages", "Message", 201, rr)
 	replyID := str(rr.Body, "id")
 
@@ -715,21 +715,21 @@ func advertisesProfile(disc J, profile string) bool {
 	return false
 }
 
-// TestSpecLiveResponsesP2 validates live P2 (abby.p2.tasks) responses against
+// TestSpecLiveResponsesP2 validates live P2 (yak.p2.tasks) responses against
 // the schemas. It runs only against a server that advertises the profile.
 func TestSpecLiveResponsesP2(t *testing.T) {
 	a := admin(t)
 	anon := &actorClient{t: t}
 	disc := anon.do("GET", "/v1/server", nil)
-	if !advertisesProfile(disc.Body, "abby.p2.tasks") {
-		t.Skip("server does not list abby.p2.tasks in protocol.profiles; P2 live schema checks skipped")
+	if !advertisesProfile(disc.Body, "yak.p2.tasks") {
+		t.Skip("server does not list yak.p2.tasks in protocol.profiles; P2 live schema checks skipped")
 	}
 	liveCheck(t, "GET /v1/server (P2 limits)", "Discovery", 200, disc)
 
 	s := func(m J, k string) string { v, _ := m[k].(string); return v }
 	o := func(m J, k string) J { v, _ := m[k].(J); return v }
 	withIfMatch := func(etag string) opt { return func(r *http.Request) { r.Header.Set("If-Match", etag) } }
-	withProof := func(p string) opt { return header("Abby-Claim-Proof", p) }
+	withProof := func(p string) opt { return header("Yak-Claim-Proof", p) }
 
 	owner := newActor(t, "owner")
 	mgr := newActor(t, "mgr")
@@ -772,7 +772,7 @@ func TestSpecLiveResponsesP2(t *testing.T) {
 	missing := sendJSON(t, worker, "CompleteTaskRequest", "POST", f.p("/tasks/"+t1+"/complete"), J{"result": J{}}, newKey())
 	liveCheck(t, "POST /tasks/{id}/complete (no proof)", "Problem", 428, missing)
 	if missing.code() != "precondition_required" {
-		t.Errorf("complete without Abby-Claim-Proof: code %q, want precondition_required (CLAIM-013)", missing.code())
+		t.Errorf("complete without Yak-Claim-Proof: code %q, want precondition_required (CLAIM-013)", missing.code())
 	}
 	liveCheck(t, "POST /tasks/{id}/complete", "Task", 200,
 		sendJSON(t, worker, "CompleteTaskRequest", "POST", f.p("/tasks/"+t1+"/complete"), J{"result": J{

@@ -1,7 +1,7 @@
 package conformance
 
 // EVT-013 / TASK-086: message.* event payloads carry the thread context at
-// commit (thread_title; with abby.p2.tasks also task_id). Written from
+// commit (thread_title; with yak.p2.tasks also task_id). Written from
 // spec/protocol.md and spec/p2-tasks.md only.
 
 import (
@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// advertisesP2 reports whether GET /v1/server lists abby.p2.tasks, without
+// advertisesP2 reports whether GET /v1/server lists yak.p2.tasks, without
 // skipping the test.
 func advertisesP2(t *testing.T) bool {
 	t.Helper()

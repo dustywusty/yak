@@ -1,6 +1,6 @@
 package main
 
-// `abby run`: the reference managed runner (spec/p2-tasks.md §17,
+// `yak run`: the reference managed runner (spec/p2-tasks.md §17,
 // PAR-033). It claims one task, runs a subprocess while it renews the
 // lease, and settles the claim from the subprocess outcome.
 //
@@ -49,13 +49,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/dustywusty/abby/sdk/go/abby"
+	"github.com/dustywusty/yak/sdk/go/yak"
 )
 
 type runOptions struct {
 	Board  string
 	TaskID string // claim this task; empty = claim-next
-	Next   abby.ClaimNextRequest
+	Next   yak.ClaimNextRequest
 	Wait   time.Duration // total claim-next wait
 
 	LeaseSeconds        int // 0 = server default
@@ -66,7 +66,7 @@ type runOptions struct {
 	Grace   time.Duration
 
 	Summary       string
-	Evidence      []abby.Evidence
+	Evidence      []yak.Evidence
 	ReleaseReason string
 
 	Stdout, Stderr io.Writer
@@ -82,16 +82,16 @@ type runOptions struct {
 }
 
 type runReport struct {
-	TaskID      string     `json:"task_id"`
-	ClaimID     string     `json:"claim_id,omitempty"`
-	ExecutionID string     `json:"execution_id,omitempty"`
-	Epoch       int64      `json:"epoch,omitempty"`
-	RunID       string     `json:"run_id,omitempty"`
-	Outcome     string     `json:"outcome"` // completed | failed | released | result_rejected | claim_lost | lease_unconfirmed | no_work | interrupted
-	ExitStatus  *int       `json:"exit_status,omitempty"`
-	Renewals    int        `json:"renewals"`
-	Task        *abby.Task `json:"task,omitempty"`
-	Detail      string     `json:"detail,omitempty"`
+	TaskID      string    `json:"task_id"`
+	ClaimID     string    `json:"claim_id,omitempty"`
+	ExecutionID string    `json:"execution_id,omitempty"`
+	Epoch       int64     `json:"epoch,omitempty"`
+	RunID       string    `json:"run_id,omitempty"`
+	Outcome     string    `json:"outcome"` // completed | failed | released | result_rejected | claim_lost | lease_unconfirmed | no_work | interrupted
+	ExitStatus  *int      `json:"exit_status,omitempty"`
+	Renewals    int       `json:"renewals"`
+	Task        *yak.Task `json:"task,omitempty"`
+	Detail      string    `json:"detail,omitempty"`
 	// EvidenceMapped lists result-file evidence whose kind the protocol
 	// does not accept; each was sent as kind "other".
 	EvidenceMapped []string `json:"evidence_mapped,omitempty"`
@@ -112,7 +112,7 @@ type rejectedResult struct {
 	Detail     string          `json:"detail,omitempty"`
 	Summary    string          `json:"summary,omitempty"`
 	Reason     string          `json:"reason,omitempty"`
-	Evidence   []abby.Evidence `json:"evidence,omitempty"`
+	Evidence   []yak.Evidence  `json:"evidence,omitempty"`
 	Data       json.RawMessage `json:"data,omitempty"`
 	// Raw is the result file as read (up to 64 KiB) when it could not be used.
 	Raw string `json:"raw,omitempty"`
@@ -120,8 +120,8 @@ type rejectedResult struct {
 
 type runner struct {
 	opt   runOptions
-	acq   *abby.Tasks // SDK retries allowed (same key)
-	ops   *abby.Tasks // no SDK retries; the runner retries with deadlines
+	acq   *yak.Tasks // SDK retries allowed (same key)
+	ops   *yak.Tasks // no SDK retries; the runner retries with deadlines
 	runID string
 	rep   runReport
 
@@ -143,7 +143,7 @@ type lostErr struct{ err error }
 func (l *lostErr) Error() string { return "claim lost: " + l.err.Error() }
 func (l *lostErr) Unwrap() error { return l.err }
 
-func newRunner(c *abby.Client, opt runOptions) *runner {
+func newRunner(c *yak.Client, opt runOptions) *runner {
 	if opt.unit <= 0 {
 		opt.unit = time.Second
 	}
@@ -158,7 +158,7 @@ func newRunner(c *abby.Client, opt runOptions) *runner {
 	}
 	runID := c.RunID
 	if runID == "" {
-		runID = "run-" + strings.TrimPrefix(abby.NewIdempotencyKey(), "k-")[:16]
+		runID = "run-" + strings.TrimPrefix(yak.NewIdempotencyKey(), "k-")[:16]
 	}
 	cc := *c
 	cc.RunID = runID
@@ -168,7 +168,7 @@ func newRunner(c *abby.Client, opt runOptions) *runner {
 }
 
 func (r *runner) logf(format string, a ...any) {
-	fmt.Fprintf(r.opt.Log, "abby run: "+format+"\n", a...)
+	fmt.Fprintf(r.opt.Log, "yak run: "+format+"\n", a...)
 }
 
 func (r *runner) margin() time.Duration {
@@ -239,7 +239,7 @@ func (r *runner) run(ctx context.Context) (*runReport, error) {
 			r.taskID, r.claimID, r.proof = cr.Claim.TaskID, cr.Claim.ID, cr.ProofValue()
 			r.rep.TaskID, r.rep.ClaimID, r.rep.ExecutionID, r.rep.Epoch = r.taskID, r.claimID, cr.Claim.ExecutionID, cr.Claim.Epoch
 			r.setDeadline(sent, cr.Claim.LeaseSeconds)
-			if t, rerr := r.settle(ctx, "release", func(c context.Context, key string) (*abby.Task, error) {
+			if t, rerr := r.settle(ctx, "release", func(c context.Context, key string) (*yak.Task, error) {
 				return r.ops.Release(c, r.taskID, r.proof, fmt.Sprintf("runner interrupted by %v before work started", interruptSig), key)
 			}); rerr == nil {
 				r.rep.Outcome, r.rep.Task = "released", t
@@ -251,7 +251,7 @@ func (r *runner) run(ctx context.Context) (*runReport, error) {
 		return &r.rep, &exitErr{exitInterrupted, fmt.Errorf("interrupted by %v while acquiring a claim", interruptSig)}
 	}
 	if err != nil {
-		if abby.IsTaskClaimed(err) || abby.IsClaimLost(err) {
+		if yak.IsTaskClaimed(err) || yak.IsClaimLost(err) {
 			r.rep.Outcome = "claim_lost"
 		}
 		return &r.rep, err
@@ -284,7 +284,7 @@ func (r *runner) run(ctx context.Context) (*runReport, error) {
 	}
 
 	// ---- run the child ----
-	tmp, err := os.MkdirTemp("", "abby-run-")
+	tmp, err := os.MkdirTemp("", "yak-run-")
 	if err != nil {
 		return &r.rep, err
 	}
@@ -301,7 +301,7 @@ func (r *runner) run(ctx context.Context) (*runReport, error) {
 	if err != nil {
 		// Nothing ran: give the task back.
 		r.logf("cannot start command: %v; releasing", err)
-		_, rerr := r.settle(ctx, "release", func(c context.Context, key string) (*abby.Task, error) {
+		_, rerr := r.settle(ctx, "release", func(c context.Context, key string) (*yak.Task, error) {
 			return r.ops.Release(c, r.taskID, r.proof, "runner could not start the command: "+err.Error(), key)
 		})
 		if rerr != nil {
@@ -354,7 +354,7 @@ func (r *runner) run(ctx context.Context) (*runReport, error) {
 		if reason == "" {
 			reason = fmt.Sprintf("runner interrupted by %v", sig)
 		}
-		t, err := r.settle(ctx, "release", func(c context.Context, key string) (*abby.Task, error) {
+		t, err := r.settle(ctx, "release", func(c context.Context, key string) (*yak.Task, error) {
 			return r.ops.Release(c, r.taskID, r.proof, reason, key)
 		})
 		if err != nil {
@@ -366,11 +366,11 @@ func (r *runner) run(ctx context.Context) (*runReport, error) {
 	}
 }
 
-func (r *runner) acquire(ctx context.Context) (cr *abby.ClaimResponse, sent time.Time, waited bool, err error) {
-	key := abby.NewIdempotencyKey()
+func (r *runner) acquire(ctx context.Context) (cr *yak.ClaimResponse, sent time.Time, waited bool, err error) {
+	key := yak.NewIdempotencyKey()
 	sent = time.Now()
 	if r.opt.TaskID != "" {
-		cr, err = r.acq.Claim(ctx, r.opt.TaskID, abby.ClaimRequest{LeaseSeconds: r.opt.LeaseSeconds, ExpectBriefRevision: r.opt.ExpectBriefRevision}, key)
+		cr, err = r.acq.Claim(ctx, r.opt.TaskID, yak.ClaimRequest{LeaseSeconds: r.opt.LeaseSeconds, ExpectBriefRevision: r.opt.ExpectBriefRevision}, key)
 		return cr, sent, false, err
 	}
 	req := r.opt.Next
@@ -401,7 +401,7 @@ func (r *runner) renewLoop(ctx context.Context) error {
 
 // renewUntil makes one renewal (one key, retried) and gives up at stopAt.
 func (r *runner) renewUntil(ctx context.Context, stopAt time.Time) error {
-	key := abby.NewIdempotencyKey()
+	key := yak.NewIdempotencyKey()
 	first := time.Time{}
 	backoff := r.backoffBase()
 	for {
@@ -426,11 +426,11 @@ func (r *runner) renewUntil(ctx context.Context, stopAt time.Time) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		var p *abby.Problem
+		var p *yak.Problem
 		switch {
-		case abby.IsOwnershipLost(err), errors.As(err, &p) && p.Status == 401:
+		case yak.IsOwnershipLost(err), errors.As(err, &p) && p.Status == 401:
 			return &lostErr{err}
-		case abby.IsTransient(err), errors.Is(err, context.DeadlineExceeded):
+		case yak.IsTransient(err), errors.Is(err, context.DeadlineExceeded):
 			r.logf("renew not confirmed (%v); retrying", err)
 		default:
 			return fmt.Errorf("%w: %v", errLeaseUnconfirmed, err)
@@ -457,8 +457,8 @@ func (r *runner) renewFailed(err error) (*runReport, error) {
 
 func (r *runner) settleFailed(err error) (*runReport, error) {
 	r.rep.Renewals = r.renewals
-	var p *abby.Problem
-	if abby.IsOwnershipLost(err) || (errors.As(err, &p) && p.Status == 401) {
+	var p *yak.Problem
+	if yak.IsOwnershipLost(err) || (errors.As(err, &p) && p.Status == 401) {
 		r.rep.Outcome = "claim_lost"
 		r.rep.Detail = err.Error()
 		return &r.rep, &exitErr{exitClaimLost, &lostErr{err}}
@@ -466,15 +466,15 @@ func (r *runner) settleFailed(err error) (*runReport, error) {
 	if errors.Is(err, errLeaseUnconfirmed) {
 		r.rep.Outcome = "lease_unconfirmed"
 		r.rep.Detail = err.Error()
-		return &r.rep, &exitErr{exitLeaseUnconfirmed, fmt.Errorf("settlement outcome unknown: %w; run `abby task show %s`", err, r.taskID)}
+		return &r.rep, &exitErr{exitLeaseUnconfirmed, fmt.Errorf("settlement outcome unknown: %w; run `yak task show %s`", err, r.taskID)}
 	}
 	return &r.rep, err
 }
 
 // settle runs one settlement with one key, retrying transient failures
 // until the local lease deadline (RUN-006).
-func (r *runner) settle(ctx context.Context, what string, op func(context.Context, string) (*abby.Task, error)) (*abby.Task, error) {
-	key := abby.NewIdempotencyKey()
+func (r *runner) settle(ctx context.Context, what string, op func(context.Context, string) (*yak.Task, error)) (*yak.Task, error) {
+	key := yak.NewIdempotencyKey()
 	backoff := r.backoffBase()
 	for {
 		_, deadline, _ := r.snapshot()
@@ -490,7 +490,7 @@ func (r *runner) settle(ctx context.Context, what string, op func(context.Contex
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if !abby.IsTransient(err) && !errors.Is(err, context.DeadlineExceeded) {
+		if !yak.IsTransient(err) && !errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
 		r.logf("%s not confirmed (%v); retrying with the same key", what, err)
@@ -511,34 +511,37 @@ type childProc struct {
 	signal string
 }
 
-func (r *runner) childEnv(cr *abby.ClaimResponse, resultFile, briefFile string) []string {
+func (r *runner) childEnv(cr *yak.ClaimResponse, resultFile, briefFile string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		switch k {
-		case "ABBY_CLAIM_PROOF", "ABBY_TASK_ID", "ABBY_CLAIM_ID", "ABBY_EXECUTION_ID", "ABBY_CLAIM_EPOCH", "ABBY_RUN_ID",
-			"ABBY_BRIEF_REVISION", "ABBY_BRIEF_FILE", "ABBY_RESULT_FILE":
+		switch strings.Replace(k, "ABBY_", "YAK_", 1) {
+		case "YAK_CLAIM_PROOF", "YAK_TASK_ID", "YAK_CLAIM_ID", "YAK_EXECUTION_ID", "YAK_CLAIM_EPOCH", "YAK_RUN_ID",
+			"YAK_BRIEF_REVISION", "YAK_BRIEF_FILE", "YAK_RESULT_FILE", "YAK_BOARD":
 			continue // never pass a proof; never inherit stale claim values
 		}
 		env = append(env, kv)
 	}
-	env = append(env,
-		"ABBY_TASK_ID="+cr.Claim.TaskID,
-		"ABBY_CLAIM_ID="+cr.Claim.ID,
-		"ABBY_EXECUTION_ID="+cr.Claim.ExecutionID,
-		"ABBY_CLAIM_EPOCH="+strconv.FormatInt(cr.Claim.Epoch, 10),
-		"ABBY_RUN_ID="+r.runID,
-		"ABBY_BOARD="+r.opt.Board,
-		"ABBY_BRIEF_REVISION="+strconv.Itoa(cr.Claim.BriefRevision),
-		"ABBY_RESULT_FILE="+resultFile,
-	)
+	claimEnv := []string{
+		"YAK_TASK_ID=" + cr.Claim.TaskID,
+		"YAK_CLAIM_ID=" + cr.Claim.ID,
+		"YAK_EXECUTION_ID=" + cr.Claim.ExecutionID,
+		"YAK_CLAIM_EPOCH=" + strconv.FormatInt(cr.Claim.Epoch, 10),
+		"YAK_RUN_ID=" + r.runID,
+		"YAK_BOARD=" + r.opt.Board,
+		"YAK_BRIEF_REVISION=" + strconv.Itoa(cr.Claim.BriefRevision),
+		"YAK_RESULT_FILE=" + resultFile,
+	}
 	if briefFile != "" {
-		env = append(env, "ABBY_BRIEF_FILE="+briefFile)
+		claimEnv = append(claimEnv, "YAK_BRIEF_FILE="+briefFile)
+	}
+	for _, kv := range claimEnv {
+		env = append(env, kv, strings.Replace(kv, "YAK_", "ABBY_", 1))
 	}
 	return env
 }
 
-func (r *runner) startChild(cr *abby.ClaimResponse, resultFile, briefFile string) (*childProc, error) {
+func (r *runner) startChild(cr *yak.ClaimResponse, resultFile, briefFile string) (*childProc, error) {
 	if len(r.opt.Command) == 0 {
 		return nil, errors.New("no command")
 	}
@@ -591,18 +594,18 @@ func (r *runner) stopChild(ch *childProc, sigs <-chan os.Signal) {
 	<-ch.done
 }
 
-// childResult is what the command may write to $ABBY_RESULT_FILE.
+// childResult is what the command may write to $YAK_RESULT_FILE.
 type childResult struct {
 	Summary  string          `json:"summary"`
 	Reason   string          `json:"reason"`
-	Evidence []abby.Evidence `json:"evidence"`
+	Evidence []yak.Evidence  `json:"evidence"`
 	Data     json.RawMessage `json:"data"`
 }
 
 // maxResultFileBytes bounds the result file the runner reads.
 const maxResultFileBytes = 1 << 20
 
-// readChildResult reads $ABBY_RESULT_FILE. A missing file is (nil, nil,
+// readChildResult reads $YAK_RESULT_FILE. A missing file is (nil, nil,
 // nil). A file that exists but cannot be used (I/O error, larger than
 // maxResultFileBytes, not exactly one JSON object, unknown fields) is an
 // error; raw holds what was read, for the report.
@@ -667,7 +670,7 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 	if err != nil {
 		return &r.rep, err
 	}
-	evidence := append([]abby.Evidence(nil), r.opt.Evidence...)
+	evidence := append([]yak.Evidence(nil), r.opt.Evidence...)
 	summary := r.opt.Summary
 	if cres != nil {
 		evidence = append(evidence, r.normalizeEvidence(cres.Evidence)...)
@@ -683,8 +686,8 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 	}
 
 	if settlement == "complete" {
-		res := abby.Result{Summary: summary, Evidence: evidence, Data: data}
-		t, err := r.settle(ctx, "complete", func(c context.Context, key string) (*abby.Task, error) {
+		res := yak.Result{Summary: summary, Evidence: evidence, Data: data}
+		t, err := r.settle(ctx, "complete", func(c context.Context, key string) (*yak.Task, error) {
 			return r.ops.Complete(c, r.taskID, r.proof, res, key)
 		})
 		if isRejectedResult(err) {
@@ -707,8 +710,8 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 	if cres != nil && cres.Reason != "" {
 		reason = cres.Reason + " (" + reason + ")"
 	}
-	fr := abby.FailRequest{Reason: reason, Evidence: evidence, Data: data}
-	t, err := r.settle(ctx, "fail", func(c context.Context, key string) (*abby.Task, error) {
+	fr := yak.FailRequest{Reason: reason, Evidence: evidence, Data: data}
+	t, err := r.settle(ctx, "fail", func(c context.Context, key string) (*yak.Task, error) {
 		return r.ops.Fail(c, r.taskID, r.proof, fr, key)
 	})
 	if isRejectedResult(err) {
@@ -725,15 +728,15 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 }
 
 func isRejectedResult(err error) bool {
-	var p *abby.Problem
+	var p *yak.Problem
 	return err != nil && errors.As(err, &p) && (p.Status == 400 || p.Status == 413)
 }
 
 // normalizeEvidence maps evidence kinds the protocol does not accept
 // (CLAIM-031) to "other" and keeps the original kind at the start of the
 // note, so nothing the command reported is lost or rejected for its kind.
-func (r *runner) normalizeEvidence(in []abby.Evidence) []abby.Evidence {
-	out := make([]abby.Evidence, 0, len(in))
+func (r *runner) normalizeEvidence(in []yak.Evidence) []yak.Evidence {
+	out := make([]yak.Evidence, 0, len(in))
 	for _, ev := range in {
 		if !validEvidenceKind(ev.Kind) {
 			orig := ev.Kind
@@ -756,7 +759,7 @@ func (r *runner) normalizeEvidence(in []abby.Evidence) []abby.Evidence {
 
 // withProblem copies the server's problem into rr.
 func withProblem(err error, rr *rejectedResult) *rejectedResult {
-	var p *abby.Problem
+	var p *yak.Problem
 	if errors.As(err, &p) {
 		rr.Status, rr.Code, rr.Detail = p.Status, p.Code, p.Detail
 	}
@@ -815,9 +818,9 @@ func (r *runner) resultRejected(ctx context.Context, rr *rejectedResult) (*runRe
 
 	// The reason must be valid UTF-8 (the server rejects it otherwise), so
 	// cut the problem text on a rune boundary.
-	reason := "abby run: " + truncateUTF8(strings.ToValidUTF8(what, "�"), 600) +
+	reason := "yak run: " + truncateUTF8(strings.ToValidUTF8(what, "�"), 600) +
 		"; claim released so the work can be settled again with a corrected result, not without its evidence"
-	t, rerr := r.settle(ctx, "release", func(c context.Context, key string) (*abby.Task, error) {
+	t, rerr := r.settle(ctx, "release", func(c context.Context, key string) (*yak.Task, error) {
 		return r.ops.Release(c, r.taskID, r.proof, reason, key)
 	})
 	r.rep.Renewals = r.renewals

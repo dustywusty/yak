@@ -30,7 +30,7 @@ state is `claimed` and `expires_at ≤ now`, the read shows:
 
 | Field | Value |
 |---|---|
-| `state`, `abby.task.state` | `ready` |
+| `state`, `yak.task.state` | `ready` |
 | `current_claim` | `null` |
 | `last_claim` | that claim, `status: "expired"`, `ended_at = expires_at`, `end_recorded_at: null` |
 | `revision` | recorded revision + 1 |
@@ -46,7 +46,7 @@ during an active claim and `completed` is terminal, so the prerequisites
 that made the task claimable still hold (TASK-033).
 
 All read surfaces use it: `GET …/tasks/{id}`, `GET …/tasks` (including the
-`state` filter), `label=abby.task.state:…` on thread lists, snapshot task
+`state` filter), `label=yak.task.state:…` on thread lists, snapshot task
 items, claim-next candidate selection, and replayed responses.
 
 ### 2. Materialization: first writer under the board lock
@@ -87,9 +87,9 @@ from a CSPRNG. The server stores `SHA-256(secret)` as the verifier
 
 For replay, the server also stores the secret encrypted with AES-256-GCM:
 
-- Key: from operator configuration (`ABBY_CLAIM_REPLAY_KEYS`, a keyring of
+- Key: from operator configuration (`YAK_CLAIM_REPLAY_KEYS`, a keyring of
   `key_id:base64key`, first entry used to encrypt). Never stored in the
-  database. The reference server also accepts `ABBY_CLAIM_PROOF_KEY`
+  database. The reference server also accepts `YAK_CLAIM_PROOF_KEY`
   (one base64 key, ID `k1`) when the keyring variable is unset.
 - Associated data: `board_id ‖ task_id ‖ claim_id ‖ actor_id ‖ epoch`, so
   a ciphertext copied to another row does not decrypt.
@@ -105,7 +105,7 @@ proof_unavailable: true`. A replay never writes: no new claim, no event,
 no change to `expires_at`.
 
 If no key is configured, the server stores no ciphertext and advertises
-no `abby.tasks.claim_proof_replay` capability. Replays then always return
+no `yak.tasks.claim_proof_replay` capability. Replays then always return
 `proof_unavailable: true`; the lost claim lapses within one lease (≤ 300 s)
 or a manager blocks the task.
 
@@ -163,7 +163,7 @@ requests.
 
 | Alternative | Why not |
 |---|---|
-| Show recorded state `claimed` with `current_claim.active: false` (the earlier proposal) | Every client must compute effective state. `abby.task.state` filters and the `state` list filter would return the wrong set. Claim-next and lists would disagree. |
+| Show recorded state `claimed` with `current_claim.active: false` (the earlier proposal) | Every client must compute effective state. `yak.task.state` filters and the `state` list filter would return the wrong set. Claim-next and lists would disagree. |
 | Materialize on read (a GET writes and emits) | GETs would need the board lock and would emit events; read load would become write load; a read-only credential would cause writes. |
 | Depend on the sweeper | Forbidden by the owner. A late sweeper would block new claims. |
 | Use a database timer or `pg_cron` | Not portable; still a sweeper. |
@@ -199,6 +199,6 @@ rev 3 and emitted the same two events.
 - Operators who want proof replay must manage one more key; rotation
   works by adding a new first key and keeping old ones until all active
   claims (≤ 300 s) have ended.
-- Logs and traces must drop the `Abby-Claim-Proof` header (design §13).
+- Logs and traces must drop the `Yak-Claim-Proof` header (design §13).
 - ADR-0005's deferred "expiry projection for tasks" is resolved: snapshot
   task items use the effective view at capture time (TASK-092).

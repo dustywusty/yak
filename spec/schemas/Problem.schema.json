@@ -14,8 +14,8 @@
   "properties": {
     "type": {
       "type": "string",
-      "pattern": "^urn:abby:problem:[a-z0-9_]+$",
-      "description": "Always \"urn:abby:problem:\" + code."
+      "pattern": "^urn:yak:problem:[a-z0-9_]+$",
+      "description": "Always \"urn:yak:problem:\" + code."
     },
     "title": {
       "type": "string",
@@ -29,7 +29,7 @@
     "code": {
       "type": "string",
       "pattern": "^[a-z0-9_]+$",
-      "description": "Stable Abby error code (design §5.3). Known P1 codes: validation_failed, unauthenticated, forbidden, not_found, already_exists, idempotency_conflict, invalid_transition, newer_message, resync_required, cursor_expired, snapshot_expired, revision_conflict, limit_exceeded, method_not_allowed, precondition_required, temporarily_unavailable. Added by P2 (spec/p2-tasks.md §18): task_claimed, claim_lost, task_claim_active, dependency_cycle, task_root_protected."
+      "description": "Stable Yak error code (design §5.3). Known P1 codes: validation_failed, unauthenticated, forbidden, not_found, already_exists, idempotency_conflict, invalid_transition, newer_message, resync_required, cursor_expired, snapshot_expired, revision_conflict, limit_exceeded, method_not_allowed, precondition_required, temporarily_unavailable. Added by P2 (spec/p2-tasks.md §18): task_claimed, claim_lost, task_claim_active, dependency_cycle, task_root_protected."
     },
     "detail": {
       "type": "string"
@@ -41,7 +41,7 @@
     },
     "header": {
       "type": "string",
-      "description": "validation_failed: the missing request header. precondition_required (P2): the missing header, If-Match or Abby-Claim-Proof."
+      "description": "validation_failed: the missing request header. precondition_required (P2): the missing header, If-Match or Yak-Claim-Proof."
     },
     "latest_message_id": {
       "type": "string",

@@ -13,12 +13,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dustywusty/abby/sdk/go/abby"
+	"github.com/dustywusty/yak/sdk/go/yak"
 )
 
 // ---- shared helpers ----
 
-// proofArg reads the claim proof from --proof-file or ABBY_CLAIM_PROOF.
+// proofArg reads the claim proof from --proof-file or YAK_CLAIM_PROOF.
 // Proofs are never accepted as command-line values (like tokens).
 func proofArg(cmd *cobra.Command) (string, error) {
 	if f, _ := cmd.Flags().GetString("proof-file"); f != "" {
@@ -28,14 +28,14 @@ func proofArg(cmd *cobra.Command) (string, error) {
 		}
 		return strings.TrimSpace(string(b)), nil
 	}
-	if v := os.Getenv("ABBY_CLAIM_PROOF"); v != "" {
+	if v := yakEnv("YAK_CLAIM_PROOF"); v != "" {
 		return strings.TrimSpace(v), nil
 	}
-	return "", usage("this command needs the claim proof: pass --proof-file F or set ABBY_CLAIM_PROOF")
+	return "", usage("this command needs the claim proof: pass --proof-file F or set YAK_CLAIM_PROOF")
 }
 
 func addProofFlag(cmd *cobra.Command) {
-	cmd.Flags().String("proof-file", "", "file holding the claim proof (env ABBY_CLAIM_PROOF)")
+	cmd.Flags().String("proof-file", "", "file holding the claim proof (env YAK_CLAIM_PROOF)")
 }
 
 func writeSecretFile(path, s string) error {
@@ -59,7 +59,7 @@ func addIfRevision(cmd *cobra.Command, required bool) {
 func ifRevision(cmd *cobra.Command, required bool) (int64, error) {
 	r, _ := cmd.Flags().GetInt64("if-revision")
 	if required && r <= 0 {
-		return 0, usage("--if-revision is required (read it with `abby task show ID`)")
+		return 0, usage("--if-revision is required (read it with `yak task show ID`)")
 	}
 	return r, nil
 }
@@ -80,8 +80,8 @@ func addLease(cmd *cobra.Command) {
 }
 
 // parseEvidence parses kind:ref[:note].
-func parseEvidence(items []string) ([]abby.Evidence, error) {
-	var out []abby.Evidence
+func parseEvidence(items []string) ([]yak.Evidence, error) {
+	var out []yak.Evidence
 	for _, it := range items {
 		kind, rest, ok := strings.Cut(it, ":")
 		if !ok || rest == "" {
@@ -90,7 +90,7 @@ func parseEvidence(items []string) ([]abby.Evidence, error) {
 		if !validEvidenceKind(kind) {
 			return nil, usage("--evidence kind must be %s; got %q (use other:REF:NOTE for anything else)", evidenceKindList, kind)
 		}
-		ev := abby.Evidence{Kind: kind, Ref: rest}
+		ev := yak.Evidence{Kind: kind, Ref: rest}
 		// URLs contain ':'; only split a note off other kinds.
 		if kind != "url" {
 			if ref, note, ok := strings.Cut(rest, ":"); ok {
@@ -117,13 +117,13 @@ func validEvidenceKind(kind string) bool {
 }
 
 // commitEvidence turns --commit values into evidence, refusing empty IDs.
-func commitEvidence(commits []string) ([]abby.Evidence, error) {
-	var out []abby.Evidence
+func commitEvidence(commits []string) ([]yak.Evidence, error) {
+	var out []yak.Evidence
 	for _, c := range commits {
 		if strings.TrimSpace(c) == "" {
 			return nil, usage("--commit must not be empty")
 		}
-		out = append(out, abby.Evidence{Kind: "commit", Ref: c})
+		out = append(out, yak.Evidence{Kind: "commit", Ref: c})
 	}
 	return out, nil
 }
@@ -134,7 +134,7 @@ func addEvidenceFlags(cmd *cobra.Command) {
 	cmd.Flags().String("data", "", "result data as a JSON object")
 }
 
-func evidenceFlags(cmd *cobra.Command) ([]abby.Evidence, json.RawMessage, error) {
+func evidenceFlags(cmd *cobra.Command) ([]yak.Evidence, json.RawMessage, error) {
 	evs, _ := cmd.Flags().GetStringArray("evidence")
 	ev, err := parseEvidence(evs)
 	if err != nil {
@@ -177,7 +177,7 @@ func labelFilter(items []string) map[string][]string {
 
 func strPtr(s string) *string { return &s }
 
-func printTask(t *abby.Task) error {
+func printTask(t *yak.Task) error {
 	if gf.json {
 		return printJSON(t)
 	}
@@ -185,7 +185,7 @@ func printTask(t *abby.Task) error {
 	return nil
 }
 
-func taskLine(t *abby.Task) string {
+func taskLine(t *yak.Task) string {
 	extra := ""
 	if t.CurrentClaim != nil {
 		extra = fmt.Sprintf("  claim=%s by %s until %s", t.CurrentClaim.ID, t.CurrentClaim.ActorID, t.CurrentClaim.ExpiresAt.Format(time.RFC3339))
@@ -196,7 +196,7 @@ func taskLine(t *abby.Task) string {
 	return fmt.Sprintf("%s  %-9s  rev %-3d epoch %-3d %-20s %s%s", t.ID, t.State, t.Revision, t.Epoch, t.ChannelPath, t.Title, extra)
 }
 
-func printTaskDetail(t *abby.Task) error {
+func printTaskDetail(t *yak.Task) error {
 	if gf.json {
 		return printJSON(t)
 	}
@@ -235,7 +235,7 @@ func printTaskDetail(t *abby.Task) error {
 
 // printClaim prints a claim response. The proof goes to proofFile if set,
 // else to stdout (human) or in the JSON document (--json).
-func printClaim(cr *abby.ClaimResponse, proofFile string) error {
+func printClaim(cr *yak.ClaimResponse, proofFile string) error {
 	proof := cr.ProofValue()
 	if proofFile != "" && proof != "" {
 		if err := writeSecretFile(proofFile, proof); err != nil {
@@ -262,7 +262,7 @@ func printClaim(cr *abby.ClaimResponse, proofFile string) error {
 	return nil
 }
 
-func claimErr(cr *abby.ClaimResponse) error {
+func claimErr(cr *yak.ClaimResponse) error {
 	if cr.ProofUnavailable {
 		return &exitErr{exitClaimLost, errors.New("claim replayed without a proof (proof_unavailable)")}
 	}
@@ -272,9 +272,9 @@ func claimErr(cr *abby.ClaimResponse) error {
 // ---- commands ----
 
 func taskCmd() *cobra.Command {
-	task := &cobra.Command{Use: "task", Short: "Create, claim, and settle tasks (profile abby.p2.tasks)"}
+	task := &cobra.Command{Use: "task", Short: "Create, claim, and settle tasks (profile yak.p2.tasks)"}
 
-	create := boardCmd("create CHANNEL", "Create a task with a new thread (text from --text or stdin)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	create := boardCmd("create CHANNEL", "Create a task with a new thread (text from --text or stdin)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		title, _ := cmd.Flags().GetString("title")
 		text, err := textArg(cmd)
 		if err != nil {
@@ -288,7 +288,7 @@ func taskCmd() *cobra.Command {
 		if len(lm) == 0 {
 			lm = nil
 		}
-		req := abby.CreateTaskRequest{Thread: &abby.NewThread{Channel: args[0], Title: title, Text: text, Labels: lm}}
+		req := yak.CreateTaskRequest{Thread: &yak.NewThread{Channel: args[0], Title: title, Text: text, Labels: lm}}
 		if err := fillAssignDeps(cmd, c, &req); err != nil {
 			return err
 		}
@@ -304,8 +304,8 @@ func taskCmd() *cobra.Command {
 	assignDepFlags(create)
 	addIdem(create)
 
-	convert := boardCmd("convert THREAD", "Turn an existing thread into a task", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-		req := abby.CreateTaskRequest{ThreadID: args[0]}
+	convert := boardCmd("convert THREAD", "Turn an existing thread into a task", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+		req := yak.CreateTaskRequest{ThreadID: args[0]}
 		if err := fillAssignDeps(cmd, c, &req); err != nil {
 			return err
 		}
@@ -318,7 +318,7 @@ func taskCmd() *cobra.Command {
 	assignDepFlags(convert)
 	addIdem(convert)
 
-	show := boardCmd("show ID", "Show the effective task view", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	show := boardCmd("show ID", "Show the effective task view", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		t, err := c.Tasks(b).Get(cmd.Context(), args[0])
 		if err != nil {
 			return err
@@ -329,8 +329,8 @@ func taskCmd() *cobra.Command {
 		return t.CheckState()
 	})
 
-	list := boardCmd("list", "List tasks in creation order", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-		f := abby.TaskFilter{}
+	list := boardCmd("list", "List tasks in creation order", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+		f := yak.TaskFilter{}
 		f.Channel, _ = cmd.Flags().GetString("channel")
 		f.Subtree, _ = cmd.Flags().GetString("subtree")
 		f.States, _ = cmd.Flags().GetStringArray("state")
@@ -345,7 +345,7 @@ func taskCmd() *cobra.Command {
 			return err
 		}
 		var bad error
-		err = c.Tasks(b).ListAll(cmd.Context(), f, func(t abby.Task) error {
+		err = c.Tasks(b).ListAll(cmd.Context(), f, func(t yak.Task) error {
 			if gf.json {
 				_ = json.NewEncoder(os.Stdout).Encode(t)
 			} else {
@@ -368,12 +368,12 @@ func taskCmd() *cobra.Command {
 	list.Flags().String("owner", "", "me or an owner actor ID")
 	list.Flags().StringArray("label", nil, "root label filter key or key:value (repeatable)")
 
-	edit := boardCmd("edit ID", "Change the title or owner (manager, --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	edit := boardCmd("edit ID", "Change the title or owner (manager, --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		rev, err := ifRevision(cmd, true)
 		if err != nil {
 			return err
 		}
-		req := abby.PatchTaskRequest{}
+		req := yak.PatchTaskRequest{}
 		if cmd.Flags().Changed("title") {
 			v, _ := cmd.Flags().GetString("title")
 			req.Title = &v
@@ -395,7 +395,7 @@ func taskCmd() *cobra.Command {
 	edit.Flags().String("owner", "", "new owner actor ID")
 	addIfRevision(edit, true)
 
-	brief := boardCmd("brief ID", "Show the current brief; --revision N, --list, or --set to update it", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	brief := boardCmd("brief ID", "Show the current brief; --revision N, --list, or --set to update it", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		tc := c.Tasks(b)
 		ctx := cmd.Context()
 		if set, _ := cmd.Flags().GetBool("set"); set {
@@ -476,7 +476,7 @@ func taskCmd() *cobra.Command {
 	addIfRevision(brief, false)
 	addIdem(brief)
 
-	redact := boardCmd("redact-root ID", "Tombstone the task root and scrub every brief (cancels unfinished work)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	redact := boardCmd("redact-root ID", "Tombstone the task root and scrub every brief (cancels unfinished work)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		rev, _ := cmd.Flags().GetInt64("if-root-revision")
 		if rev <= 0 {
 			return usage("--if-root-revision is required (the root message revision)")
@@ -492,7 +492,7 @@ func taskCmd() *cobra.Command {
 	redact.Flags().String("reason", "", "reason")
 	addIdem(redact)
 
-	claims := boardCmd("claims ID", "Show the claim history (newest first, no proofs)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	claims := boardCmd("claims ID", "Show the claim history (newest first, no proofs)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		tok := ""
 		for {
 			pg, err := c.Tasks(b).Claims(cmd.Context(), args[0], tok, 200)
@@ -514,12 +514,12 @@ func taskCmd() *cobra.Command {
 		}
 	})
 
-	claim := boardCmd("claim ID", "Claim one task; prints the proof once (or writes --proof-file)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	claim := boardCmd("claim ID", "Claim one task; prints the proof once (or writes --proof-file)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		lease, err := leaseSeconds(cmd)
 		if err != nil {
 			return err
 		}
-		req := abby.ClaimRequest{LeaseSeconds: lease}
+		req := yak.ClaimRequest{LeaseSeconds: lease}
 		if cmd.Flags().Changed("expect-brief-revision") {
 			v, _ := cmd.Flags().GetInt("expect-brief-revision")
 			req.ExpectBriefRevision = &v
@@ -539,7 +539,7 @@ func taskCmd() *cobra.Command {
 	claim.Flags().String("proof-file", "", "write the proof to this file (mode 0600) instead of stdout")
 	addIdem(claim)
 
-	next := boardCmd("next", "Claim the oldest eligible task; exit 7 if none before --wait ends", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	next := boardCmd("next", "Claim the oldest eligible task; exit 7 if none before --wait ends", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		lease, err := leaseSeconds(cmd)
 		if err != nil {
 			return err
@@ -570,7 +570,7 @@ func taskCmd() *cobra.Command {
 	next.Flags().String("proof-file", "", "write the proof to this file (mode 0600) instead of stdout")
 	addIdem(next)
 
-	renew := boardCmd("renew ID", "Renew your claim (claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	renew := boardCmd("renew ID", "Renew your claim (claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		proof, err := proofArg(cmd)
 		if err != nil {
 			return err
@@ -606,7 +606,7 @@ func taskCmd() *cobra.Command {
 	addProofFlag(renew)
 	addIdem(renew)
 
-	release := boardCmd("release ID", "Give the task back (claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	release := boardCmd("release ID", "Give the task back (claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		proof, err := proofArg(cmd)
 		if err != nil {
 			return err
@@ -622,7 +622,7 @@ func taskCmd() *cobra.Command {
 	addProofFlag(release)
 	addIdem(release)
 
-	complete := boardCmd("complete ID", "Complete the task with a result (claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	complete := boardCmd("complete ID", "Complete the task with a result (claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		proof, err := proofArg(cmd)
 		if err != nil {
 			return err
@@ -632,7 +632,7 @@ func taskCmd() *cobra.Command {
 			return err
 		}
 		summary, _ := cmd.Flags().GetString("summary")
-		t, err := c.Tasks(b).Complete(cmd.Context(), args[0], proof, abby.Result{Summary: summary, Evidence: ev, Data: data}, idemKey(cmd))
+		t, err := c.Tasks(b).Complete(cmd.Context(), args[0], proof, yak.Result{Summary: summary, Evidence: ev, Data: data}, idemKey(cmd))
 		if err != nil {
 			return err
 		}
@@ -643,7 +643,7 @@ func taskCmd() *cobra.Command {
 	addProofFlag(complete)
 	addIdem(complete)
 
-	fail := boardCmd("fail ID", "Fail the task with a reason (claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	fail := boardCmd("fail ID", "Fail the task with a reason (claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		proof, err := proofArg(cmd)
 		if err != nil {
 			return err
@@ -656,7 +656,7 @@ func taskCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		t, err := c.Tasks(b).Fail(cmd.Context(), args[0], proof, abby.FailRequest{Reason: reason, Evidence: ev, Data: data}, idemKey(cmd))
+		t, err := c.Tasks(b).Fail(cmd.Context(), args[0], proof, yak.FailRequest{Reason: reason, Evidence: ev, Data: data}, idemKey(cmd))
 		if err != nil {
 			return err
 		}
@@ -667,7 +667,7 @@ func taskCmd() *cobra.Command {
 	addProofFlag(fail)
 	addIdem(fail)
 
-	block := boardCmd("block ID", "Block the task (manager; or the claimant with --claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	block := boardCmd("block ID", "Block the task (manager; or the claimant with --claimant)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		reason, _ := cmd.Flags().GetString("reason")
 		if reason == "" {
 			return usage("--reason is required")
@@ -692,8 +692,8 @@ func taskCmd() *cobra.Command {
 	addIfRevision(block, false)
 	addIdem(block)
 
-	manager := func(use, short string, reasonRequired bool, op func(t *abby.Tasks, cmd *cobra.Command, id, reason string, rev int64) (*abby.Task, error)) *cobra.Command {
-		mc := boardCmd(use, short, cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	manager := func(use, short string, reasonRequired bool, op func(t *yak.Tasks, cmd *cobra.Command, id, reason string, rev int64) (*yak.Task, error)) *cobra.Command {
+		mc := boardCmd(use, short, cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 			reason, _ := cmd.Flags().GetString("reason")
 			if reasonRequired && reason == "" {
 				return usage("--reason is required")
@@ -714,17 +714,17 @@ func taskCmd() *cobra.Command {
 		addIdem(mc)
 		return mc
 	}
-	unblock := manager("unblock ID", "Unblock the task (manager)", false, func(t *abby.Tasks, cmd *cobra.Command, id, reason string, rev int64) (*abby.Task, error) {
+	unblock := manager("unblock ID", "Unblock the task (manager)", false, func(t *yak.Tasks, cmd *cobra.Command, id, reason string, rev int64) (*yak.Task, error) {
 		return t.Unblock(cmd.Context(), id, reason, rev, idemKey(cmd))
 	})
-	cancel := manager("cancel ID", "Cancel the task (manager; revokes any claim)", true, func(t *abby.Tasks, cmd *cobra.Command, id, reason string, rev int64) (*abby.Task, error) {
+	cancel := manager("cancel ID", "Cancel the task (manager; revokes any claim)", true, func(t *yak.Tasks, cmd *cobra.Command, id, reason string, rev int64) (*yak.Task, error) {
 		return t.Cancel(cmd.Context(), id, reason, rev, idemKey(cmd))
 	})
-	reopen := manager("reopen ID", "Reopen a failed or canceled task (manager)", false, func(t *abby.Tasks, cmd *cobra.Command, id, reason string, rev int64) (*abby.Task, error) {
+	reopen := manager("reopen ID", "Reopen a failed or canceled task (manager)", false, func(t *yak.Tasks, cmd *cobra.Command, id, reason string, rev int64) (*yak.Task, error) {
 		return t.Reopen(cmd.Context(), id, reason, rev, idemKey(cmd))
 	})
 
-	assign := boardCmd("assign ID [ACTOR]", "Set the assignee, or clear it with --none (manager, --if-revision)", cobra.RangeArgs(1, 2), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	assign := boardCmd("assign ID [ACTOR]", "Set the assignee, or clear it with --none (manager, --if-revision)", cobra.RangeArgs(1, 2), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		rev, err := ifRevision(cmd, true)
 		if err != nil {
 			return err
@@ -753,7 +753,7 @@ func taskCmd() *cobra.Command {
 	addIfRevision(assign, true)
 	addIdem(assign)
 
-	deps := boardCmd("deps ID [TASK...]", "Replace the readable prerequisites (manager, --if-revision); --clear for none", cobra.MinimumNArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	deps := boardCmd("deps ID [TASK...]", "Replace the readable prerequisites (manager, --if-revision); --clear for none", cobra.MinimumNArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		rev, err := ifRevision(cmd, true)
 		if err != nil {
 			return err
@@ -784,7 +784,7 @@ func assignDepFlags(cmd *cobra.Command) {
 	cmd.Flags().StringArray("depends-on", nil, "prerequisite task ID (repeatable or comma-separated)")
 }
 
-func fillAssignDeps(cmd *cobra.Command, c *abby.Client, req *abby.CreateTaskRequest) error {
+func fillAssignDeps(cmd *cobra.Command, c *yak.Client, req *yak.CreateTaskRequest) error {
 	a, _ := cmd.Flags().GetString("assignee")
 	a, err := actorArg(cmd.Context(), c, "--assignee", a, false)
 	if err != nil {
@@ -809,9 +809,9 @@ func addClaimNextFlags(cmd *cobra.Command) {
 	f.Duration("wait", 0, "wait up to this long for work (repeats claim-next; each request waits at most 30s)")
 }
 
-func claimNextFlags(cmd *cobra.Command) (abby.ClaimNextRequest, time.Duration, error) {
+func claimNextFlags(cmd *cobra.Command) (yak.ClaimNextRequest, time.Duration, error) {
 	f := cmd.Flags()
-	var req abby.ClaimNextRequest
+	var req yak.ClaimNextRequest
 	req.Channel, _ = f.GetString("channel")
 	req.Subtree, _ = f.GetString("subtree")
 	labels, _ := f.GetStringArray("label")
@@ -832,12 +832,12 @@ func claimNextFlags(cmd *cobra.Command) (abby.ClaimNextRequest, time.Duration, e
 // ---- batch / plan ----
 
 type planFile struct {
-	PlanID string           `json:"plan_id,omitempty"`
-	Tasks  []abby.BatchItem `json:"tasks"`
+	PlanID string          `json:"plan_id,omitempty"`
+	Tasks  []yak.BatchItem `json:"tasks"`
 }
 
 func batchCmd() *cobra.Command {
-	bc := boardCmd("batch FILE.json", "Create tasks from a plan file: ≤ batch size is one atomic batch; larger plans are resumable topological batches", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
+	bc := boardCmd("batch FILE.json", "Create tasks from a plan file: ≤ batch size is one atomic batch; larger plans are resumable topological batches", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		raw, err := os.ReadFile(args[0])
 		if err != nil {
 			return err
@@ -856,7 +856,7 @@ func batchCmd() *cobra.Command {
 			planID = pf.PlanID
 		}
 		if planID == "" {
-			planID = abby.PlanID(pf.Tasks)
+			planID = yak.PlanID(pf.Tasks)
 		}
 		size, _ := cmd.Flags().GetInt("batch-size")
 		if size < 1 {
@@ -866,25 +866,25 @@ func batchCmd() *cobra.Command {
 		if progPath == "" {
 			progPath = args[0] + ".progress.json"
 		}
-		var prog *abby.PlanProgress
+		var prog *yak.PlanProgress
 		if pb, err := os.ReadFile(progPath); err == nil {
-			prog = &abby.PlanProgress{}
+			prog = &yak.PlanProgress{}
 			if err := json.Unmarshal(pb, prog); err != nil {
 				return fmt.Errorf("%s: %w", progPath, err)
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		batches, err := abby.PlanBatches(pf.Tasks, size)
+		batches, err := yak.PlanBatches(pf.Tasks, size)
 		if err != nil {
 			return usage("%v", err)
 		}
 		if len(batches) > 1 {
 			fmt.Fprintf(os.Stderr, "plan %s: %d tasks in %d batches; each batch is atomic, the plan is not; progress in %s\n", planID, len(pf.Tasks), len(batches), progPath)
 		}
-		prog, err = c.Tasks(b).SubmitPlan(cmd.Context(), pf.Tasks, abby.PlanOptions{
+		prog, err = c.Tasks(b).SubmitPlan(cmd.Context(), pf.Tasks, yak.PlanOptions{
 			PlanID: planID, BatchSize: size, Progress: prog,
-			Save: func(p *abby.PlanProgress) error {
+			Save: func(p *yak.PlanProgress) error {
 				bb, _ := json.MarshalIndent(p, "", "  ")
 				tmp := progPath + ".tmp"
 				if err := os.WriteFile(tmp, bb, 0o600); err != nil {
@@ -924,19 +924,19 @@ func batchCmd() *cobra.Command {
 	return bc
 }
 
-// ---- abby run ----
+// ---- yak run ----
 
 func runCmd() *cobra.Command {
 	rc := &cobra.Command{
 		Use:   "run [TASK_ID] [flags] -- COMMAND [ARGS...]",
 		Short: "Claim a task, run COMMAND while renewing the lease, and settle from its exit status",
 		Long: `Claims TASK_ID, or the oldest eligible task (claim-next) when no ID is given,
-then runs COMMAND with ABBY_TASK_ID, ABBY_CLAIM_ID, ABBY_EXECUTION_ID,
-ABBY_CLAIM_EPOCH, ABBY_RUN_ID, ABBY_BOARD, ABBY_BRIEF_REVISION, ABBY_BRIEF_FILE,
-and ABBY_RESULT_FILE in its environment. The claim proof is never passed.
+then runs COMMAND with YAK_TASK_ID, YAK_CLAIM_ID, YAK_EXECUTION_ID,
+YAK_CLAIM_EPOCH, YAK_RUN_ID, YAK_BOARD, YAK_BRIEF_REVISION, YAK_BRIEF_FILE,
+and YAK_RESULT_FILE in its environment. The claim proof is never passed.
 Exit 0 completes the task; other exits fail it. COMMAND may write
 {"summary", "reason", "evidence": [{kind, ref, note}], "data": {...}} to
-$ABBY_RESULT_FILE. Evidence kinds are message, commit, url, artifact, or
+$YAK_RESULT_FILE. Evidence kinds are message, commit, url, artifact, or
 other; the runner records any other kind in the file as "other" with the
 original kind at the start of the note. If the server still rejects the
 result (400/413), or the result file exists but is unusable (unreadable,
@@ -949,7 +949,7 @@ Exit codes: 0 completed, 7 no work, 9 claim lost,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dash := cmd.ArgsLenAtDash()
 			if dash < 0 || dash >= len(args) {
-				return usage("give the command after --, e.g. abby run -- make test")
+				return usage("give the command after --, e.g. yak run -- make test")
 			}
 			pre, command := args[:dash], args[dash:]
 			if len(pre) > 1 {
@@ -1018,7 +1018,7 @@ Exit codes: 0 completed, 7 no work, 9 claim lost,
 				if rep.ExitStatus != nil {
 					st = " exit_status=" + strconv.Itoa(*rep.ExitStatus)
 				}
-				fmt.Fprintf(os.Stderr, "abby run: outcome=%s task=%s execution=%s renewals=%d%s\n", rep.Outcome, rep.TaskID, rep.ExecutionID, rep.Renewals, st)
+				fmt.Fprintf(os.Stderr, "yak run: outcome=%s task=%s execution=%s renewals=%d%s\n", rep.Outcome, rep.TaskID, rep.ExecutionID, rep.Renewals, st)
 			}
 			return runErr
 		},

@@ -62,7 +62,7 @@ export function wall(root, { threadHref }) {
       foot = [h('p', { class: 'w-reason' }, snip(t.block?.reason, 120)),
         person(st, t.assignee_actor_id || t.block?.by_actor_id, st.gated(t) ? ' · needs approval' : ' · held')];
     } else {
-      const ls = Object.entries(st.labels(t)).filter(([k]) => !k.startsWith('abby.') && !k.startsWith('plan.')).slice(0, 2);
+      const ls = Object.entries(st.labels(t)).filter(([k]) => !k.startsWith('yak.') && !k.startsWith('plan.')).slice(0, 2);
       foot = h('span', { class: 'w-meta' }, '◌ ', t.assignee_actor_id ? `for ${st.handle(t.assignee_actor_id)}` : 'Unclaimed',
         ls.map(([k, v]) => ` · ${k}=${v}`).join(''));
     }

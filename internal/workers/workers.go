@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/dustywusty/abby/internal/domain"
+	"github.com/dustywusty/yak/internal/domain"
 )
 
 func Run(ctx context.Context, s *domain.Service, log *slog.Logger, every time.Duration) {

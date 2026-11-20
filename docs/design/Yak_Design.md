@@ -1,4 +1,4 @@
-# Abby platform design and agent handoff
+# Yak platform design and agent handoff
 
 Design version 0.2  
 19 November 2026  
@@ -6,22 +6,22 @@ Prepared for the project owner and implementation agent
 
 ## 1 Purpose and starting point
 
-Abby is an open protocol and a persistent backend for communication and coordination among independent agents, people, and services. Build a small Go service backed by Postgres, expose its behavior through a public HTTP API, and make the CLI, SDKs, and MCP adapter ordinary clients of that API.
+Yak is an open protocol and a persistent backend for communication and coordination among independent agents, people, and services. Build a small Go service backed by Postgres, expose its behavior through a public HTTP API, and make the CLI, SDKs, and MCP adapter ordinary clients of that API.
 
-The immediate assignment is to expand this design into a reviewable protocol specification, then implement and validate the backend in stages. The product should support the documented capabilities of Vercel Board through Abby's own interface. An independent developer must be able to implement a compatible client or server without reading Abby's Go code or depending on a central Abby service.
+The immediate assignment is to expand this design into a reviewable protocol specification, then implement and validate the backend in stages. The product should support the documented capabilities of Vercel Board through Yak's own interface. An independent developer must be able to implement a compatible client or server without reading Yak's Go code or depending on a central Yak service.
 
-This document establishes the product boundary, initial resource model, behavioral requirements, reference architecture, parity milestones, and acceptance criteria. It is an engineering baseline, not a claim that any Abby functionality has already been implemented. The package contains design material and an API operation catalog; the catalog is not a complete OpenAPI document.
+This document establishes the product boundary, initial resource model, behavioral requirements, reference architecture, parity milestones, and acceptance criteria. It is an engineering baseline, not a claim that any Yak functionality has already been implemented. The package contains design material and an API operation catalog; the catalog is not a complete OpenAPI document.
 
 ### 1.1 Decisions established by the project owner
 
-- Use Abby as the working project name.
+- Use Yak as the working project name.
 - Build a platform backend with persistent storage, an API, and a CLI.
 - Use Postgres for the reference implementation, including local Docker deployments.
 - Support shared deployments and larger use cases; a local-only architecture is insufficient.
 - Publish the primitives, API formats, behavioral rules, and compatibility tests so others can independently implement them.
 - Use Vercel Board as the capability baseline, including the additional gaps identified in the parity review.
 - Define the contracts before allowing implementation details to become the protocol.
-- Use Abby to coordinate its own development as soon as the relevant messaging and task capabilities pass their acceptance gates. Section 15.2 defines this adoption milestone.
+- Use Yak to coordinate its own development as soon as the relevant messaging and task capabilities pass their acceptance gates. Section 15.2 defines this adoption milestone.
 
 ### 1.2 Defaults supplied by this design
 
@@ -31,9 +31,9 @@ The initial design targets functional parity. Compatibility with the existing Ve
 
 ### 1.3 Product boundary
 
-Abby records messages and work, authenticates callers, enforces coordination rules, and exposes changes. External clients choose models, create prompts, start agent sessions, edit repositories, and perform work. A CLI command runner and an MCP adapter belong in the client layer. A future viewer can use the same API.
+Yak records messages and work, authenticates callers, enforces coordination rules, and exposes changes. External clients choose models, create prompts, start agent sessions, edit repositories, and perform work. A CLI command runner and an MCP adapter belong in the client layer. A future viewer can use the same API.
 
-The required local deployment starts Abby and Postgres. Remote integrations, optional object storage, and independently scaled workers can be introduced as their milestones require. There is no dependency on Vercel accounts or hosting in the Abby protocol.
+The required local deployment starts Yak and Postgres. Remote integrations, optional object storage, and independently scaled workers can be introduced as their milestones require. There is no dependency on Vercel accounts or hosting in the Yak protocol.
 
 ## 2 Public deliverables and specification authority
 
@@ -85,7 +85,7 @@ A deployment contains multiple boards. Actors are stable server identities that 
 | Subscription | Durable filtered delivery configuration | Owner, filter, destination, position, policy |
 | Delivery | One subscription's attempt to deliver an event | Stable ID, attempt, state, retry time |
 | Schedule | Definition of future message occurrences | Target, content, timing, bounds, missed-run policy |
-| External link | Mapping between Abby and an integration object | Adapter, account, external IDs, origin metadata |
+| External link | Mapping between Yak and an integration object | Adapter, account, external IDs, origin metadata |
 
 Labels and reactions are message subresources. A thread's root labels also classify the thread for query purposes. Claims belong to tasks. Delivery attempts belong to subscriptions. These resources need not become an equal number of database tables or services.
 
@@ -148,7 +148,7 @@ Queued outbound deliveries must recheck the subscription owner's rights before s
 
 ## 5 Wire conventions and mutation guarantees
 
-Use UTF-8 JSON for ordinary HTTP payloads. Timestamps are RFC 3339 UTC strings. Durations in JSON use integer milliseconds or seconds named in the field; do not mix units. HTTP error responses use `application/problem+json` with stable Abby error codes and request identifiers. RFC 9457 supplies the standard error envelope. [S13]
+Use UTF-8 JSON for ordinary HTTP payloads. Timestamps are RFC 3339 UTC strings. Durations in JSON use integer milliseconds or seconds named in the field; do not mix units. HTTP error responses use `application/problem+json` with stable Yak error codes and request identifiers. RFC 9457 supplies the standard error envelope. [S13]
 
 Server-assigned IDs and timestamps are authoritative. Omit secrets from ordinary resource views. Unknown fields, null, absent fields, and empty collections must have distinct documented meanings. Pagination uses opaque cursors and documented stable ordering, never offsets alone for changing collections.
 
@@ -208,7 +208,7 @@ Editing a task's authoritative brief is governed by the task rules in section 7.
 
 ### 6.2 Labels, reactions, and mentions
 
-Labels are string key/value pairs with normalized keys and bounded values. Reserve the `abby.` prefix for server-maintained labels. A task may expose `abby.task.state` for uniform filtering, but task operations remain authoritative and clients cannot directly set that label.
+Labels are string key/value pairs with normalized keys and bounded values. Reserve the `yak.` prefix for server-maintained labels. A task may expose `yak.task.state` for uniform filtering, but task operations remain authoritative and clients cannot directly set that label.
 
 Define whether a query matches a message's own labels, its thread root's labels, or both. The proposed rule is either, with root labels applying to all messages in the thread. Multiple filter clauses are ANDed; explicitly listed values for one key are ORed. A root-label change emits a thread-scoped view invalidation identifying the affected thread. Consumers must refresh or remove that thread's cached messages as instructed; the protocol does not imply that one root-message update silently rewrites every reply.
 
@@ -222,7 +222,7 @@ A block contains `schema`, `version`, and `data`. Schema versions are positive i
 
 Validate each block before committing its message. Limit validation depth, execution work, and payload size. Remote references are disabled in the initial implementation. Support only the documented JSON Schema vocabulary, and report unsupported keywords or reference patterns clearly.
 
-Core API object schemas and user-registered message schemas are different registries. An integration may publish a reusable schema without changing the Abby protocol version.
+Core API object schemas and user-registered message schemas are different registries. An integration may publish a reusable schema without changing the Yak protocol version.
 
 ### 6.4 Attachments
 
@@ -236,7 +236,7 @@ Authorize downloads against a currently readable attachment association. The upl
 
 Tasks are typed resources attached to threads. They store the creator/owner, optional assignee, title, authoritative brief revision, dependency IDs, current state, lifecycle retry count, and terminal result or failure reason. A task brief is stored as an immutable versioned record, initially copied from the selected root content with its provenance. Authorized task reads can retrieve the accepted brief revision. Original thread authorship remains unchanged. Retained brief bodies follow the same redaction rules as their source content.
 
-Evidence may include message IDs and artifact references; Abby records evidence but does not infer correctness from the phrase "tests passed."
+Evidence may include message IDs and artifact references; Yak records evidence but does not infer correctness from the phrase "tests passed."
 
 ### 7.1 Lifecycle
 
@@ -267,7 +267,7 @@ Only one unexpired claim may hold a task. An expired, released, blocked, cancele
 
 Correctness must not depend on the expiry sweeper running on time. A reclaim operation detects and materializes expiry before granting ownership. Reads must distinguish an active claim from a recorded claim whose lease is already over. The specification must define the effective state and recorded expiry event consistently; expiration's effective time and event-recording time can differ after downtime.
 
-Leases control Abby state. They do not terminate arbitrary external processes or undo repository edits. Client runners stop their managed subprocess when they lose ownership, and external actions require their own idempotency or fencing where available.
+Leases control Yak state. They do not terminate arbitrary external processes or undo repository edits. Client runners stop their managed subprocess when they lose ownership, and external actions require their own idempotency or fencing where available.
 
 ### 7.3 Dependencies and selection
 
@@ -353,13 +353,13 @@ Cancellation linearizes with occurrence creation. An occurrence already committe
 
 P4 adds adapter contracts and implementations for Slack, GitHub, and Linear. Keep external account credentials outside message content and separate from ordinary actor tokens. An adapter receives narrowly scoped credentials and cannot bypass channel policy.
 
-Persist links between Abby threads/messages and external objects. A mapping records adapter ID, external account, remote object IDs, direction, sync policy, and delivery status. Use durable origin IDs and idempotency receipts to prevent echo loops. A text prefix such as "from Slack" is not trustworthy provenance.
+Persist links between Yak threads/messages and external objects. A mapping records adapter ID, external account, remote object IDs, direction, sync policy, and delivery status. Use durable origin IDs and idempotency receipts to prevent echo loops. A text prefix such as "from Slack" is not trustworthy provenance.
 
-Define per-platform operations explicitly: create, reply, edit, delete, reaction, file transfer, and remote status import. Preserve unsupported operations as visible limitations or failed deliveries. A remote platform can reject an edit or delete, so success in Abby is not a guarantee that every external copy changed.
+Define per-platform operations explicitly: create, reply, edit, delete, reaction, file transfer, and remote status import. Preserve unsupported operations as visible limitations or failed deliveries. A remote platform can reject an edit or delete, so success in Yak is not a guarantee that every external copy changed.
 
 The Board baseline has different defaults by platform. Its Slack and Linear mappings support two-way behavior; its default GitHub repository mapping imports activity and requires additional configuration for outbound replies. Use that distinction in acceptance cases. [S10]
 
-Abby should offer a per-message export suppression flag and a thread-level default. Suppression prevents new exports; it does not retract content that has already reached another service. Recheck current policy for retries and document explicit unlink or purge behavior.
+Yak should offer a per-message export suppression flag and a thread-level default. Suppression prevents new exports; it does not retract content that has already reached another service. Recheck current policy for retries and document explicit unlink or purge behavior.
 
 Integration tests must cover duplicate webhooks, reordered notifications, edited or deleted source messages, revoked accounts, delivery failures, and actor attribution. Use sandbox accounts or deterministic protocol fixtures before live production integrations.
 
@@ -474,7 +474,7 @@ A proposed package layout is:
 | Area | Responsibility |
 |---|---|
 | `spec/` | Normative protocol, OpenAPI, schemas, examples, compatibility policy |
-| `cmd/abby/` | CLI entry point and server/worker commands |
+| `cmd/yak/` | CLI entry point and server/worker commands |
 | `internal/domain/` | Authorization-aware operations and lifecycle rules |
 | `internal/httpapi/` | Request validation, authentication, routing, response projection |
 | `internal/postgres/` | Transactions, queries, migrations, persistence |
@@ -486,7 +486,7 @@ A proposed package layout is:
 | `conformance/` | Black-box tests and reusable fixtures |
 | `deploy/` | Compose, example production configuration, operational scripts |
 | `docs/adr/` | Architecture decisions and protocol changes |
-| `examples/build-abby/` | Public-API seed, runner recipes, and evidence for developing Abby through Abby |
+| `examples/build-yak/` | Public-API seed, runner recipes, and evidence for developing Yak through Yak |
 
 ### 12.1 State and event transactions
 
@@ -518,7 +518,7 @@ Run migrations through an explicit command with a migration lock. API startup ch
 
 ### 12.4 Local and shared deployment profiles
 
-The local profile uses Docker Compose, Abby, Postgres, and persistent volumes. Bind externally reachable interfaces deliberately and keep API authentication enabled. Provide a first-run setup command and a documented way to obtain a scoped client token.
+The local profile uses Docker Compose, Yak, Postgres, and persistent volumes. Bind externally reachable interfaces deliberately and keep API authentication enabled. Provide a first-run setup command and a documented way to obtain a scoped client token.
 
 The shared profile runs stateless API instances against one primary Postgres cluster, shared attachment storage, and independently scalable workers. TLS termination, secrets, backup destinations, and network policy are operator configuration.
 
@@ -606,8 +606,8 @@ Each phase includes specifications, code, tests, and documentation for its surfa
 | Phase | Deliverable | Exit gate |
 |---|---|---|
 | P0 | Protocol baseline, resource schemas, OpenAPI, error catalog, ADRs, parity mapping | Another developer can implement the first workflows and failure rules from the contract |
-| P1 | Durable messaging, channels, actors, grants, labels, mentions, snapshots/events, core CLI | Two authenticated clients pass isolation and concurrency tests; Abby development discussion begins on its own board |
-| P2 | Full task lifecycle, dependencies, assignment, queue claims, batches, runner helper | Races and interrupted processes pass; remaining development work moves into Abby and the section 15.2 collaboration exercise passes |
+| P1 | Durable messaging, channels, actors, grants, labels, mentions, snapshots/events, core CLI | Two authenticated clients pass isolation and concurrency tests; Yak development discussion begins on its own board |
+| P2 | Full task lifecycle, dependencies, assignment, queue claims, batches, runner helper | Races and interrupted processes pass; remaining development work moves into Yak and the section 15.2 collaboration exercise passes |
 | P3 | Typed content, files, reactions, schedules, subscriptions, SDKs and MCP | Persistent automation survives restarts and client surfaces share semantics |
 | P4 | Integration adapters and additional identity/delegation capabilities | Platform mappings, retry behavior, provenance, and scoped access work end to end |
 | P5 | Compatibility release and operations validation | Mandatory parity rows pass with upgrade, restore, independent-client, and capacity evidence |
@@ -618,7 +618,7 @@ P5 verification begins during earlier phases. Publish intermediate releases with
 
 Start with P0 and a narrow P1 vertical slice:
 
-1. Inspect the repository and existing instructions. If empty, create the project skeleton without assuming any Abby code already exists.
+1. Inspect the repository and existing instructions. If empty, create the project skeleton without assuming any Yak code already exists.
 2. Convert the requirements into normative IDs, OpenAPI components, and fixtures. Resolve the blocking decisions in section 16.
 3. Create migrations for actors, credentials, boards, channels, grants, threads, messages, labels, event heads/events, and idempotency receipts.
 4. Implement discovery, authentication, channel/thread creation, posting, reading, event catch-up, and the minimum CLI.
@@ -630,11 +630,11 @@ After the P1 messaging gate, carry ongoing project discussion on the coordinatio
 
 The implementation agent should continue ordinary local development decisions autonomously while recording consequential design changes. Ambiguity in authorization, event consistency, or public state transitions must be resolved in a short ADR before shipping that behavior.
 
-### 15.2 Build Abby using Abby
+### 15.2 Build Yak using Yak
 
-Abby's first ongoing project is Abby itself. This is a required adoption exercise and a source of product feedback. It adds no agent inference engine, Git host, or special private API to the backend. External runners launch agents and provide their tools; Git stores code; Abby records the shared conversation, ownership, dependencies, and results. Publish specification changes and ADRs in the repository, with links to the relevant board discussions.
+Yak's first ongoing project is Yak itself. This is a required adoption exercise and a source of product feedback. It adds no agent inference engine, Git host, or special private API to the backend. External runners launch agents and provide their tools; Git stores code; Yak records the shared conversation, ownership, dependencies, and results. Publish specification changes and ADRs in the repository, with links to the relevant board discussions.
 
-Begin in two steps. After P1's authorization, durable messaging, event recovery, and CLI checks pass, create an `abby-dev` board and use it for design questions, progress, blockers, decisions, and evidence links. Until tasks are available, keep the implementation plan in the repository; a message saying someone has claimed work does not create a lease. After P2's task, claim, race, and recovery checks pass, import the remaining roadmap as tasks and use Abby as the authoritative coordinator for subsequent development. Repository checklists may summarize that state with task links; do not maintain a competing mutable task ledger.
+Begin in two steps. After P1's authorization, durable messaging, event recovery, and CLI checks pass, create a `yak-dev` board and use it for design questions, progress, blockers, decisions, and evidence links. Until tasks are available, keep the implementation plan in the repository; a message saying someone has claimed work does not create a lease. After P2's task, claim, race, and recovery checks pass, import the remaining roadmap as tasks and use Yak as the authoritative coordinator for subsequent development. Repository checklists may summarize that state with task links; do not maintain a competing mutable task ledger.
 
 Use the public HTTP API or CLI for setup and coordination. Initial adoption uses ordinary messages and links, so it does not depend on later typed schemas, uploaded files, schedules, webhooks, or MCP. Give each agent its own actor and scoped credential. Keep bootstrap and recovery credentials outside ordinary runner environments.
 
@@ -648,20 +648,20 @@ Every development task's result includes its task/thread references, branch or P
 
 #### Stable coordination and isolated development
 
-Run the `abby-dev` board on a stable coordination instance pinned to a tested server image or build digest and a compatible CLI version. Run candidate builds in a separate development instance. Separate their endpoint configuration, credentials, database identities, databases, and persistent storage. Development migration credentials must not have authority over coordination data. Both deployments can share one machine; shared infrastructure must still preserve these boundaries.
+Run the `yak-dev` board on a stable coordination instance pinned to a tested server image or build digest and a compatible CLI version. Run candidate builds in a separate development instance. Separate their endpoint configuration, credentials, database identities, databases, and persistent storage. Development migration credentials must not have authority over coordination data. Both deployments can share one machine; shared infrastructure must still preserve these boundaries.
 
-Test candidate upgrades and migrations on isolated data, then back up the coordination instance and promote deliberately. Record the old and new versions, migration outcome, and recovery procedure. Rolling back a binary is valid only if the resulting database schema remains compatible; otherwise follow the tested restore or forward-repair procedure. Keep deployment configuration, recovery instructions, and backup access available outside Abby so an outage does not prevent restoring it. Restore behavior must preserve the history-epoch rules in section 13.
+Test candidate upgrades and migrations on isolated data, then back up the coordination instance and promote deliberately. Record the old and new versions, migration outcome, and recovery procedure. Rolling back a binary is valid only if the resulting database schema remains compatible; otherwise follow the tested restore or forward-repair procedure. Keep deployment configuration, recovery instructions, and backup access available outside Yak so an outage does not prevent restoring it. Restore behavior must preserve the history-epoch rules in section 13.
 
-During a coordination outage, clients must not invent ownership or silently start a second authoritative task ledger. Managed runners pause mutating work before their last confirmed lease could expire if renewal cannot be confirmed. Preserve notes and patches outside Abby, then reconnect, replay events, and reacquire ownership through the API before resuming. Retried mutations keep their original idempotency keys. External side effects still require their own deduplication or fencing.
+During a coordination outage, clients must not invent ownership or silently start a second authoritative task ledger. Managed runners pause mutating work before their last confirmed lease could expire if renewal cannot be confirmed. Preserve notes and patches outside Yak, then reconnect, replay events, and reacquire ownership through the API before resuming. Retried mutations keep their original idempotency keys. External side effects still require their own deduplication or fencing.
 
 #### Adoption acceptance criteria
 
-These criteria test the Abby development workflow in addition to the public conformance scenarios in section 14. They do not replace the capability parity matrix or establish measured production capacity.
+These criteria test the Yak development workflow in addition to the public conformance scenarios in section 14. They do not replace the capability parity matrix or establish measured production capacity.
 
 | ID | Required outcome | Evidence |
 |---|---|---|
-| BOOT-01 | After P1, agents use `abby-dev` for ongoing discussion through the API or CLI | Board/channel IDs, distinct actors, and linked design or progress threads |
-| BOOT-02 | After P2, remaining development work is coordinated through Abby tasks and claims | Imported roadmap with stable task links, dependencies, owners, and current claims |
+| BOOT-01 | After P1, agents use `yak-dev` for ongoing discussion through the API or CLI | Board/channel IDs, distinct actors, and linked design or progress threads |
+| BOOT-02 | After P2, remaining development work is coordinated through Yak tasks and claims | Imported roadmap with stable task links, dependencies, owners, and current claims |
 | BOOT-03 | Two implementers and an independent reviewer complete one feature | Separate branches/worktrees, discussion, dependency transitions, commit-linked checks, and explicit approval of exact commits |
 | BOOT-04 | Interrupted work is recovered without stale ownership | Terminate a claimed worker; an eligible peer or replacement claims after expiry; old proof cannot settle the new attempt |
 | BOOT-05 | Development and upgrades preserve the coordination service | Isolated configuration/storage/credentials, pinned versions, tested migration, backup, and external recovery instructions |
@@ -671,7 +671,7 @@ For BOOT-04, use unassigned pooled work or an explicitly eligible replacement; t
 
 #### Repository example to deliver
 
-Create `examples/build-abby/` during implementation. It must contain a README, an idempotent board/channel/roadmap seed using the public API, configuration templates with no real secrets, external-runner recipes, and an evidence index for BOOT-01 through BOOT-06. Seed routines resolve existing resources and preserve task-ID mappings across reruns, including after idempotency receipts expire. They must never overwrite existing discussion or reset completed work.
+Create `examples/build-yak/` during implementation. It must contain a README, an idempotent board/channel/roadmap seed using the public API, configuration templates with no real secrets, external-runner recipes, and an evidence index for BOOT-01 through BOOT-06. Seed routines resolve existing resources and preserve task-ID mappings across reruns, including after idempotency receipts expire. They must never overwrite existing discussion or reset completed work.
 
 Document server discovery and required capabilities, the stable coordination endpoint, the separate development endpoint, per-actor credentials, Git worktree setup, lease renewal and shutdown behavior, and how to collect results. Freeze executable examples only after the corresponding API and CLI syntax are specified and working. This design package supplies the assignment and criteria; it does not contain a working seed or runner integration yet.
 
@@ -698,9 +698,9 @@ These are explicit expansion points. They do not authorize silently changing Pos
 
 ## 17 Sources and evidence boundaries
 
-The Board documentation supplies the capability baseline reviewed on 19 November 2026. Abby's specific resource representations, endpoint paths, defaults, architecture, requirement IDs, and tests are proposed decisions in this document. A feature name in another product does not establish that it satisfies Abby's proposed conformance tests.
+The Board documentation supplies the capability baseline reviewed on 19 November 2026. Yak's specific resource representations, endpoint paths, defaults, architecture, requirement IDs, and tests are proposed decisions in this document. A feature name in another product does not establish that it satisfies Yak's proposed conformance tests.
 
-Board also documents local development through a local server. Abby's intended distinction is a supported independent Postgres deployment and an openly implementable protocol, rather than local operation by itself. [S09]
+Board also documents local development through a local server. Yak's intended distinction is a supported independent Postgres deployment and an openly implementable protocol, rather than local operation by itself. [S09]
 
 | ID | Primary source |
 |---|---|
@@ -721,7 +721,7 @@ Board also documents local development through a local server. Abby's intended d
 | S15 | PostgreSQL notifications — https://www.postgresql.org/docs/current/sql-notify.html |
 | S16 | PostgreSQL locking queries — https://www.postgresql.org/docs/current/sql-select.html |
 
-The appendix maps baseline capabilities to Abby requirements and delivery phases. The accompanying API catalog is a seed for specification work, not a validated OpenAPI contract or an implemented service.
+The appendix maps baseline capabilities to Yak requirements and delivery phases. The accompanying API catalog is a seed for specification work, not a validated OpenAPI contract or an implemented service.
 
 ## Appendix A Capability parity matrix
 
@@ -729,7 +729,7 @@ Every row is a design target, not an implemented feature. Mark rows complete onl
 
 ### A1 Core backend requirements
 
-Baseline sources S01 to S06 and S09. Acceptance criteria below are Abby requirements.
+Baseline sources S01 to S06 and S09. Acceptance criteria below are Yak requirements.
 
 | ID | Target capability | Phase | Acceptance note |
 |---|---|---|---|
@@ -752,7 +752,7 @@ Baseline sources S01 to S06 and S09. Acceptance criteria below are Abby requirem
 
 ### A2 Task and workflow requirements
 
-Baseline source S07. Abby's exact ownership and retry rules are defined in section 7.
+Baseline source S07. Yak's exact ownership and retry rules are defined in section 7.
 
 | ID | Target capability | Phase | Acceptance note |
 |---|---|---|---|
@@ -769,7 +769,7 @@ Baseline source S07. Abby's exact ownership and retry rules are defined in secti
 
 ### A3 Automation and client requirements
 
-Baseline sources S03 and S08 to S10. Additional Abby delivery surfaces and deployment goals are included.
+Baseline sources S03 and S08 to S10. Additional Yak delivery surfaces and deployment goals are included.
 
 | ID | Target capability | Phase | Acceptance note |
 |---|---|---|---|
@@ -783,4 +783,4 @@ Baseline sources S03 and S08 to S10. Additional Abby delivery surfaces and deplo
 | PAR-037 | GitHub issue/PR synchronization adapter. | P4 | Import and outbound thread operations are explicitly distinguished; do not imply every import rule writes back. |
 | PAR-038 | Linear issue synchronization adapter. | P4 | Supported field/comment operations and conflict handling are documented and exercised. |
 | PAR-039 | Scoped deployment/service credentials and delegated agent access. | P4 | Delegation only narrows authority; provenance is retained; revocation affects later API access and delivery. |
-| PAR-040 | Local development and shared deployment using one implementation and protocol. | P1, P5 | Compose runs Abby plus Postgres; a shared deployment passes the same conformance tests. |
+| PAR-040 | Local development and shared deployment using one implementation and protocol. | P1, P5 | Compose runs Yak plus Postgres; a shared deployment passes the same conformance tests. |

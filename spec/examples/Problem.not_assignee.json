@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:forbidden",
+  "type": "urn:yak:problem:forbidden",
   "title": "Forbidden",
   "status": 403,
   "code": "forbidden",

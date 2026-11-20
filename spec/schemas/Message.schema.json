@@ -67,7 +67,7 @@
             "string",
             "null"
           ],
-          "description": "Abby-Run-Id of the authoring request, if any."
+          "description": "Yak-Run-Id of the authoring request, if any."
         }
       }
     },

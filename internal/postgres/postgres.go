@@ -21,8 +21,8 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// migrationLockKey is the pg_advisory_lock key used by `abby migrate`.
-const migrationLockKey = 0x4162627930303031 // "Abby0001"
+// migrationLockKey is the pg_advisory_lock key used by `yak migrate`.
+const migrationLockKey = 0x4162627930303031 // "Abby0001": keep the lock shared with previous binaries
 
 type migration struct {
 	Version int
@@ -122,7 +122,7 @@ func Migrate(ctx context.Context, url string) ([]string, error) {
 	return applied, nil
 }
 
-var ErrMigrationRequired = errors.New("database schema is behind this binary; run `abby migrate`")
+var ErrMigrationRequired = errors.New("database schema is behind this binary; run `yak migrate`")
 var ErrSchemaTooNew = errors.New("database schema is newer than this binary supports")
 
 // CheckSchema verifies the database is at exactly the version this binary

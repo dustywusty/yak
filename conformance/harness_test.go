@@ -1,9 +1,9 @@
-// Package conformance is Abby's black-box protocol suite. It talks to a
+// Package conformance is Yak's black-box protocol suite. It talks to a
 // server only through the public HTTP API, with its own minimal client (no
-// Abby SDK, no server packages, no SQL). Configure with:
+// Yak SDK, no server packages, no SQL). Configure with:
 //
-//	ABBY_CONFORMANCE_URL          base URL, e.g. http://127.0.0.1:8080
-//	ABBY_CONFORMANCE_ADMIN_TOKEN  a server-administrator bearer token
+//	YAK_CONFORMANCE_URL          base URL, e.g. http://127.0.0.1:8080
+//	YAK_CONFORMANCE_ADMIN_TOKEN  a server-administrator bearer token
 //
 // Each test creates its own actors and boards, so runs do not interfere.
 package conformance
@@ -24,15 +24,15 @@ import (
 )
 
 var (
-	baseURL    = os.Getenv("ABBY_CONFORMANCE_URL")
-	adminToken = os.Getenv("ABBY_CONFORMANCE_ADMIN_TOKEN")
+	baseURL    = os.Getenv("YAK_CONFORMANCE_URL")
+	adminToken = conformanceAdminToken()
 	httpc      = &http.Client{Timeout: 60 * time.Second}
 )
 
 func skipIfUnconfigured(t *testing.T) {
 	t.Helper()
 	if baseURL == "" || adminToken == "" {
-		t.Skip("set ABBY_CONFORMANCE_URL and ABBY_CONFORMANCE_ADMIN_TOKEN to run the conformance suite")
+		t.Skip("set YAK_CONFORMANCE_URL and YAK_CONFORMANCE_ADMIN_TOKEN to run the conformance suite")
 	}
 }
 
@@ -225,4 +225,16 @@ func types(evs []J) []string {
 		out = append(out, e["type"].(string))
 	}
 	return out
+}
+
+// A file keeps the test administrator secret out of shell variables.
+func conformanceAdminToken() string {
+	if p := os.Getenv("YAK_CONFORMANCE_ADMIN_TOKEN_FILE"); p != "" {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			panic("cannot read conformance administrator token file: " + err.Error())
+		}
+		return strings.TrimSpace(string(b))
+	}
+	return os.Getenv("YAK_CONFORMANCE_ADMIN_TOKEN")
 }
