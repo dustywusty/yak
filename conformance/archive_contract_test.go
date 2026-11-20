@@ -223,7 +223,7 @@ func TestArchiveContractFixture(t *testing.T) {
 	}
 	// Restore only fields explicitly omitted/changed by the archive contract,
 	// then validate the complete public portions (including historical payloads).
-	schemaByFile := map[string]string{"board.json": "Board", "actors.jsonl": "Actor", "channels.jsonl": "Channel", "threads.jsonl": "Thread", "messages.jsonl": "Message", "tasks.jsonl": "Task", "task_briefs.jsonl": "Brief", "claims.jsonl": "Claim", "events.jsonl": "Event"}
+	schemaByFile := map[string]string{"board.json": "Board", "actors.jsonl": "Actor", "channels.jsonl": "Channel", "grants.jsonl": "Grant", "threads.jsonl": "Thread", "messages.jsonl": "Message", "tasks.jsonl": "Task", "task_briefs.jsonl": "Brief", "claims.jsonl": "Claim", "events.jsonl": "Event"}
 	index, _ := fixtureIndex(f)
 	for file, name := range schemaByFile {
 		for i, v := range f[file] {
