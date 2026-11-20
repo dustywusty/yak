@@ -96,6 +96,67 @@ async function matrix(action,named=action,setup='',report=check,reject=false){
  check(`${action}: explicit confirmation writes exact ordered intent`,await op17026Matches(n,reject?expected.slice(0,1):expected));
  check(`${action}: one receipt after settlement`,await ev(`document.querySelectorAll('.op-pending').length===${receipts+1}`));
 }
+async function op17033ConflictCase() {
+ let assertions=0;
+ const assert=(name,ok,detail='')=>{assertions++;check(`OP17-033: ${name}`,ok,detail)};
+ await freshIdentityFixture("Object.assign(window.__op.task,{revision:833,brief_revision:33,assignee_actor_id:'a'});window.__op.conflict=true;");
+ try {
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-conflict-token';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");await open();
+  await ev("window.__op.enableConflictClock()");
+  const before=await count(),details=await op17030ExpectedDetails('Approve and unblock');
+  await click('Approve and unblock');await until("!!document.querySelector('.op-confirm[open]')");
+  assert('initial confirmation displays exact original read',await ev("document.querySelector('.op-confirm pre').textContent")===details);
+  assert('initial review sends no writes',await count()===before);
+  await confirm('Approve and unblock');
+  await until("!!document.querySelector('.op-receipts pre')");
+  const capture=await ev('window.__op.conflictCapture');
+  assert('412 captures exactly one rejected unblock',capture.writeCount===before+1 && capture.intent.method==='POST' && capture.intent.path==='/v1/boards/brd_test/tasks/t/unblock' && JSON.stringify(capture.intent.body)==='{"reason":"gate approved"}');
+  assert('rejected intent uses exact original revision and an intent key',capture.intent.headers['If-Match']==='"833"' && /^[a-f0-9]{32}$/.test(capture.intent.headers['Idempotency-Key']));
+  assert('legacy no-retry receipt wording is present',await ev("document.querySelector('.op-receipts').textContent.includes('Previously read:') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')"));
+  const shown=await ev("document.querySelector('.op-receipts pre').textContent");
+  const values=t=>({state:t.state,assignee:t.assignee_actor_id,claim:t.current_claim?.actor_id||null,brief_revision:String(t.brief_revision),revision:String(t.revision),direct_action_required:t.direct_action_required});
+  assert('receipt shows actual old and new assignee and revision',shown===`Previously read: ${JSON.stringify(values(capture.before))}\nNow: ${JSON.stringify(values(capture.after))}\nLabels previously: {"gate":"pending"}\nLabels now: {"gate":"pending"}` && capture.before.assignee_actor_id==='a' && capture.after.assignee_actor_id==='bot' && capture.before.revision===833 && capture.after.revision===834,shown);
+  const actionWrites=()=>ev(`window.__op.writes.slice(${before}).filter(w=>!(w.method==='POST' && w.path==='/v1/boards/brd_test/tasks/t/claims/q/renew'))`);
+  const noRepeat=async phase=>{
+   await ev("window.__op.clockProbe=false;setTimeout(()=>window.__op.clockProbe=true,30000)");
+   const drained=await ev('window.__op.drainConflictClock()');
+   assert(`${phase}: controlled timers and refresh completions drained`,drained.fired>0 && drained.reads===0 && await ev('window.__op.clockProbe'));
+   const writes=await actionWrites();
+   assert(`${phase}: zero further action writes`,writes.length===1,JSON.stringify(writes));
+   assert(`${phase}: rejected request headers and body remain unchanged`,JSON.stringify(writes[0])===JSON.stringify(capture.intent));
+  };
+  await noRepeat('after 412');
+  await click('Review current state');
+  await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
+  await noRepeat('after explicit read refresh');
+  const latest=await op17030ExpectedDetails('Approve and unblock');
+  assert('freshly displayed read uses changed assignee and exact revision',latest.includes('Assignee: @bot (agent)') && latest.includes('Revision: 834; brief: 33'));
+  await click('Approve and unblock');await until("!!document.querySelector('.op-confirm[open]')");
+  assert('new dialog displays exact refreshed read',await ev("document.querySelector('.op-confirm pre').textContent")===latest);
+  await cancel();await noRepeat('after Cancel');
+  await click('Approve and unblock');await until("!!document.querySelector('.op-confirm[open]')");
+  assert('native Enter targets focused Cancel',await ev("document.activeElement.textContent==='Cancel'"));
+  await op17027Enter();await noRepeat('after native Enter');
+  if(await ev("!!document.querySelector('.op-confirm[open]')"))await cancel();
+  await click('Approve and unblock');await until("!!document.querySelector('.op-confirm[open]')");
+  assert('fresh explicit confirmation still shows latest values',await ev("document.querySelector('.op-confirm pre').textContent")===latest);
+  await noRepeat('before fresh confirmation');
+  await confirm('Approve and unblock');
+  await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+  await ev('window.__op.drainConflictClock()');
+  const writes=await actionWrites(),unblocks=writes.filter(w=>w.path.endsWith('/unblock'));
+  assert('fresh confirmation adds exactly one new state-changing intent',writes.length===3 && unblocks.length===2 && writes[2].method==='PATCH' && writes[2].path==='/v1/boards/brd_test/messages/root/labels' && writes[2].body.operations[0].value==='approved',JSON.stringify(writes));
+  assert('new explicit unblock uses latest exact revision and a new key',unblocks[1]?.headers['If-Match']==='"834"' && /^[a-f0-9]{32}$/.test(unblocks[1]?.headers['Idempotency-Key']) && unblocks[1]?.headers['Idempotency-Key']!==capture.intent.headers['Idempotency-Key']);
+  assert('original rejected If-Match never changes',unblocks[0]?.headers['If-Match']==='"833"' && JSON.stringify(unblocks[0])===JSON.stringify(capture.intent));
+  assert('new intent succeeds against changed task',await ev("window.__op.task.state==='ready' && window.__op.task.assignee_actor_id==='bot' && window.__op.task.revision===835"));
+ } finally {
+  await ev("window.__op.disposeConflictClock?.();document.querySelector('#operator-logout')?.click()");
+ }
+ assert('no browser exceptions',errors.length===0,errors.join(' | '));
+ if(assertions!==30)throw new Error(`OP17-033 expected 30 assertions, executed ${assertions}`);
+ console.log(`OP17-033 executed ${assertions} assertions across one fresh fixture`);
+}
 // OP17-030: the oracle uses API fixture reads and form inputs, never dialog labels.
 async function op17030ExpectedDetails(action) {
  const {task:t,values:v}=await ev(`({task:structuredClone(window.__op.task),values:{title:document.querySelector('input[aria-label^="Task title"]').value,channel:document.querySelector('select[aria-label="Channel"]').value,text:document.querySelector('textarea[aria-label^="Message"]').value,assignee:document.querySelector('select[aria-label="Task assignee"]').value || null,gate:document.querySelector('input[aria-label^="Needs my approval"]').checked,note:document.querySelector('textarea[aria-label="Gate note t"]')?.value || '',newAssignee:document.querySelector('select[aria-label="New assignee"]')?.value || null}})`);
@@ -1395,7 +1456,7 @@ async function op17044WireCase() {
  if(assertions!==10)throw new Error(`OP17-044 executed ${assertions}, expected 10`);
  console.log(`OP17-044 executed ${assertions} assertions across two fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
@@ -1443,7 +1504,7 @@ try {
  check('A11 no dependencies',await ev("!('depends_on' in window.__op.writes.at(-1).body) && window.__op.writes.at(-1).body.direct_action_required===true"));
  // Reopen the synthetic gate to exercise conflict and ambiguous transport paths.
  await ev("window.__op.task.state='blocked';window.__op.task.current_claim=null;window.__op.task.assignee_actor_id=null;window.__op.conflict=true;window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(150);await click('Approve and unblock');await confirm('Approve and unblock');
- check('412 displays before/after and never retries',await ev("document.querySelector('.op-receipts').textContent.includes('Previously read:') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')"));
+ check('412 displays conflict review guidance',await ev("document.querySelector('.op-receipts').textContent.includes('Previously read:') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')"));
  await click('Review current state');await sleep(150);await ev("window.__op.dropUnblock=true");await click('Approve and unblock');await confirm('Approve and unblock');check('uncertain intent disables every new write button',await ev("[...document.querySelectorAll('.op-workspace button')].filter(b=>['Send reply','Set label','Create task'].includes(b.textContent)).every(b=>b.disabled)"));await click('Retry same intent');await sleep(150);
  check('ambiguous unblock retry reuses receipt',await ev("window.__op.seenKeys.at(-1)===window.__op.seenKeys.at(-2)"));
  // A store resync must leave the pending draft and panel intact.

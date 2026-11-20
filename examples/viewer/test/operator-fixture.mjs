@@ -23,6 +23,7 @@ export const op17042ClaimCorpus = [{"id":"q","task_id":"t","actor_id":"a","execu
 // Disposable in-page API. No real token, server, board or task is touched.
 export function operatorFixture() {
   const B='brd_test',now=Date.now(),iso=()=>new Date().toISOString();
+  const fixtureTimeout = (window.setTimeout || setTimeout).bind(window);
   // Snapshot creation and store polling share a signal; the feed owns another.
   let snapshotSignal = null;
   const actors=[{id:'a',handle:'alice',kind:'human'},{id:'bot',handle:'bot',kind:'agent'}];
@@ -52,7 +53,7 @@ export function operatorFixture() {
         if(T.resync && snapshotSignal != null && opts.signal === snapshotSignal && u.searchParams.get('cursor')) {
           T.resync=false;return json({code:'resync_required'},409);
         }
-        if(u.searchParams.get('wait_ms'))await new Promise(r=>setTimeout(r,100));
+        if(u.searchParams.get('wait_ms'))await new Promise(r=>fixtureTimeout(r,100));
         return json({events:T.events,next_cursor:'cur',caught_up:true});
       }
       if(/\/snapshots\//.test(p))return json({items:[{type:'thread',id:thread.id,data:thread},{type:'message',id:root.id,data:root},{type:'task',id:task.id,data:task}],next_page_token:null,continuation_cursor:'cur'});
@@ -87,7 +88,13 @@ export function operatorFixture() {
     if(p===`/v1/boards/${B}/tasks/t/unblock`) {
       if(m!=='POST')return json({},405);
       T.seenKeys.push(opts.headers['Idempotency-Key']);
-      if(T.conflict){T.conflict=false;task.revision++;task.assignee_actor_id='bot';return json({code:'revision_conflict',revision:task.revision},412)}
+      if(T.conflict){
+        T.conflict=false;
+        T.conflictCapture={intent:structuredClone(T.writes.at(-1)),writeCount:T.writes.length,before:structuredClone(task)};
+        task.revision++;task.assignee_actor_id='bot';
+        T.conflictCapture.after=structuredClone(task);
+        return json({code:'revision_conflict',revision:task.revision},412);
+      }
       if(task.state==='blocked'){task.state='ready';task.revision++;T.events.push({id:'approved',type:'task.unblocked',actor_id:'a',credential_id:'cred_test',recorded_at:iso(),payload:{task:{...task},reason:body.reason}});}
       if(T.dropUnblock){T.dropUnblock=false;throw new TypeError('dropped response')}
       return json(task);
@@ -137,6 +144,36 @@ export function operatorFixture() {
     if(m==='PATCH'&&p===`/v1/boards/${B}/messages/reply`)return json({...root,id:'reply',is_root:false,text:body.text});
     if(['PUT','DELETE'].includes(m)&&p===`/v1/boards/${B}/messages/root/reactions/like`)return json({});
     return json({code:'not_found'},404);
+  };
+  // OP17-033: advance application timers while read polling keeps its real delay.
+  T.enableConflictClock = () => {
+    const timers=new Map();let clock=0,nextId=0,reads=0;
+    const timeout=window.setTimeout,interval=window.setInterval,clearTimeout=window.clearTimeout,clearInterval=window.clearInterval;
+    const schedule=(fn,ms,args,repeat)=>{const id=--nextId;timers.set(id,{fn,args,at:clock+Math.max(1,Number(ms)||0),repeat});return id;};
+    window.setTimeout=(fn,ms,...args)=>schedule(fn,ms,args,0);
+    window.setInterval=(fn,ms,...args)=>schedule(fn,ms,args,Math.max(1,Number(ms)||0));
+    window.clearTimeout=window.clearInterval=id=>{if(!timers.delete(id)){clearTimeout(id);clearInterval(id);}};
+    const base=window.fetch;
+    window.fetch=async(url,opts={})=>{
+      const read=(opts.method||'GET')==='GET' && !new URL(url,location.href).pathname.endsWith('/events');
+      if(read)reads++;
+      try{return await base(url,opts);}finally{if(read)reads--;}
+    };
+    T.drainConflictClock=async()=>{
+      const end=clock+60000;let fired=0;
+      const settle=async()=>{for(let n=0;n<100;n++){await new Promise(r=>fixtureTimeout(r,0));if(!reads)return;}throw new Error('OP17-033 refresh did not settle');};
+      await settle();
+      for(;;){
+        const entry=[...timers].filter(([,t])=>t.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];
+        if(!entry)break;
+        if(++fired>1000)throw new Error('OP17-033 timer drain did not converge');
+        const [id,t]=entry;clock=t.at;
+        if(t.repeat)t.at+=t.repeat;else timers.delete(id);
+        t.fn(...t.args);await settle();
+      }
+      clock=end;await settle();return {fired,reads};
+    };
+    T.disposeConflictClock=()=>{timers.clear();window.fetch=base;window.setTimeout=timeout;window.setInterval=interval;window.clearTimeout=clearTimeout;window.clearInterval=clearInterval;};
   };
   // OP17-026: hold the first confirmation response before committing it.
   T.enableConfirmationDelay = () => {
