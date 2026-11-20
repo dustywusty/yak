@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abby-protocol/abby/internal/domain"
-	"github.com/abby-protocol/abby/internal/events"
-	"github.com/abby-protocol/abby/internal/postgres"
-	"github.com/abby-protocol/abby/internal/workers"
+	"github.com/dustywusty/abby/internal/domain"
+	"github.com/dustywusty/abby/internal/events"
+	"github.com/dustywusty/abby/internal/postgres"
+	"github.com/dustywusty/abby/internal/workers"
 )
 
 func setup(t *testing.T) (*domain.Service, *domain.Principal, string) {

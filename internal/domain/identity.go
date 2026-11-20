@@ -13,8 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/abby-protocol/abby/internal/authz"
-	"github.com/abby-protocol/abby/internal/ids"
+	"github.com/dustywusty/abby/internal/authz"
+	"github.com/dustywusty/abby/internal/ids"
 )
 
 // ActorView is the public projection of an actor.

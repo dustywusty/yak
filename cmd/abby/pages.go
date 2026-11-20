@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/abby-protocol/abby/sdk/go/abby"
+	"github.com/dustywusty/abby/sdk/go/abby"
 )
 
 // pageLimit returns the server's limits.max_page_size from discovery, as a

@@ -13,8 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/abby-protocol/abby/internal/authz"
-	"github.com/abby-protocol/abby/internal/events"
+	"github.com/dustywusty/abby/internal/authz"
+	"github.com/dustywusty/abby/internal/events"
 )
 
 // TaskStateLabel is the computed root label of task threads (TASK-027).

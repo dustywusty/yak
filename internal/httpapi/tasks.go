@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/abby-protocol/abby/internal/domain"
-	"github.com/abby-protocol/abby/internal/events"
+	"github.com/dustywusty/abby/internal/domain"
+	"github.com/dustywusty/abby/internal/events"
 )
 
 // claimProof reads Abby-Claim-Proof. The proof is accepted only as a header

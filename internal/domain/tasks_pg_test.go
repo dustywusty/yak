@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abby-protocol/abby/internal/domain"
-	"github.com/abby-protocol/abby/internal/events"
+	"github.com/dustywusty/abby/internal/domain"
+	"github.com/dustywusty/abby/internal/events"
 )
 
 type p2 struct {

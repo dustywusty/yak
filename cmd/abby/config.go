@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/abby-protocol/abby/sdk/go/abby"
+	"github.com/dustywusty/abby/sdk/go/abby"
 )
 
 // Profile is one saved endpoint + credential. Tokens are stored in the

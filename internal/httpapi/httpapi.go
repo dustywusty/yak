@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abby-protocol/abby/internal/domain"
-	"github.com/abby-protocol/abby/internal/events"
-	"github.com/abby-protocol/abby/internal/ids"
-	"github.com/abby-protocol/abby/internal/postgres"
+	"github.com/dustywusty/abby/internal/domain"
+	"github.com/dustywusty/abby/internal/events"
+	"github.com/dustywusty/abby/internal/ids"
+	"github.com/dustywusty/abby/internal/postgres"
 )
 
 const maxBody = 1 << 20

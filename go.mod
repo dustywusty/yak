@@ -1,4 +1,4 @@
-module github.com/abby-protocol/abby
+module github.com/dustywusty/abby
 
 go 1.27.3
 

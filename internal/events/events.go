@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/abby-protocol/abby/internal/authz"
+	"github.com/dustywusty/abby/internal/authz"
 )
 
 // Facet is a redaction-safe projection of an affected resource, used only to

@@ -17,9 +17,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/abby-protocol/abby/internal/authz"
-	"github.com/abby-protocol/abby/internal/events"
-	"github.com/abby-protocol/abby/internal/ids"
+	"github.com/dustywusty/abby/internal/authz"
+	"github.com/dustywusty/abby/internal/events"
+	"github.com/dustywusty/abby/internal/ids"
 )
 
 // Error is a protocol error rendered as application/problem+json.

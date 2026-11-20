@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/abby-protocol/abby/sdk/go/abby"
+	"github.com/dustywusty/abby/sdk/go/abby"
 )
 
 // Exit codes (spec/cli.md).

@@ -3,8 +3,9 @@
 Status: Accepted (2026-11-19)
 
 Reversible engineering choices recorded for review:
-1. Go module path `github.com/abby-protocol/abby` is a placeholder until a
-   public home is chosen.
+1. Go module path is `github.com/dustywusty/abby` (the repository's home,
+   private for now). It replaced the placeholder `github.com/abby-protocol/abby`
+   on 2026-11-20; evidence logs recorded before that keep the old path.
 2. Bootstrap is the operator command `abby admin bootstrap` against the
    database (no network bootstrap endpoint, no default secret).
 3. Token format `abby.<credential_id>.<secret>`; 256-bit secret; SHA-256

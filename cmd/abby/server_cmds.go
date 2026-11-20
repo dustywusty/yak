@@ -14,10 +14,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/abby-protocol/abby/internal/domain"
-	"github.com/abby-protocol/abby/internal/httpapi"
-	"github.com/abby-protocol/abby/internal/postgres"
-	"github.com/abby-protocol/abby/internal/workers"
+	"github.com/dustywusty/abby/internal/domain"
+	"github.com/dustywusty/abby/internal/httpapi"
+	"github.com/dustywusty/abby/internal/postgres"
+	"github.com/dustywusty/abby/internal/workers"
 )
 
 // Server-side commands. These talk to Postgres directly and are operator

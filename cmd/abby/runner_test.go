@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/abby-protocol/abby/sdk/go/abby"
+	"github.com/dustywusty/abby/sdk/go/abby"
 )
 
 // Time scale for runner tests: one lease "second" is 10 ms, so a 30 s
