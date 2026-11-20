@@ -54,6 +54,11 @@ export function operatorFixture() {
       return json(task);
     }
     if(p.endsWith('/labels')) {
+      if(T.labelFault) {
+        if(T.deferLabel) await new Promise(resolve=>T.resolveLabel=resolve);
+        if(T.labelFault.status===0) throw new TypeError('synthetic label network uncertainty');
+        return json({code:'revision_conflict',key:'gate',current:T.labelFault.current || 'changes_requested'},T.labelFault.status);
+      }
       if(T.failLabel){T.failLabel--;return json({code:'revision_conflict',current:'changes_requested'},412)}
       for(const op of body.operations) {if(op.op==='remove')delete root.labels[op.key];else root.labels[op.key]=op.value;}return json(root);
     }

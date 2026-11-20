@@ -97,9 +97,15 @@ export class OperatorSession {
     const i = { ...spec, steps: spec.steps.map((s) => ({ ...s, headers: { ...s.headers, 'Idempotency-Key': randomKey(), 'Yak-Run-Id': this.run } })), index: 0, busy: false, generation: this.generation };
     this.pending.add(i); this.changed(); return i;
   }
-  async perform(i) {
+  async perform(i, { requeue = false } = {}) {
     if (i.busy || !this.active || this.ending || i.generation !== this.generation) return;
-    i.busy = true;
+    // Only a known-failed cosmetic continuation may rejoin the global lock.
+    // Keep the receipt's generation, index and original requests unchanged.
+    if (!this.pending.has(i)) {
+      if (!requeue || !i.continuation || i.done || this.pending.size) return;
+      this.pending.add(i);
+    }
+    i.busy = true; this.changed();
     try {
       while (i.index < i.steps.length) {
         const s = i.steps[i.index], c = this.claims.get(s.path.replace(/\/release$/, ''));
@@ -123,7 +129,16 @@ export class OperatorSession {
         i.index++;
       }
       this.pending.delete(i); i.done = true;
-    } catch (e) { i.error = e; throw e; }
+    } catch (e) {
+      i.error = e;
+      if (['approve', 'changes'].includes(i.kind) && i.index === 1 &&
+          e.status >= 400 && e.status < 500 &&
+          this.active && !this.ending && i.generation === this.generation) {
+        i.continuation = true;
+        this.pending.delete(i);
+      }
+      throw e;
+    }
     finally { i.busy = false; this.changed(); }
   }
   hold(path, result, started = this.mono()) {

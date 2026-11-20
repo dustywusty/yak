@@ -523,7 +523,68 @@ async function delayedDraftCase() {
  assert('all variants executed nonzero assertions', fixtures===25 && assertions>=80);
  console.log(`OP17-018 executed ${assertions} assertions across ${fixtures} fresh delayed-draft fixtures`);
 }
-const operatorCases = new Map([['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function cosmeticReceiptCase() {
+ let assertions=0, fixtures=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-019: ${name}`,ok);};
+ const replyEnabled="[...document.querySelectorAll('.op-workspace button')].find(b=>b.textContent==='Send reply')?.disabled===false";
+ for(const kind of ['approve','changes']) for(const status of [403,404,412,0,502,503,'approved']) {
+  if(kind==='changes' && status==='approved') continue;
+  fixtures++;
+  const name=`${kind}/${status}`, ambiguous=[0,502,503].includes(status);
+  await freshIdentityFixture();
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-cosmetic-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'"); await open();
+   await ev(`window.__op.labelFault={status:${status==='approved'?412:status},current:${JSON.stringify(status==='approved'?'approved':'changes_requested')}};document.querySelector('textarea[aria-label="Gate note t"]').value='original changes';`);
+   const action=kind==='approve'?'Approve and unblock':'Request changes';
+   await click(action); await confirm(action);
+   if(status==='approved') {
+    await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+    assert(`${name}: approved conflict finishes without retry`,await count()===2 && await ev("!document.querySelector('.op-receipts button')"));
+    continue;
+   }
+   await until("document.querySelector('.op-receipts').textContent.includes('Retry label only')");
+   assert(`${name}: explicit partial receipt`,await ev(`document.querySelector('.op-receipts').textContent.includes(${JSON.stringify(kind==='approve'?'Approved; label not updated':'Reply posted; label not updated')})`));
+   await ev('window.__receipt=document.querySelector(".op-pending")');
+   const original=await ev('window.__op.writes[1]');
+   assert(`${name}: original conditional label`,original.body.operations[0].expect.value==='pending' && original.body.operations[0].value===(kind==='approve'?'approved':'changes_requested'));
+   assert(`${name}: global lock matches uncertainty`,await ev(replyEnabled)===!ambiguous);
+   if(!ambiguous && await ev(replyEnabled)) {
+    await ev("document.querySelector('textarea[aria-label^=Message]').value='unrelated message'");
+    await click('Send reply');
+    await until("window.__op.writes.some(w=>w.body?.text==='unrelated message')");
+    assert(`${name}: unrelated message succeeds`,await ev("window.__op.writes.some(w=>w.body?.text==='unrelated message')"));
+   }
+   for(let n=0;n<3;n++) {
+    const before=await count(); await click('Retry label only');
+    assert(`${name}: retry ${n} sends once with original body/key`,await count()===before+1 && JSON.stringify(await ev('window.__op.writes.at(-1)'))===JSON.stringify(original));
+    assert(`${name}: retry ${n} preserves lock semantics`,await ev(replyEnabled)===!ambiguous);
+   }
+   await ev('window.__op.deferLabel=true');
+   const before=await count();
+   await ev("window.__retry=[...document.querySelectorAll('.op-receipts button')].find(b=>b.textContent==='Retry label only');window.__retry.click();window.__retry.click();");
+   await until("typeof window.__op.resolveLabel==='function'");
+   assert(`${name}: rapid retry captures one write and blocks new writes`,await count()===before+1 && !await ev(replyEnabled));
+   // Resolve the same receipt with an uncertain result, then a successful retry.
+   await ev('window.__op.labelFault={status:503};window.__op.resolveLabel();window.__op.deferLabel=false');
+   await until("document.querySelector('.op-receipts').textContent.includes('Retry label only')");
+   assert(`${name}: uncertain retry retains receipt and global lock`,await ev("window.__receipt===document.querySelector('.op-pending') && window.__receipt.textContent.includes('Retry label only')") && !await ev(replyEnabled));
+   await ev('window.__op.labelFault=null'); await click('Retry label only');
+   await until("!document.querySelector('.op-receipts button')");
+   assert(`${name}: resolution permits unrelated writes`,await ev(replyEnabled));
+   const writes=await ev('window.__op.writes');
+   assert(`${name}: first action never repeated`,writes.filter(w=>!w.path.endsWith('/labels')&&w.body?.text!=='unrelated message').length===1);
+   assert(`${name}: every label retry is original request`,writes.filter(w=>w.path.endsWith('/labels')).every(w=>JSON.stringify(w)===JSON.stringify(original)));
+  } finally {
+   await ev("window.__op.deferLabel=false;window.__op.resolveLabel?.();document.querySelector('#operator-logout')?.click()");
+   await until('!document.body.dataset.operator');
+  }
+ }
+ assert('all fresh variants executed',fixtures===13 && assertions>=100);
+ assert('no browser exceptions',errors.length===0);
+ console.log(`OP17-019 executed ${assertions} assertions across ${fixtures} fresh cosmetic receipt fixtures`);
+}
+const operatorCases = new Map([['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

@@ -439,3 +439,60 @@ test('OP17-043 production confirmation displays exactly the revision sent', asyn
   assert.equal(confirmed.spec.steps[0].headers['If-Match'], `"${revision}"`);
  }
 });
+
+// OP17-019: cosmetic receipts must not own the global lock after known rejection.
+for (const kind of ['approve', 'changes']) {
+ for (const status of [403, 404, 412, 0, 502, 503]) {
+  test(`OP17-019 ${kind} label ${status}: original continuation and write lock`, async () => {
+   const calls=[]; let failure=status, release;
+   const s=new OperatorSession({send:async(method,path,body,headers)=>{
+    calls.push(structuredClone({method,path,body,headers}));
+    if(path.endsWith('/labels')) {
+     if(release==='defer') await new Promise(resolve=>release=resolve);
+     if(failure!==null) throw Object.assign(new Error('synthetic label rejection'),{status:failure,problem:{key:'gate',current:'changes_requested'}});
+    }
+    return {};
+   }});
+   s.start(me(),server,now);
+   try {
+    const i=s.intent(taskIntent(kind,'/v1/boards/b',{id:'t',thread_id:'th',revision:3},{root:'root',note:'original note'}));
+    const generation=i.generation, steps=i.steps;
+    await assert.rejects(s.perform(i));
+    const ambiguous=[0,502,503].includes(status);
+    assert.equal(i.index,1); assert.equal(i.done,undefined);
+    assert.equal(s.pending.size,ambiguous?1:0,'only active or uncertain intents block unrelated writes');
+    const original=calls[1];
+    if(!ambiguous) {
+     const message=s.intent({kind:'message',steps:[{method:'POST',path:'/v1/boards/b/threads/other/messages',body:{text:'unrelated'}}]});
+     const before=calls.length;
+     await s.perform(i,{requeue:true});
+     assert.equal(calls.length,before,'retry cannot conflict with another pending intent');
+     await s.perform(message); assert.equal(message.done,true);
+    }
+    for(let n=0;n<3;n++) {
+     await assert.rejects(s.perform(i,{requeue:true}));
+     assert.equal(s.pending.size,ambiguous?1:0,'repeated retries cannot grow pending');
+     assert.deepEqual(calls.at(-1),original);
+    }
+    failure=503;
+    await assert.rejects(s.perform(i,{requeue:true}));
+    assert.equal(s.pending.size,1,'uncertain retry reestablishes the global lock');
+    assert.equal(i.index,1); assert.deepEqual(calls.at(-1),original);
+    failure=null; release='defer';
+    const retry=s.perform(i,{requeue:true});
+    assert.equal(s.pending.size,1); assert.equal(i.busy,true);
+    const count=calls.length; await s.perform(i,{requeue:true}); assert.equal(calls.length,count,'rapid retry sends once');
+    release(); await retry;
+    assert.equal(i.done,true); assert.equal(i.index,2); assert.equal(s.pending.size,0);
+    assert.equal(i.generation,generation); assert.equal(i.steps,steps);
+    assert.equal(calls.filter(c=>!c.path.endsWith('/labels')&&!c.path.includes('/other/')).length,1,'never repeat unblock or request-changes reply');
+    for(const call of calls.filter(c=>c.path.endsWith('/labels'))) assert.deepEqual(call,original);
+   } finally { await s.end({unauthorized:true}); }
+  });
+ }
+}
+for(const field of ['current','current_value']) test(`OP17-019 approve 412 ${field} approved completes receipt`,async()=>{
+ const calls=[]; const s=new OperatorSession({send:async(m,p)=>{calls.push(p);if(p.endsWith('/labels'))throw Object.assign(new Error('already approved'),{status:412,problem:{key:'gate',[field]:'approved'}});return {}}});
+ s.start(me(),server,now);
+ try {const i=s.intent(taskIntent('approve','/v1/boards/b',{id:'t',revision:3},{root:'root'}));await s.perform(i);assert.equal(i.done,true);assert.equal(i.index,2);assert.equal(s.pending.size,0);assert.equal(calls.length,2);} finally {await s.end({unauthorized:true});}
+});
