@@ -881,6 +881,9 @@ async function op17013ProjectionCase() {
    await until('window.__op.projectionReads.length===1 && window.__op.projectionPolls.length===2');
    if (variant==='reverse') {
     await ev("window.__op.projectionSend([window.__op.projectionEvent('second')])");
+    await sleep(50);
+    assert(`${name}: repeated invalidation coalesces in flight`,await ev('window.__op.projectionReads.length===1'));
+    await ev("window.__op.projectionReads[0].resolve(window.__op.projectionReply('old'))");
     await until('window.__op.projectionReads.length===2');
     await ev("window.__op.projectionReads[1].resolve(window.__op.projectionReply('new'))");await sleep(50);
     assert(`${name}: newer response publishes`,await ev(kind==='channels'?"window.__op.probe.S.channels[0].path==='new'":"window.__op.probe.S.threads.get(window.__op.projectionReply('x').thread.id).labels.gate==='new'"));
@@ -897,12 +900,14 @@ async function op17013ProjectionCase() {
     if (variant==='message') {
      // A subsequent message-only update must also invalidate a read of a known thread.
      await ev("window.__op.projectionSend([{id:'third',type:'thread.view_invalidated',thread_id:window.__op.projectionReply('x').thread.id}])");
+     await ev("window.__op.projectionReads[0].resolve(window.__op.projectionReply('old'))");
      await until('window.__op.projectionReads.length===2');
      await ev("window.__op.projectionSend([{id:'message-only',type:'message.created',payload:{message:{id:'latest',thread_id:window.__op.projectionReply('x').thread.id,seq:10,created_at:'2026-11-20T00:00:01Z'}}}])");
      await until('window.__op.probe.S.seen.has("message-only")');
     }
     if (variant==='revision') {
      await ev("window.__op.projectionSend([{id:'revision-read',type:'thread.view_invalidated',thread_id:window.__op.projectionReply('x').thread.id}])");
+     await ev("window.__op.projectionReads[0].resolve(window.__op.projectionReply('old'))");
      await until('window.__op.projectionReads.length===2');
      await ev("window.__op.projectionReads[1].resolve(window.__op.projectionReply('lower','9007199254740992'))");await sleep(50);
      assert(`${name}: latest read rejects exact lower revision`,await ev("window.__op.probe.S.threads.get(window.__op.projectionReply('x').thread.id).labels.gate==='payload'"));
@@ -919,7 +924,85 @@ async function op17013ProjectionCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-013 executed ${assertions} assertions across ${fixtures} fresh projection fixtures`);
 }
-const operatorCases = new Map([['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17024ProjectionRetryCase() {
+ let assertions=0, fixtures=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-024: ${name}`,ok)};
+ for (const kind of ['thread','channels','unknown']) for (const variant of ['recover','backoff','snapshot','dispose','unauthorized','coalesce']) {
+  const name=`${kind} ${variant}`;
+  await freshIdentityFixture('window.__op.enableProjectionRetry();'); fixtures++;
+  try {
+   await ev(`(async()=>{
+    const T=window.__op, {createStore,gateHint}=await import('/skin-kit.js');
+    T.probe=createStore({api:T.projectionApi,boardId:'brd_test',onStatus:s=>T.projectionStatuses.push(s),onUnauthorized:()=>T.projectionUnauthorized++,onChange:()=>{
+      T.projectionChanges++;
+      document.querySelector('#me').textContent=gateHint({state:'blocked',direct_action_required:true},T.probe.labels({thread_id:'th'}))||'';
+    }});
+    T.retryEvent=id=>({id,type:${JSON.stringify(kind==='channels'?'channel.created':kind==='unknown'?'message.created':'thread.view_invalidated')},thread_id:'th',payload:${kind==='unknown'?"{message:{id,thread_id:'unknown',seq:1,created_at:'2026-11-20T00:00:00Z'}}":"{}"}});
+    T.retryReply=label=>${kind==='channels'?"({channels:[{path:label}]})":`({thread:{...T.projectionThread,id:${JSON.stringify(kind==='unknown'?'unknown':'th')},labels:{gate:label},revision:'9007199254740993'}})`};
+    T.sendRetry=events=>T.projectionPolls.at(-1).resolve({events,next_cursor:'advanced-cursor'});
+   })()`);
+   await until('window.__op.projectionPolls.length===1');
+   await ev("window.__op.deferProjection=true;window.__op.sendRetry([window.__op.retryEvent('invalidated')])");
+   await until('window.__op.projectionReads.length===1 && window.__op.projectionPolls.length===2');
+   assert(`${name}: cursor advanced once`,await ev("window.__op.probe.S.cursor==='advanced-cursor' && window.__op.probe.S.events===1"));
+   if (variant==='coalesce') {
+    await ev("window.__op.sendRetry([window.__op.retryEvent('second'),window.__op.retryEvent('third')])"); await sleep(60);
+    assert(`${name}: one in flight`,await ev('window.__op.projectionReads.length===1'));
+    await ev("window.__op.projectionReads[0].resolve(window.__op.retryReply('old'))"); await sleep(60);
+    assert(`${name}: superseded response not published`,await ev("![...window.__op.probe.S.threads.values()].some(t=>t.labels.gate==='old') && !window.__op.probe.S.channels.some(c=>c.path==='old')"));
+    assert(`${name}: latest ticket gets one read`,await ev('window.__op.projectionReads.length===2'));
+    await ev("window.__op.projectionReads.at(-1).resolve(window.__op.retryReply('approved'))");
+   } else {
+    await ev(`window.__op.projectionReads[0].reject(Object.assign(new Error('synthetic failure'),{status:${variant==='unauthorized'?401:503}}))`); await sleep(60);
+    if (variant==='unauthorized') {
+     assert(`${name}: unauthorized once and poll aborted`,await ev('window.__op.projectionUnauthorized===1 && window.__op.projectionPolls.at(-1).signal.aborted'));
+     await ev('window.__op.advanceRetry(30000)'); await sleep(60);
+     assert(`${name}: credential never retried`,await ev('window.__op.projectionReads.length===1 && window.__op.projectionPolls.length===2 && window.__op.retryTimers.size===0'));
+    } else {
+     assert(`${name}: failure exposes reconnecting`,await ev("window.__op.projectionStatuses.at(-1)==='reconnecting'"));
+     await ev('window.__op.sendRetry([])'); await sleep(60);
+     assert(`${name}: healthy poll cannot hide stale projection`,await ev("window.__op.projectionStatuses.at(-1)==='reconnecting'"));
+     if (variant==='snapshot' || variant==='dispose') {
+      if (variant==='snapshot') {
+       await ev("window.__op.deferProjection=false;window.__op.projectionPolls.at(-1).reject(Object.assign(new Error('resync'),{status:409,problem:{code:'resync_required'}}))");
+       await until('window.__op.projectionSnapshots===2');
+      } else await ev('window.__op.probe.stop()');
+      await ev('window.__op.advanceRetry(30000)'); await sleep(60);
+      assert(`${name}: canceled retry cannot read`,await ev('window.__op.projectionReads.length===1 && window.__op.retryTimers.size===0'));
+     } else {
+      if (variant==='backoff') {
+       await ev("window.__op.sendRetry([window.__op.retryEvent('again'),window.__op.retryEvent('latest')])"); await sleep(40);
+       assert(`${name}: invalidations preserve retry deadline`,await ev('window.__op.projectionReads.length===1 && window.__op.retryTimers.size===1'));
+      }
+      const delays=variant==='backoff'?[1000,2000,4000,8000,16000,30000,30000]:[1000];
+      for (const [i,delay] of delays.entries()) {
+       await ev(`window.__op.advanceRetry(${delay-1})`); await sleep(25);
+       assert(`${name}: attempt ${i+1} waits`,await ev(`window.__op.projectionReads.length===${i+1}`));
+       await ev('window.__op.advanceRetry(1)'); await sleep(60);
+       const ran=await ev(`window.__op.projectionReads.length===${i+2}`);
+       assert(`${name}: attempt ${i+1} retries without events`,ran);
+       if (!ran) break;
+       if (i<delays.length-1) { await ev("window.__op.projectionReads.at(-1).reject(Object.assign(new Error('still unavailable'),{status:503}))");await sleep(25); }
+       else await ev("window.__op.projectionReads.at(-1).resolve(window.__op.retryReply('approved'))");
+      }
+     }
+    }
+   }
+   await sleep(60);
+   if (['recover','backoff','coalesce'].includes(variant)) {
+    assert(`${name}: current projection recovered`,await ev(kind==='channels'?"window.__op.probe.S.channels[0].path==='approved'":`window.__op.probe.S.threads.get('${kind==='unknown'?'unknown':'th'}')?.labels.gate==='approved'`));
+    assert(`${name}: recovery is live and clean`,await ev("window.__op.projectionStatuses.at(-1)==='live' && window.__op.retryTimers.size===0"));
+    if (kind==='thread') assert(`${name}: current gate warning rendered`,await ev("document.querySelector('#me').textContent.includes('label says approved; task is still blocked')"));
+   }
+   if (['recover','backoff','coalesce'].includes(variant)) assert(`${name}: retries never rewind cursor or replay events`,await ev(`window.__op.probe.S.cursor==='advanced-cursor' && window.__op.probe.S.events===${variant==='recover'?1:3}`));
+   assert(`${name}: only snapshot lifecycle writes`,await ev("window.__op.writes.length===window.__op.projectionSnapshots*2 && window.__op.writes.every(w=>w.path.includes('/snapshots'))"));
+  } finally { await ev('window.__op.probe?.stop()'); }
+ }
+ assert('all variants execute',fixtures===18 && assertions>100);
+ assert('no browser exceptions',errors.length===0);
+ console.log(`OP17-024 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
+}
+const operatorCases = new Map([['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

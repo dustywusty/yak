@@ -129,10 +129,18 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const abort = new AbortController();
   // Each replacement snapshot owns its refresh requests and bookkeeping.
   // A task revision orders rows only within one snapshot generation.
-  const newRefresh = () => ({ abort: new AbortController(), reads: new Set(), retry: new Map(), tickets: new Map(), ready: false });
+  const newRefresh = () => ({ abort: new AbortController(), reads: new Set(), retry: new Map(), tickets: new Map(), dirty: new Map(), ready: false });
   let refresh = newRefresh();
   const currentRefresh = (generation) => generation === refresh && !abort.signal.aborted;
-  const invalidateRefresh = () => { refresh.abort.abort(); refresh = newRefresh(); };
+  const cancelRefresh = () => {
+    refresh.abort.abort();
+    for (const entry of refresh.dirty.values()) clearTimeout(entry.timer);
+    refresh.dirty.clear();
+  };
+  const invalidateRefresh = () => { cancelRefresh(); refresh = newRefresh(); };
+  const stopStore = () => { abort.abort(); cancelRefresh(); clearInterval(clockTimer); clearInterval(expiryTimer); };
+  const unauthorized = () => { if (!abort.signal.aborted) { stopStore(); onUnauthorized?.(); } };
+  const projectionStatus = () => onStatus([...refresh.dirty.values()].some(e => e.attempts > 0) ? 'reconnecting' : 'live');
   const B = `/v1/boards/${enc(boardId)}`;
   const get = async (path, params) => {
     const result = await api('GET', path, params, abort.signal);
@@ -162,15 +170,49 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const nextTicket = (generation, key) => {
     const ticket = (generation.tickets.get(key) || 0) + 1;
     generation.tickets.set(key, ticket);
+    const dirty = generation.dirty.get(key);
+    if (dirty) dirty.ticket = ticket;
     return ticket;
+  };
+  // Dirty entries survive cursor advancement; only their latest ticket can clear them.
+  const runProjection = (generation, key, entry) => {
+    if (!currentRefresh(generation) || entry.inflight) return;
+    const ticket = entry.ticket;
+    entry.inflight = true;
+    api('GET', entry.path, {}, generation.abort.signal).then((r) => {
+      if (!currentRefresh(generation)) return;
+      if (generation.tickets.get(key) === ticket && entry.ticket === ticket) {
+        if (entry.publish(r) !== false) onChange();
+        generation.dirty.delete(key);
+      }
+    }).catch((e) => {
+      if (!currentRefresh(generation)) return;
+      if (e.status === 401) return unauthorized();
+      entry.attempts++;
+      entry.deadline = Date.now() + Math.min(1000 * 2 ** Math.min(entry.attempts - 1, 5), 30000);
+      onStatus('reconnecting');
+    }).finally(() => {
+      if (!currentRefresh(generation)) return;
+      entry.inflight = false;
+      if (generation.dirty.get(key) === entry) {
+        const delay = Math.max(0, entry.deadline - Date.now());
+        if (delay) entry.timer = setTimeout(() => runProjection(generation, key, entry), delay);
+        else runProjection(generation, key, entry);
+      }
+      projectionStatus();
+    });
   };
   const readProjection = (key, path, publish) => {
     const generation = refresh;
     const ticket = nextTicket(generation, key);
-    api('GET', path, {}, generation.abort.signal).then((r) => {
-      if (!currentRefresh(generation) || generation.tickets.get(key) !== ticket) return;
-      if (publish(r) !== false) onChange();
-    }).catch(() => {});
+    let entry = generation.dirty.get(key);
+    if (entry) {
+      Object.assign(entry, {ticket, path, publish});
+      return; // Coalesce invalidations without bypassing an existing retry deadline.
+    }
+    entry = {ticket, path, publish, attempts: 0, deadline: 0, inflight: false, timer: null};
+    generation.dirty.set(key, entry);
+    runProjection(generation, key, entry);
   };
   const readThread = (id) => readProjection(`thread:${id}`, `${B}/threads/${enc(id)}`, (r) => {
     const cur = S.threads.get(r.thread.id);
@@ -269,7 +311,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
           if (abort.signal.aborted) return;
           refresh.ready = true;
           S.lastSync = now();
-          onStatus('live');
+          projectionStatus();
           onChange();
         }
         const wait = backoff > 1000 ? 0 : Math.min(25000, clock.limits.max_wait_ms);
@@ -279,12 +321,12 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
         for (const ev of page.events) changed = apply(ev) || changed;
         S.cursor = page.next_cursor;
         S.lastSync = now();
-        onStatus('live');
+        projectionStatus();
         backoff = 1000;
         if (changed) onChange();
       } catch (e) {
         if (abort.signal.aborted || e.name === 'AbortError') return;
-        if (e.status === 401) return onUnauthorized();
+        if (e.status === 401) return unauthorized();
         const code = e.problem?.code;
         if (code === 'resync_required' || code === 'cursor_expired' || code === 'snapshot_expired' || e.status === 400) {
           invalidateRefresh();
@@ -312,7 +354,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
       generation.retry.set(t.id, now() + 10000);
       api('GET', `${B}/tasks/${enc(t.id)}`, {}, generation.abort.signal)
         .then((r) => { if (currentRefresh(generation)) { putTask(r); onChange(); } })
-        .catch((e) => { if (currentRefresh(generation) && e.status === 401) onUnauthorized(); })
+        .catch((e) => { if (currentRefresh(generation) && e.status === 401) unauthorized(); })
         .finally(() => { if (currentRefresh(generation)) generation.reads.delete(t.id); });
     }
   }, 1000);
@@ -336,7 +378,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const clockTimer = setInterval(syncClock, 60000);
   return {
     S, actor, handle, via, num, tasks, thread, messages, latest, labels, gated, blockers, settled,
-    stop: () => { abort.abort(); refresh.abort.abort(); clearInterval(clockTimer); clearInterval(expiryTimer); },
+    stop: stopStore,
   };
 }
 

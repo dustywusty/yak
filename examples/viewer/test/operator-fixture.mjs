@@ -172,10 +172,33 @@ export function operatorFixture() {
         signal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')),{once:true});
       });
       if (path.endsWith('/channels') && !T.deferProjection) return {channels:[{path:'snapshot'}]};
-      if (path.endsWith('/channels') || /\/threads\//.test(path)) return new Promise(resolve => {
-        T.projectionReads.push({path,signal,resolve});
+      if (path.endsWith('/channels') || /\/threads\//.test(path)) return new Promise((resolve,reject) => {
+        T.projectionReads.push({path,signal,resolve,reject});
       });
       return {id:B,name:'projection probe'};
+    };
+  };
+
+  // OP17-024: virtual retry deadlines; all I/O remains disposable and deferred.
+  T.enableProjectionRetry = () => {
+    T.enableProjectionProbe();
+    T.retryTime = Date.now(); T.retryTimers = new Map(); T.retryTimerID = 0;
+    T.projectionStatuses = []; T.projectionUnauthorized = 0;
+    const schedule = window.setTimeout, cancel = window.clearTimeout;
+    Date.now = () => T.retryTime;
+    window.setTimeout = (fn, ms, ...args) => {
+      if (ms >= 1000 && ms <= 30000) {
+        const id = `OP17-024-${++T.retryTimerID}`;
+        T.retryTimers.set(id, {at:T.retryTime + ms, fn:()=>fn(...args)}); return id;
+      }
+      return schedule(fn, ms, ...args);
+    };
+    window.clearTimeout = id => { if (!T.retryTimers.delete(id)) cancel(id); };
+    T.advanceRetry = ms => {
+      T.retryTime += ms;
+      for (const [id, timer] of [...T.retryTimers]) if (timer.at <= T.retryTime) {
+        T.retryTimers.delete(id); timer.fn();
+      }
     };
   };
 
