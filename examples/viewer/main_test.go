@@ -424,3 +424,99 @@ func TestOP17038(t *testing.T) {
 	}
 	t.Logf("OP17-038 executed %d cases and %d assertions", cases, assertions)
 }
+
+// TestOP17045 checks method-and-route pairs at both the guard and proxy boundary.
+func TestOP17045(t *testing.T) {
+	var upstreamCalls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := viewerHandler(target, true)
+	cases, assertions := 0, 0
+	check := func(kind, method, path string, allowed bool) {
+		t.Helper()
+		t.Run(kind+"/"+method+path, func(t *testing.T) {
+			cases++
+			assertions++
+			if got := allowedRoute(method, path, true); got != allowed {
+				t.Errorf("allowedRoute(%q, %q) = %v, want %v", method, path, got, allowed)
+			}
+			before := upstreamCalls.Load()
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+			wantStatus, wantCalls := http.StatusForbidden, int64(0)
+			if allowed {
+				wantStatus, wantCalls = http.StatusNoContent, 1
+			}
+			assertions++
+			if w.Code != wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, wantStatus)
+			}
+			assertions++
+			if calls := upstreamCalls.Load() - before; calls != wantCalls {
+				t.Errorf("upstream calls = %d, want %d", calls, wantCalls)
+			}
+			if !allowed {
+				assertions++
+				if !strings.Contains(w.Body.String(), `"code":"forbidden"`) || !strings.Contains(w.Body.String(), `"reason":"operator_route_not_allowed"`) {
+					t.Errorf("missing allowlist problem: %s", w.Body.String())
+				}
+			}
+		})
+	}
+	// Keep explicit positives: rejecting every PUT must not satisfy this test.
+	for method, paths := range map[string][]string{
+		"GET":    {"/v1/server", "/v1/me", "/v1/boards", "/v1/boards/b", "/v1/boards/b/actors", "/v1/boards/b/channels", "/v1/boards/b/permissions", "/v1/boards/b/events", "/v1/boards/b/threads", "/v1/boards/b/threads/t", "/v1/boards/b/threads/t/messages", "/v1/boards/b/messages/m", "/v1/boards/b/tasks", "/v1/boards/b/tasks/t", "/v1/boards/b/tasks/t/briefs", "/v1/boards/b/tasks/t/briefs/f", "/v1/boards/b/snapshots/s"},
+		"POST":   {"/v1/boards/b/snapshots", "/v1/boards/b/threads", "/v1/boards/b/threads/t/messages", "/v1/boards/b/tasks", "/v1/boards/b/tasks/t/unblock", "/v1/boards/b/tasks/t/claims", "/v1/boards/b/tasks/t/claims/c/renew", "/v1/boards/b/tasks/t/release"},
+		"PATCH":  {"/v1/boards/b/messages/m", "/v1/boards/b/messages/m/labels", "/v1/boards/b/tasks/t"},
+		"PUT":    {"/v1/boards/b/tasks/t/assignee", "/v1/boards/b/messages/m/reactions/like"},
+		"DELETE": {"/v1/credentials/c", "/v1/boards/b/messages/m/reactions/like", "/v1/boards/b/snapshots/s"},
+	} {
+		for _, path := range paths {
+			check("allowed", method, path, true)
+		}
+	}
+	methods := []string{"GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS", "CONNECT", "TRACE"}
+	for _, path := range []string{
+		"/v1/actors", "/v1/actors/a", "/v1/audit-events", "/v1/credentials",
+		"/v1/delegations", "/v1/delegations/d", "/v1/delegations/d/mint",
+		"/v1/boards/b/grants", "/v1/boards/b/grants/g", "/v1/boards/b/audit-events",
+	} {
+		for _, method := range methods {
+			check("forbidden", method, path, false)
+		}
+	}
+	// These routes allow some verbs, but must reject every other listed verb.
+	for _, route := range []struct{ path, verbs string }{
+		{"/v1/credentials/c", " DELETE "},
+		{"/v1/server", " GET "},
+		{"/v1/boards", " GET "},
+		{"/v1/boards/b", " GET "},
+		{"/v1/boards/b/channels", " GET "},
+		{"/v1/boards/b/tasks", " GET POST "},
+		{"/v1/boards/b/tasks/t", " GET PATCH "},
+		{"/v1/boards/b/tasks/t/assignee", " PUT "},
+		{"/v1/boards/b/messages/m/reactions/like", " PUT DELETE "},
+		{"/v1/boards/b/messages/m", " GET PATCH "},
+		{"/v1/boards/b/messages/m/labels", " PATCH "},
+		{"/v1/boards/b/tasks/t/briefs", " GET "},
+		{"/v1/boards/b/tasks/t/root-redaction", " "},
+		{"/v1/boards/b/schemas", " "},
+	} {
+		for _, method := range methods {
+			if !strings.Contains(route.verbs, " "+method+" ") {
+				check("wrong-method", method, route.path, false)
+			}
+		}
+	}
+	t.Logf("OP17-045 executed cases=%d assertions=%d upstream_calls=%d", cases, assertions, upstreamCalls.Load())
+	if cases == 0 || assertions == 0 {
+		t.Fatal("allowlist matrix did not execute")
+	}
+}
