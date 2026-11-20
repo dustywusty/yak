@@ -399,12 +399,42 @@ test('OP17-043 production confirmation displays exactly the revision sent', asyn
  const { readFile } = await import('node:fs/promises');
  const { runInNewContext } = await import('node:vm');
  const source = await readFile(new URL('../static/operator-ui.js', import.meta.url), 'utf8');
- const body = source.slice(source.indexOf('async function confirmTask('), source.indexOf('\n  function action('));
+ const extract = (start, end) => {
+  const first = source.indexOf(start), last = source.indexOf(end, first);
+  assert.ok(first >= 0 && last > first, `missing or unordered production anchors: ${start} / ${end}`);
+  return source.slice(first, last);
+ };
+ const helpers = [
+  extract('const valid =', '\n  function dismissConfirmations('),
+  extract('function writeButton(', '\n  function say('),
+  extract('async function refreshTask(', '\n  function pendingButtons('),
+  extract('async function confirmTask(', '\n  function action(')
+ ].join('\n');
  for (const revision of ['5', '9007199254740993', '9223372036854775807']) {
-  const task = parseWireJSON(`{"id":"t","title":"Synthetic","revision":${revision},"brief_revision":${revision},"state":"ready"}`);
+  const task = parseWireJSON(`{"id":"t","thread_id":"th","title":"Synthetic","revision":${revision},"brief_revision":${revision},"state":"ready"}`);
+  const freshThread = { root_message_id: 'm', labels: { gate: 'pending', ordinary: 'fresh' } };
+  const view = Object.freeze({ B: '/v1/boards/b', generation: 7, task, thread: { root_message_id: 'm', labels: { ordinary: 'old' } } });
   let confirmed;
-  const confirm = runInNewContext(`${body}\nconfirmTask`, { refreshTask: async () => task, manager: () => true, actor: () => '@synthetic', session: { me: { actor: { id: 'a' } } }, taskIntent, current: { B: '/v1/boards/b', thread: { root_message_id: 'm' } }, structuredClone, confirmation: (name, details, spec) => { confirmed = { details, spec }; }, say: message => assert.fail(message) });
-  await confirm('flag', 'Require my approval', {}, { value: true });
+  const reads = [];
+  const context = { sequence: 11, current: view, guards: new WeakMap(), enc: encodeURIComponent,
+   button: () => ({ dataset: {} }), manager: () => true, actor: () => '@synthetic',
+   session: { generation: 7, active: true, ending: false, pending: new Set(), me: { actor: { id: 'a' } } },
+   read: async (method, path) => {
+    assert.equal(method, 'GET');
+    assert.equal(path, ['/v1/boards/b/tasks/t', '/v1/boards/b/threads/th'][reads.length]);
+    reads.push(path); return reads.length === 1 ? task : { thread: freshThread };
+   },
+   taskIntent, structuredClone, confirmation: (name, details, spec) => { confirmed = { details, spec }; }, say: message => assert.fail(message)
+  };
+  const { confirmTask, writeButton } = runInNewContext(`${helpers}\n({ confirmTask, writeButton })`, context);
+  const sourceButton = writeButton('Require my approval', () => {});
+  await confirmTask('flag', 'Require my approval', sourceButton, { value: true });
+  assert.ok(confirmed);
+  assert.equal(reads.length, 2);
+  assert.strictEqual(context.current, view);
+  assert.ok(Object.isFrozen(context.current));
+  assert.deepEqual(confirmed.spec.labels, freshThread.labels);
+  assert.notStrictEqual(confirmed.spec.labels, freshThread.labels);
   assert.ok(confirmed.details.includes(`Revision: ${revision}; brief: ${revision}`));
   assert.equal(confirmed.spec.steps[0].headers['If-Match'], `"${revision}"`);
  }

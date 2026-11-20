@@ -224,7 +224,83 @@ async function renewalClaimViewCase() {
  assert('no browser exceptions', errors.length === 0);
  console.log(`OP17-042 executed ${assertions} assertions across ${variants.length} fresh renewal fixtures`);
 }
-const operatorCases = new Map([['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function boardSwitchCase() {
+ let assertions = 0;
+ const assert = (name, ok, detail='') => { assertions++; check(`OP17-005: ${name}`, ok, detail); };
+ const selectBoard = async id => ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ const selectThread = async id => {
+  await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");
+  await ev(`{const s=document.querySelector('.op-workspace select[aria-label=Thread]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+  await until("!!document.querySelector('[aria-label=\"Task actions\"]')");
+ };
+ for (const fail of [false,true]) for (const reply of [false,true]) {
+  const variant = `${fail?'failed':'deferred'} discovery, ${reply?'reply':'new thread'}`;
+  await freshIdentityFixture('window.__op.enableBoardSwitch();');
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-switch';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  await ev("document.querySelector('#operator-tools').click()");
+  await until("!!document.querySelector('textarea[aria-label^=Message]')");
+  if (reply) await selectThread('th');
+  await ev(`{
+   const inputs=[...document.querySelectorAll('.op-workspace input,.op-workspace textarea')];
+   for(const n of inputs) n.value=n.getAttribute('aria-label').startsWith('Label key')?'tag':n.getAttribute('aria-label').startsWith('Reaction')?'like':'unsent A draft';
+   window.__oldButtons=[...document.querySelectorAll('.op-workspace [data-op-write]')];
+   window.__oldChannel=document.querySelector('.op-workspace select[aria-label=Channel]');
+   window.__oldThread=document.querySelector('.op-workspace select[aria-label=Thread]');
+   window.__op.deferBoard=${!fail};window.__op.failBoard=${fail};
+  }`);
+  await click('Create task');
+  await until("!!document.querySelector('.op-confirm[open]')");
+  await ev("window.__oldConfirm=[...document.querySelectorAll('.op-confirm button')].find(b=>b.textContent==='Create task')");
+  await selectBoard('brd_other'); await until('window.__op.discoveryStarted'); await sleep(100);
+  assert(`${variant}: transition clears content, channel and confirmation`,await ev("!document.querySelector('.op-confirm') && !document.querySelector('.op-workspace select[aria-label=Channel]') && !document.querySelector('.op-workspace [data-op-write]')"));
+  for (const [index, name] of (await ev('window.__oldButtons.map(b=>b.textContent)')).entries()) {
+   const before=await count();
+   await ev(`window.__oldButtons[${index}].dispatchEvent(new Event('click'))`);await sleep(50);
+   assert(`${variant}: retained ${name} refuses writes`,await count()===before);
+  }
+  const before=await count(), reads=await ev('window.__op.boardReads.length');
+  await ev("window.__oldConfirm.dispatchEvent(new Event('click'));window.__oldChannel.dispatchEvent(new Event('change'));window.__oldThread.dispatchEvent(new Event('change'))");await sleep(150);
+  assert(`${variant}: retained confirmation and selectors refuse`,await count()===before && await ev('window.__op.boardReads.length')===reads);
+  assert(`${variant}: no stale dialog reopens`,await ev("!document.querySelector('.op-confirm')"));
+  if (fail) { await ev('window.__op.failBoard=false'); await selectBoard('brd_other'); }
+  else await ev('window.__op.deferBoard=false;window.__op.resolveBoard()');
+  await ev("document.querySelectorAll('.op-confirm').forEach(d=>d.remove())");
+  await selectBoard('brd_other');
+  await until("!!document.querySelector('textarea[aria-label^=Message][aria-label*=brd_other]')");
+  assert(`${variant}: board B draft is separate`,await ev("document.querySelector('textarea[aria-label^=Message]').value===''") );
+  await selectThread('th_other');
+  await ev("document.querySelector('textarea[aria-label^=Message]').value='B reply'");
+  await click('Send reply');await until(`window.__op.writes.length>${before}`);
+  assert(`${variant}: new reply targets only B thread`,await ev("window.__op.writes.at(-1).path==='/v1/boards/brd_other/threads/th_other/messages'"));
+  if (!fail && reply) {
+   for (const [name, suffix, named] of [
+    ['Save edit','/messages/reply_other'], ['Set label','/messages/root_other/labels'],
+    ['React','/messages/root_other/reactions/like'], ['Remove approval requirement','/tasks/t_other','Remove approval requirement'],
+    ['Create task','/tasks','Create task']
+   ]) {
+    await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]') && !document.querySelector('.op-pending')?.textContent.includes('Sending')");
+    await ev("for(const n of document.querySelectorAll('.op-workspace input,.op-workspace textarea'))n.value=n.getAttribute('aria-label').startsWith('Label key')?'tag':n.getAttribute('aria-label').startsWith('Reaction')?'like':'B values'");
+    const n = await count(); await click(name); if(named) await confirm(named);
+    await until(`window.__op.writes.length>${n}`);
+    assert(`new B ${name} uses B destination`,await ev(`window.__op.writes.at(-1).path===${JSON.stringify('/v1/boards/brd_other'+suffix)}`));
+    if(name==='Create task') assert('new B task uses B channel',await ev("window.__op.writes.at(-1).body.thread.channel==='other'"),JSON.stringify(await ev('window.__op.writes.at(-1)')));
+   }
+   await ev("{const s=document.querySelector('.op-workspace select[aria-label=Thread]');s.value='';s.dispatchEvent(new Event('change'));}");
+   await until("!!document.querySelector('.op-workspace input[aria-label^=Title]')");
+   await ev("document.querySelector('textarea[aria-label^=Message]').value='B new';document.querySelector('.op-workspace input[aria-label^=Title]').value='B title'");
+   const n=await count();await click('Start thread');await until(`window.__op.writes.length>${n}`);
+   assert('new B thread uses B board and channel',await ev("window.__op.writes.at(-1).path==='/v1/boards/brd_other/threads' && window.__op.writes.at(-1).body.channel==='other'"));
+  }
+  await selectBoard('brd_test');await until("!!document.querySelector('textarea[aria-label^=Message][aria-label*=brd_test]')");
+  if(reply) await selectThread('th');
+  assert(`${variant}: returning to A retains unsent draft`,await ev("document.querySelector('textarea[aria-label^=Message]').value==='unsent A draft'"));
+ }
+ assert('all retained handlers avoid browser exceptions',errors.length===0,errors.join(' | '));
+ assert('required variants executed nonzero assertions',assertions>=40);
+ console.log(`OP17-005 executed ${assertions} assertions across four fresh board transitions`);
+}
+const operatorCases = new Map([['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

@@ -88,4 +88,39 @@ export function operatorFixture() {
     return new Response(status === 204 ? null : fault.startsWith('truncated') ? '{"claim":' : '{broken', { status });
   };
 
+  // OP17-005: two disposable boards with distinct destination IDs and delayed discovery.
+  T.enableBoardSwitch = () => {
+    const base = window.fetch;
+    T.boardReads = [];
+    const replace = value => {
+      if (Array.isArray(value)) return value.map(replace);
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k,v]) => [k,replace(v)]));
+      return ({brd_test:'brd_other',ops:'other',th:'th_other',t:'t_other',root:'root_other',reply:'reply_other'})[value] || value;
+    };
+    window.fetch = async (url, opts = {}) => {
+      const u = new URL(url, location.href), other = u.pathname.includes('/boards/brd_other');
+      if ((opts.method || 'GET') === 'GET' && /\/(channels|permissions|threads|actors)(\/|$)/.test(u.pathname)) T.boardReads.push(u.pathname + u.search);
+      if (other && u.pathname.endsWith('/channels')) {
+        T.discoveryStarted = true;
+        if (T.deferBoard) await new Promise(resolve => T.resolveBoard = resolve);
+        if (T.failBoard) return json({code:'synthetic_discovery_failure'},503);
+      }
+      const mapped = other ? u.href.replace('/boards/brd_other','/boards/brd_test').replaceAll('th_other','th').replaceAll('t_other','t') : u.href;
+      // Capture actual write destinations, without translating them to board A.
+      if ((opts.method || 'GET') !== 'GET' && !u.pathname.includes('/snapshots')) {
+        T.writes.push({method:opts.method,path:u.pathname,body:opts.body ? JSON.parse(opts.body) : null,headers:opts.headers});
+        return json({});
+      }
+      const response = await base(mapped, opts);
+      if (!response.ok || response.status === 204) return response;
+      const data = await response.json();
+      if (u.pathname === '/v1/boards') data.boards.push({id:'brd_other',name:'other'});
+      if (u.pathname === '/v1/me') { data.credential.board_ids.push('brd_other'); data.credential.scopes.push('react'); }
+      if (u.pathname === '/v1/server') data.capabilities.push('yak.reactions');
+      if (u.pathname.endsWith('/permissions')) data.capabilities.push('react');
+      if (u.pathname.endsWith('/messages')) data.messages.push({...root,id:'reply',is_root:false,text:'editable reply'});
+      return json(other ? replace(data) : data);
+    };
+  };
+
 }
