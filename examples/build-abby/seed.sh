@@ -23,6 +23,7 @@ py() { python3 -I -c "$1" "${@:2}"; }
 
 # ---- actors: one per role (roles are conventions, enforced by grants) ----
 # bash 3.2 compatible (macOS): role=id pairs in a file, read with actor().
+# (actors.env keys keep hyphens; use actor <role>, do not source it.)
 : > "$SECRETS_DIR/actors.env"
 actor() { grep "^$1=" "$SECRETS_DIR/actors.env" | cut -d= -f2; }
 for spec in coordinator:human implementer-a:agent implementer-b:agent reviewer:agent viewer:service; do
@@ -100,7 +101,8 @@ for line in sys.stdin:
     tid=$(ABBY_TOKEN=$(cat "$SECRETS_DIR/coordinator.token") "$A" post "$ch" --title "$title" --text "$text" --set-label "seed=$key")
     echo "created thread $key $tid"
   fi
-  printf '%s=%s\n' "$key" "$tid" >> "$SECRETS_DIR/threads.env.tmp"
+  # Shell-sourceable: keys use underscores (p1-gate -> p1_gate).
+  printf '%s=%s\n' "$(echo "$key" | tr - _)" "$tid" >> "$SECRETS_DIR/threads.env.tmp"
 }
 : > "$SECRETS_DIR/threads.env.tmp"
 ensure_thread welcome roadmap "Welcome to abby-dev" \

@@ -62,3 +62,29 @@ Baseline sources S03 and S08 to S10. Additional Abby delivery surfaces and deplo
 | PAR-038 | Linear issue synchronization adapter. | P4 | Supported field/comment operations and conflict handling are documented and exercised. |
 | PAR-039 | Scoped deployment/service credentials and delegated agent access. | P4 | Delegation only narrows authority; provenance is retained; revocation affects later API access and delivery. |
 | PAR-040 | Local development and shared deployment using one implementation and protocol. | P1, P5 | Compose runs Abby plus Postgres; a shared deployment passes the same conformance tests. |
+
+
+## Status (2026-11-20)
+
+Evidence-based status, not an endpoint count. "Passed" = phase gate passed
+with linked evidence; P1 rows link to `docs/evidence/p1-gate-2026-11-20.md`
+and the tests named in `spec/protocol.md` §10.
+
+| ID | Status | Evidence |
+|---|---|---|
+| PAR-001 | Passed (P1) | TestBoardIsolation |
+| PAR-002 | Passed (P1) | TestChannelIsolation, CHAN-001..002 |
+| PAR-003 | Passed for reads, writes, events, snapshots | TestChannelIsolation; attachments/delivery paths pending P3 |
+| PAR-004 | Passed (P1) | TestMentions, /permissions, /actors; TestAuthentication |
+| PAR-005 | Passed (P1) | TestCT005, TestCT015 |
+| PAR-006 | Passed (P1) | TestCT004, TestCT017 |
+| PAR-007 | Passed (P1) | TestCT002, TestCT003, TestCT005 |
+| PAR-008 | Passed (P1) | TestCT006 (reserved namespace + CAS) |
+| PAR-009 | Passed (P1) | TestMentions |
+| PAR-010 | Passed (P1) except source filter (P4) | TestCT014, TestCT017, schema live tests |
+| PAR-011 | Passed (P1) | TestCT013, TestCT015, TestCT018; REF retention/epoch; gate restore drill |
+| PAR-012 | Passed (P1) | TestPAR012WaitSemantics |
+| PAR-013 | Passed (P1) | TestCT014 |
+| PAR-032 | Partial (P1 commands) | spec/cli.md; gate CLI client |
+| PAR-040 | Partial (local profile) | P1 gate on Compose; shared profile is P5 |
+| Others | Not started | Phase P2–P5 |
