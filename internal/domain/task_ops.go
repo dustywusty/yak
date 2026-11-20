@@ -512,8 +512,11 @@ func (b *btx) activateDependents(prereq *taskRow) error {
 			return err
 		}
 		ok, err := b.prereqsDone(d.ID)
-		if err != nil || !ok {
+		if err != nil {
 			return err
+		}
+		if !ok {
+			continue
 		}
 		d.State = StateReady
 		b.touch(&d, true)

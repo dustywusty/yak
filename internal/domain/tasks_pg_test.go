@@ -636,3 +636,100 @@ func TestCompletionReadiesDependentsAndHidesPrereqs(t *testing.T) {
 		t.Fatalf("hidden prerequisite ID leaked: %s", page.Events[0].Payload)
 	}
 }
+
+// DEP-007: an older unsatisfied dependent must not stop later eligible ones.
+func TestCompletionSkipsUnsatisfiedDependents(t *testing.T) {
+	x := setupP2(t)
+	ctx := context.Background()
+	w := x.actor("*", "read", "claim")
+	reader := x.actor("server", "read")
+	p := x.task("ops", "p")
+	q := x.task("ops", "q")
+	a := x.task("server", "a", p.ID, q.ID)
+	blocked := x.task("server", "blocked", p.ID)
+	reason := "manual hold"
+	if _, err := x.svc.BlockTask(ctx, x.admin, x.board, blocked.ID, nil, &blocked.Revision, x.key(), domain.ReasonRequest{Reason: &reason}); err != nil {
+		t.Fatal(err)
+	}
+	b := x.task("server", "b", p.ID)
+	c := x.task("server", "c", p.ID)
+	claim, err := x.claim(w, p.ID, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := x.head()
+	if _, err := x.svc.CompleteTask(ctx, w, x.board, p.ID, proofOf(t, claim), x.key(), domain.CompleteRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		task     domain.TaskView
+		state    string
+		revision int64
+	}{
+		{a, "waiting", a.Revision}, {blocked, "blocked", blocked.Revision + 1},
+		{b, "ready", b.Revision + 1}, {c, "ready", c.Revision + 1},
+	} {
+		v := x.get(want.task.ID)
+		if v.State != want.state || v.Revision != want.revision {
+			t.Errorf("%s: want %s revision %d, got %s revision %d", want.task.Title, want.state, want.revision, v.State, v.Revision)
+		}
+	}
+	visible, err := x.svc.GetTask(ctx, reader, x.board, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visible.State != "waiting" || len(visible.Dependencies) != 0 || !visible.UnreadableDependenciesPending {
+		t.Fatalf("hidden pending q: %+v", visible)
+	}
+	page, err := x.svc.ReadEvents(ctx, reader, x.board, domain.ReadEventsRequest{Limit: 200, Filter: events.Filter{Types: []string{"task.became_ready"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 2 {
+		t.Fatalf("want B and C ready events, got %d", len(page.Events))
+	}
+	for i, id := range []string{b.ID, c.ID} {
+		ev := page.Events[i]
+		if ev.Resource.ID != id {
+			t.Fatalf("ready event order: %+v", ev)
+		}
+		var payload struct {
+			Task  domain.TaskView `json:"task"`
+			Cause string          `json:"cause"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Task.ID != id || payload.Task.State != "ready" || payload.Task.Revision != 2 || payload.Cause != "dependencies_satisfied" {
+			t.Fatalf("ready event payload: %s", ev.Payload)
+		}
+		if strings.Contains(string(ev.Payload), p.ID) || strings.Contains(string(ev.Payload), "prerequisite_task_id") {
+			t.Fatalf("hidden prerequisite leaked: %s", ev.Payload)
+		}
+	}
+	// The completion, both state changes, and both events must commit together.
+	var transactions int
+	if err := x.svc.DB.QueryRow(ctx, `SELECT count(DISTINCT xid) FROM (
+  SELECT xmin::text AS xid FROM tasks WHERE board_id=$1 AND id=ANY($2::text[])
+  UNION ALL SELECT xmin::text FROM events WHERE board_id=$1 AND position>$3
+ ) changes`, x.board, []string{p.ID, b.ID, c.ID}, head).Scan(&transactions); err != nil {
+		t.Fatal(err)
+	}
+	if transactions != 1 {
+		t.Fatalf("completion and activation used %d transactions", transactions)
+	}
+	// Completing the remaining hidden prerequisite activates A, but never the blocked task.
+	claim, err = x.claim(w, q.ID, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.svc.CompleteTask(ctx, w, x.board, q.ID, proofOf(t, claim), x.key(), domain.CompleteRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if v := x.get(a.ID); v.State != "ready" {
+		t.Fatalf("a after q: %+v", v)
+	}
+	if v := x.get(blocked.ID); v.State != "blocked" {
+		t.Fatalf("blocked task changed: %+v", v)
+	}
+}
