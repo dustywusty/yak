@@ -19,7 +19,7 @@
         "root_message_id": "msg_root_example",
         "created_by_actor_id": "actor_lead",
         "labels": {
-          "abby.task.state": "claimed",
+          "yak.task.state": "claimed",
           "plan.ref": "claim-next"
         },
         "revision": 4,

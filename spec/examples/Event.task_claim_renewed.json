@@ -7,9 +7,9 @@
   "credential_id": "cred_worker",
   "run_id": "run_example",
   "resource": {
-    "type": "claim",
-    "id": "claim_example",
-    "revision": 3
+    "type": "task",
+    "id": "task_example",
+    "revision": 6
   },
   "channel_id": "chan_server",
   "thread_id": "thread_example",
@@ -28,7 +28,7 @@
       "created_by_actor_id": "actor_lead",
       "origin": "batch",
       "state": "claimed",
-      "revision": 4,
+      "revision": 6,
       "brief_revision": 1,
       "epoch": 2,
       "retry_count": 0,
@@ -51,7 +51,7 @@
         "revision": 3,
         "lease_seconds": 120,
         "acquired_at": "2026-11-19T20:00:00Z",
-        "expires_at": "2026-11-19T20:02:00Z",
+        "expires_at": "2026-11-19T20:03:20Z",
         "ended_at": null,
         "end_recorded_at": null
       },
@@ -90,7 +90,7 @@
       "revision": 3,
       "lease_seconds": 120,
       "acquired_at": "2026-11-19T20:00:00Z",
-      "expires_at": "2026-11-19T20:02:00Z",
+      "expires_at": "2026-11-19T20:03:20Z",
       "ended_at": null,
       "end_recorded_at": null
     }

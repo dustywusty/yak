@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Labels",
-  "description": "Message labels: normalized (lowercase) keys to string values. Keys starting with 'abby.' are server-maintained. Values are UTF-8 of at most limits.max_label_value_bytes bytes.",
+  "description": "Message labels: normalized (lowercase) keys to string values. Keys starting with 'yak.' or legacy 'abby.' are server-maintained. Values are UTF-8 of at most limits.max_label_value_bytes bytes.",
   "type": "object",
   "propertyNames": {
     "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"

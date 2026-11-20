@@ -65,7 +65,7 @@ text.
 3. **Task-aware update** (`POST …/tasks/{id}/briefs`, manager + `post`,
    `If-Match`). In one transaction: insert revision n+1; append a notice
    reply ("brief updated to revision n+1: <reason>") authored by the caller
-   with the server label `abby.task.brief_revision`; revoke any active
+   with the server label `yak.task.brief_revision`; revoke any active
    claim; set or keep `blocked` (`cause: brief_updated`). A manager must
    unblock after review.
 4. **The notice does not carry the brief text.** If it did, the notice's
@@ -80,7 +80,7 @@ text.
 6. **Root protection.** On a task thread, P1 `PATCH`/`DELETE` of the root
    message and `PATCH` of the thread return `409 task_root_protected` for
    everyone, including board administrators. Replies, reactions, and
-   non-`abby.` root labels are unaffected. Title changes go through
+   non-`yak.` root labels are unaffected. Title changes go through
    `PATCH …/tasks/{id}` (manager, `If-Match`), which emits
    `thread.updated` and `task.updated`.
 7. **Root redaction** (`POST …/tasks/{id}/root-redaction`) needs both a

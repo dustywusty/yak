@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:dependency_cycle",
+  "type": "urn:yak:problem:dependency_cycle",
   "title": "Conflict",
   "status": 409,
   "code": "dependency_cycle",

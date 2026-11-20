@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:unauthenticated",
+  "type": "urn:yak:problem:unauthenticated",
   "title": "Unauthorized",
   "status": 401,
   "code": "unauthenticated",

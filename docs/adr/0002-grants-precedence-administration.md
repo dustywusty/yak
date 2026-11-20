@@ -29,7 +29,7 @@ boundary without any deny rule. Alice's read-only credential cannot post.
 Server administrators currently have no API to change grants on a board
 they do not administer. Recovery today = operator SQL. A documented
 `POST /v1/boards/{id}/recovery-grants` (server_admin, audited, reason
-required) is planned before P2 (tracked on the abby-dev board).
+required) is planned before P2 (tracked on the yak-dev board).
 
 ## Consequences
 Private channel creation bumps the board policy revision; cursors and

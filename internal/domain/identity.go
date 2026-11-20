@@ -13,8 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/dustywusty/abby/internal/authz"
-	"github.com/dustywusty/abby/internal/ids"
+	"github.com/dustywusty/yak/internal/authz"
+	"github.com/dustywusty/yak/internal/ids"
 )
 
 // ActorView is the public projection of an actor.
@@ -49,18 +49,21 @@ type IssuedCredential struct {
 	TokenUnavailable bool `json:"token_unavailable,omitempty"`
 }
 
-const tokenPrefix = "abby."
+const tokenPrefix = "yak."
 
 func verifier(secret string) []byte {
 	h := sha256.Sum256([]byte(secret))
 	return h[:]
 }
 
-// Authenticate resolves a bearer token. Token format: "abby.<credential_id>.<secret>".
+// Authenticate resolves a bearer token. Token format: "yak.<credential_id>.<secret>".
 func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, error) {
 	rest, ok := strings.CutPrefix(token, tokenPrefix)
 	if !ok {
-		return nil, errUnauthenticated
+		rest, ok = strings.CutPrefix(token, "abby.")
+		if !ok {
+			return nil, errUnauthenticated
+		}
 	}
 	credID, secret, ok := strings.Cut(rest, ".")
 	if !ok || credID == "" || secret == "" {

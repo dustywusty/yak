@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dustywusty/abby/internal/domain"
+	"github.com/dustywusty/yak/internal/domain"
 )
 
 // Timestamp ties cannot be forced through the HTTP API, so this reference

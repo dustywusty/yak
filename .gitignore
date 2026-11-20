@@ -1,4 +1,4 @@
-/abby
+/yak
 *.token
 .env
 deploy/*.env

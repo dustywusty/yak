@@ -28,11 +28,11 @@
         },
         "labels": {
           "type": "object",
-          "description": "Label keys are case-insensitive on input and normalized to lowercase; the 'abby.' prefix is reserved.",
+          "description": "Label keys are case-insensitive on input and normalized to lowercase; the 'yak.' prefix is reserved.",
           "propertyNames": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
             "not": {
-              "pattern": "^[Aa][Bb][Bb][Yy]\\."
+              "pattern": "^([Yy][Aa][Kk]|[Aa][Bb][Bb][Yy])\\."
             }
           },
           "additionalProperties": {

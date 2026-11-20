@@ -13,9 +13,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/dustywusty/abby/internal/authz"
-	"github.com/dustywusty/abby/internal/events"
-	"github.com/dustywusty/abby/internal/ids"
+	"github.com/dustywusty/yak/internal/authz"
+	"github.com/dustywusty/yak/internal/events"
+	"github.com/dustywusty/yak/internal/ids"
 )
 
 type Attribution struct {
@@ -74,6 +74,17 @@ type ThreadWithRoot struct {
 	Root   MessageView `json:"root_message"`
 }
 
+// messageEventPayload is the payload of a message.* event: the message
+// plus its thread context at commit (EVT-013, TASK-086). The context is
+// thread metadata, not message content, so scrubMessage (RED-001) leaves it.
+func messageEventPayload(m MessageView, t ThreadView, extra map[string]any) map[string]any {
+	p := map[string]any{"message": m, "thread_title": t.Title, "task_id": t.TaskID}
+	for k, v := range extra {
+		p[k] = v
+	}
+	return p
+}
+
 func (m *MessageView) facet(rootLabels map[string]string) events.Facet {
 	f := events.Facet{ChannelPath: m.ChannelPath, ThreadID: m.ThreadID, AuthorID: m.AuthorActorID, Mentions: m.Mentions, Labels: m.Labels, RootLabels: rootLabels}
 	if m.Text != nil {
@@ -82,10 +93,10 @@ func (m *MessageView) facet(rootLabels map[string]string) events.Facet {
 	return f
 }
 
-// taskStateLabelSQL is the computed root label abby.task.state of thread
+// taskStateLabelSQL is the computed root label yak.task.state of thread
 // alias t: the effective task state (ADR-0004), or {} for a thread without a
 // task. It is never stored in message_labels (ADR-0016 §5, TASK-027..029).
-const taskStateLabelSQL = `COALESCE((SELECT jsonb_build_object('abby.task.state', abby_task_effective_state(tk.state, tk.claim_expires_at, statement_timestamp()))
+const taskStateLabelSQL = `COALESCE((SELECT jsonb_build_object('yak.task.state', abby_task_effective_state(tk.state, tk.claim_expires_at, statement_timestamp()))
 	FROM tasks tk WHERE tk.thread_id=t.id), '{}'::jsonb)`
 
 const msgCols = `m.id, m.board_id, m.thread_id, t.channel_id, m.seq, (t.root_message_id = m.id), m.author_actor_id, m.credential_id, m.run_id,
@@ -350,7 +361,7 @@ func (s *Service) CreateThread(ctx context.Context, p *Principal, boardID string
 
 // insertThread creates a thread and its root message and emits
 // thread.created. For a task thread (taskID set) the views already carry the
-// computed root label abby.task.state and task_id (TASK-085: no separate
+// computed root label yak.task.state and task_id (TASK-085: no separate
 // view invalidation is needed for L1).
 func (b *btx) insertThread(ch channelRow, req CreateThreadRequest, taskID, taskState string) (ThreadWithRoot, error) {
 	mentions, err := b.resolveMentions(ch.Path, req.Text, req.Mentions)
@@ -564,7 +575,7 @@ func (s *Service) Reply(ctx context.Context, p *Principal, boardID, threadID str
 			return nil, err
 		}
 		if _, err := b.emit(PendingEvent{Type: "message.created", ChannelID: ch.ID, ThreadID: threadID, ResourceType: "message", ResourceID: m.ID, Revision: 1,
-			Payload: map[string]any{"message": m}, Facets: []events.Facet{m.facet(t.Labels)}}); err != nil {
+			Payload: messageEventPayload(m, t, nil), Facets: []events.Facet{m.facet(t.Labels)}}); err != nil {
 			return nil, err
 		}
 		return &Result{Status: 201, ResourceType: "message", ResourceID: m.ID, Body: m}, nil
@@ -680,7 +691,7 @@ func (s *Service) EditMessage(ctx context.Context, p *Principal, boardID, messag
 			}
 		}
 		if _, err := b.emit(PendingEvent{Type: "message.edited", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
-			Revision: m.Revision, Payload: map[string]any{"message": m}, Facets: []events.Facet{before.facet(t.Labels), m.facet(t.Labels)}}); err != nil {
+			Revision: m.Revision, Payload: messageEventPayload(m, t, nil), Facets: []events.Facet{before.facet(t.Labels), m.facet(t.Labels)}}); err != nil {
 			return nil, err
 		}
 		out = m
@@ -765,7 +776,7 @@ func (b *btx) tombstoneMessage(m MessageView, kind, reason string) (MessageView,
 	}
 	inval := events.Facet{Invalidation: true, ChannelPath: m.ChannelPath, ThreadID: m.ThreadID}
 	if _, err := b.emit(PendingEvent{Type: "message.deleted", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
-		Revision: m.Revision, Payload: map[string]any{"message": m}, Facets: []events.Facet{inval}}); err != nil {
+		Revision: m.Revision, Payload: messageEventPayload(m, t, nil), Facets: []events.Facet{inval}}); err != nil {
 		return m, err
 	}
 	return m, nil
@@ -936,13 +947,13 @@ func (s *Service) MutateLabels(ctx context.Context, p *Principal, boardID, messa
 			out = m
 			return &Result{}, nil
 		}
-		// Clients never write abby.* keys (validated above): server labels
-		// stay as stored, and the computed abby.task.state is never stored.
-		if _, err := b.Exec(ctx, `DELETE FROM message_labels WHERE message_id=$1 AND key NOT LIKE 'abby.%'`, m.ID); err != nil {
+		// Clients never write yak.* keys (validated above): server labels
+		// stay as stored, and the computed yak.task.state is never stored.
+		if _, err := b.Exec(ctx, `DELETE FROM message_labels WHERE message_id=$1 AND key NOT LIKE 'yak.%' AND key NOT LIKE 'abby.%'`, m.ID); err != nil {
 			return nil, err
 		}
 		for k, v := range after {
-			if strings.HasPrefix(k, "abby.") {
+			if strings.HasPrefix(k, "yak.") || strings.HasPrefix(k, "abby.") {
 				continue
 			}
 			if _, err := b.Exec(ctx, `INSERT INTO message_labels(message_id, key, value) VALUES ($1,$2,$3)`, m.ID, k, v); err != nil {
@@ -966,7 +977,7 @@ func (s *Service) MutateLabels(ctx context.Context, p *Principal, boardID, messa
 		bm.Labels = before
 		m.Labels = after
 		if _, err := b.emit(PendingEvent{Type: "message.labels_changed", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
-			Revision: m.Revision, Payload: map[string]any{"message": m, "labels_before": before, "labels_after": after},
+			Revision: m.Revision, Payload: messageEventPayload(m, t, map[string]any{"labels_before": before, "labels_after": after}),
 			Facets: []events.Facet{bm.facet(rootBefore), m.facet(rootAfter)}}); err != nil {
 			return nil, err
 		}

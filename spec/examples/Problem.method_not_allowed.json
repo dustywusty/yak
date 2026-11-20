@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:method_not_allowed",
+  "type": "urn:yak:problem:method_not_allowed",
   "title": "Method Not Allowed",
   "status": 405,
   "code": "method_not_allowed",

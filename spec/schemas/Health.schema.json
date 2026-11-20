@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Health",
-  "description": "Liveness (/healthz) and readiness (/readyz) probe body. Operational, not part of the Abby protocol.",
+  "description": "Liveness (/healthz) and readiness (/readyz) probe body. Operational, not part of the Yak protocol.",
   "type": "object",
   "required": [
     "status"

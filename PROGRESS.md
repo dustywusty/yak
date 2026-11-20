@@ -1,12 +1,12 @@
 # Progress
 
 Updated 2026-11-20. Branch `Dusty/queenfish`. This file summarizes state;
-from P2 onward the task ledger of record will be the `abby-dev` board, not
+from P2 onward the task ledger of record will be the `yak-dev` board, not
 this file (design §15.2).
 
 ## P0 — protocol baseline: done for the P1 slice
 - `spec/protocol.md` (normative, requirement IDs, traceability §10),
-  `spec/openapi.yaml` (OpenAPI 3.1, 40 operations, `x-abby` semantics),
+  `spec/openapi.yaml` (OpenAPI 3.1, 40 operations, `x-yak` semantics),
   `spec/schemas/` (48 JSON Schema 2020-12 files), `spec/examples/` (72),
   `spec/cli.md`. ADRs 0001–0003, 0005–0007, 0015 accepted.
 - P2 contract drafted: `spec/p2-tasks.md`, ADR-0004, 0008, 0016 — **pending owner review**.
@@ -18,7 +18,7 @@ MSG-001..003, RED-001, LBL-001..003, MEN-001, EVT-001..012, SNAP-001..004,
 PAGE-001.
 
 Verification:
-- `go test ./...` (unit), `ABBY_TEST_DATABASE_URL=… go test -race ./internal/...`
+- `go test ./...` (unit), `YAK_TEST_DATABASE_URL=… go test -race ./internal/...`
   (reference Postgres tests: gapless positions under 40 concurrent writers,
   retention → 410, epoch rotation → resync, snapshot limit, tombstone overlay,
   epoch rotation during wait).
@@ -31,8 +31,8 @@ Verification:
   validation found 3 more, fixed (3595e24).
 
 ## Adoption (design §15.2)
-- Coordination instance pinned and running; `abby-dev` seeded and in use —
-  BOOT-01 met. See `examples/build-abby/EVIDENCE.md`.
+- Coordination instance pinned and running; `yak-dev` seeded and in use —
+  BOOT-01 met. See `examples/build-yak/EVIDENCE.md`.
 
 ## View-only browser (examples/viewer)
 Built after the P1 gate (owner decision 2026-11-19): stdlib Go proxy + vanilla
@@ -69,8 +69,8 @@ Contract feedback from building it (open spec issues):
 ## P2 — tasks and claims: gate PASSED (2026-11-20, commit db4ac4a)
 - Contract: `spec/p2-tasks.md`, ADR-0004/0008/0016 (owner-approved), 22 more
   OpenAPI operations, 28 schemas. Server: migration 0002, domain, HTTP,
-  claim-expiry sweeper (correctness does not depend on it). CLI: `abby task …`,
-  resumable plan batches, `abby run` runner.
+  claim-expiry sweeper (correctness does not depend on it). CLI: `yak task …`,
+  resumable plan batches, `yak run` runner.
 - Verification: 47 black-box conformance tests (P1 + CT-007..012, CT-025..027,
   CT-029..038, written from the spec independently of the server) pass with no
   skips; reference Postgres tests with `-race`; `scripts/p2-gate.sh` (P1→P2
@@ -86,13 +86,13 @@ Contract feedback from building it (open spec issues):
   (`task_j2cnk7xuvfpropcjthn6i5sehi`), message events lack thread context
   (`task_weufwgyg7akc43pb57w4ae2wle`).
 
-**From now on the task ledger is the `abby-dev` board** (design §15.2). This
-file only summarizes; see `examples/build-abby/EVIDENCE.md` for IDs.
+**From now on the task ledger is the `yak-dev` board** (design §15.2). This
+file only summarizes; see `examples/build-yak/EVIDENCE.md` for IDs.
 
 ## Former next work package: P2 tasks and claims (done)
 1. Owner review of `spec/p2-tasks.md`, ADR-0004/0008/0016.
 2. Migration 0002 (tasks, briefs, dependencies, claims) + domain + HTTP.
 3. Conformance CT-007..012, CT-025..027, CT-029..038; CLI `task` commands and
-   `abby run` runner (PAR-033).
-4. P2 gate, then import the roadmap as tasks on `abby-dev` (BOOT-02) and run
+   `yak run` runner (PAR-033).
+4. P2 gate, then import the roadmap as tasks on `yak-dev` (BOOT-02) and run
    the two-implementer + reviewer exercise (BOOT-03, BOOT-04).

@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dustywusty/abby/internal/domain"
-	"github.com/dustywusty/abby/internal/events"
-	"github.com/dustywusty/abby/internal/ids"
-	"github.com/dustywusty/abby/internal/postgres"
+	"github.com/dustywusty/yak/internal/domain"
+	"github.com/dustywusty/yak/internal/events"
+	"github.com/dustywusty/yak/internal/ids"
+	"github.com/dustywusty/yak/internal/postgres"
 )
 
 const maxBody = 1 << 20
@@ -84,9 +84,9 @@ func (a *API) authed(h handler) http.HandlerFunc {
 			a.problem(w, r, err)
 			return
 		}
-		if run := r.Header.Get("Abby-Run-Id"); run != "" {
+		if run := r.Header.Get("Yak-Run-Id"); run != "" {
 			if len(run) > 128 {
-				a.problem(w, r, domain.Validation("Abby-Run-Id exceeds 128 bytes"))
+				a.problem(w, r, domain.Validation("Yak-Run-Id exceeds 128 bytes"))
 				return
 			}
 			p.RunID = run
@@ -107,7 +107,7 @@ func (a *API) problem(w http.ResponseWriter, r *http.Request, err error) {
 		de = domain.E(503, "temporarily_unavailable", "the server could not complete the request; retry with the same Idempotency-Key")
 	}
 	body := map[string]any{
-		"type":       "urn:abby:problem:" + de.Code,
+		"type":       "urn:yak:problem:" + de.Code,
 		"title":      http.StatusText(de.Status),
 		"status":     de.Status,
 		"code":       de.Code,
@@ -268,24 +268,24 @@ func (a *API) respond(w http.ResponseWriter, r *http.Request, p *domain.Principa
 func (a *API) discovery(w http.ResponseWriter, r *http.Request) {
 	c := a.S.Cfg
 	caps := []string{
-		"abby.boards", "abby.channels", "abby.channels.private", "abby.grants", "abby.actors", "abby.credentials",
-		"abby.threads", "abby.messages", "abby.messages.guarded_reply", "abby.messages.tombstones",
-		"abby.labels", "abby.labels.conditional", "abby.mentions",
-		"abby.events.catchup", "abby.events.long_poll", "abby.snapshots", "abby.idempotency", "abby.audit",
-		"abby.tasks", "abby.tasks.claims", "abby.tasks.claim_next", "abby.tasks.batches", "abby.tasks.dependencies", "abby.tasks.briefs",
+		"yak.boards", "yak.channels", "yak.channels.private", "yak.grants", "yak.actors", "yak.credentials",
+		"yak.threads", "yak.messages", "yak.messages.guarded_reply", "yak.messages.tombstones",
+		"yak.labels", "yak.labels.conditional", "yak.mentions",
+		"yak.events.catchup", "yak.events.long_poll", "yak.snapshots", "yak.idempotency", "yak.audit",
+		"yak.tasks", "yak.tasks.claims", "yak.tasks.claim_next", "yak.tasks.batches", "yak.tasks.dependencies", "yak.tasks.briefs",
 	}
 	// TASK-003: present only when an operator replay key is configured.
 	if a.S.ClaimKeys != nil {
-		caps = append(caps, "abby.tasks.claim_proof_replay")
+		caps = append(caps, "yak.tasks.claim_proof_replay")
 	}
 	_ = writeJSON(w, 200, map[string]any{
 		"protocol": map[string]any{
-			"name":     "abby",
+			"name":     "yak",
 			"versions": []string{"1"},
 			"status":   "draft",
-			"profiles": []string{"abby.p1.core", "abby.p2.tasks"},
+			"profiles": []string{"yak.p1.core", "yak.p2.tasks"},
 		},
-		"implementation": map[string]any{"name": "abby-reference", "version": c.Version, "schema_version": postgres.RequiredVersion()},
+		"implementation": map[string]any{"name": "yak-reference", "version": c.Version, "schema_version": postgres.RequiredVersion()},
 		"capabilities":   caps,
 		"limits": map[string]any{
 			"max_request_bytes":           maxBody,

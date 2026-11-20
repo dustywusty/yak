@@ -11,10 +11,20 @@ const labelDiff = (a = {}, b = {}) => [
   ...Object.keys(b).filter((k) => a[k] !== b[k]).map((k) => `+${k}${b[k] === '' ? '' : `:${b[k]}`}`),
   ...Object.keys(a).filter((k) => !(k in b)).map((k) => `−${k}`)].join(' ');
 
-export function createFeed({ api, h, time, href, onTask, onUnauthorized }) {
+export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError = () => {} }) {
   const F = { boards: new Map(), entries: [], pending: [], seen: new Set(), paused: false,
     abort: null, timer: null, visible: false };
-  const $ = (id) => document.getElementById(id);
+  // Element references are taken once. A view may move the feed out of the
+  // document for a while (term.js does); the feed keeps working on its own nodes.
+  const els = Object.fromEntries(['feed', 'feed-status', 'feed-pause', 'feed-board', 'feed-kind', 'feed-inval']
+    .map((id) => [id, document.getElementById(id)]));
+  const $ = (id) => els[id];
+  // A drawing error must never end a poll loop: catch it, report it once, keep polling.
+  let drawFailed = false;
+  const report = (e) => {
+    if (!drawFailed) { drawFailed = true; console.error('Activity feed: draw failed', e); onError(`Activity feed could not draw: ${e.message}`); }
+  };
+  const guard = (fn) => (...args) => { try { fn(...args); } catch (e) { report(e); } };
 
   function start() {
     if (F.abort) return;
@@ -97,6 +107,8 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized }) {
     if (p.task) onTask(p.task);
     if (p.thread) rec.titles.set(p.thread.id, p.thread.title);
     if (p.task) rec.titles.set(p.task.thread_id, p.task.title);
+    // message.* payloads carry the thread title at commit (EVT-013).
+    if (typeof p.thread_title === 'string' && ev.thread_id) rec.titles.set(ev.thread_id, p.thread_title);
     push({ id: ev.id, ev, rec, at: ev.recorded_at, count: 1 });
   }
 
@@ -112,6 +124,8 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized }) {
     if (list.length > CAP) list.length = CAP;
   }
 
+  // Fallback for servers before EVT-013, whose message.* payloads have no
+  // thread_title: read the thread once and cache its title.
   function title(rec, threadId) {
     if (!threadId) return '';
     if (rec.titles.has(threadId)) return rec.titles.get(threadId);
@@ -182,11 +196,12 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized }) {
       h('div', { class: 'meta' }, time(e.at), ` · ${rec.board.name}`, path ? ` · #${path}` : '',
         ' · ', h('span', { class: 'actor' }, who(rec, ev.actor_id))),
       h('div', {}, h('span', { class: `type type-${kind}` }, ev.type), e.count > 1 ? ` ×${e.count} ` : ' ',
-        h('span', { class: 'title' }, p.thread?.title || p.task?.title || title(rec, ev.thread_id))),
+        h('span', { class: 'title' }, p.thread?.title || p.task?.title || p.thread_title || title(rec, ev.thread_id))),
       h('div', { class: 'snippet' }, detail(rec, ev))));
   }
 
-  function renderBoardFilter() {
+  const renderBoardFilter = guard(drawBoardFilter);
+  function drawBoardFilter() {
     const sel = $('feed-board'), cur = sel.value;
     sel.replaceChildren(h('option', { value: '' }, 'All boards'),
       ...[...F.boards.values()].map((r) => h('option', { value: r.board.id }, r.board.name)));
@@ -194,20 +209,23 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized }) {
     renderStatus();
   }
 
-  function renderStatus() {
+  const renderStatus = guard(drawStatus);
+  function drawStatus() {
     const recs = [...F.boards.values()];
     const state = !recs.length ? 'connecting' : recs.some((r) => r.state === 'reconnecting') ? 'reconnecting'
       : recs.every((r) => r.state === 'live') ? 'live' : 'connecting';
     const el = $('feed-status');
     el.dataset.state = state;
     el.textContent = `${state} · ${recs.length} board${recs.length === 1 ? '' : 's'}`;
-    $('feed-pause').textContent = F.paused ? `Resume (${F.pending.filter(visible).length} new)` : 'Pause';
+    $('feed-pause').textContent = F.paused ? `Resume (${F.pending.filter((e) => { try { return visible(e); } catch { return false; } }).length} new)` : 'Pause';
   }
 
-  function render() {
-    renderStatus();
+  const render = guard(draw);
+  function draw() {
+    drawStatus();
     if (!F.visible) return;
-    const rows = F.entries.filter(visible).map(row);
+    const rows = [];
+    for (const e of F.entries) { try { if (visible(e)) rows.push(row(e)); } catch (err) { report(err); } } // one bad entry skips only its row
     $('feed').replaceChildren(...(rows.length ? rows : [h('li', { class: 'muted' }, 'Waiting for activity…')]));
   }
 
