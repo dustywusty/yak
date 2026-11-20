@@ -125,20 +125,31 @@ ship with that feature.
 
 ### 2.2 Logout and revocation
 
-- **OPR-130** Ending the operator session MUST, in order: stop every claim
-  renewal loop (§4.4), release each active claim that the session holds
-  (best effort, OPR-342), revoke the credential (OPR-131), and remove the
-  credential and every proof from memory. The page then returns to the
-  read-only login screen.
+- **OPR-130** Logout and idle timeout MUST stop every claim renewal loop
+  (§4.4), await best-effort release of each held active claim, then revoke
+  the credential and remove the credential and every proof from memory.
+  The page then returns to the read-only login screen. Pagehide follows
+  OPR-132 instead. On the first `401`, the client MUST stop sending requests
+  with that credential and clear local session state.
 - **OPR-131** Logout and idle timeout MUST revoke the operator credential
   with `DELETE /v1/credentials/{id}`, where `id` is `credential.id` from
   `GET /v1/me`. The UI MUST say that this revokes the token everywhere it
   is used. A revoke failure other than `401` MUST be shown, and the
   credential MUST be removed from memory anyway.
-- **OPR-132** On `pagehide`, the client SHOULD send the revoke with
-  `fetch(…, {keepalive: true})`. This is best effort. A closed tab whose
-  revoke did not arrive leaves the credential valid until `expires_at`.
-  That is why OPR-103 limits the lifetime.
+- **OPR-132** On `pagehide`, the client MUST first stop renewal loops.
+  It MAY dispatch held-claim releases with `keepalive`; when it does, it
+  MUST synchronously dispatch those releases first, then SHOULD synchronously
+  dispatch self-revocation with `fetch(…, {keepalive: true})`, without awaiting
+  any release or revoke response. Dispatch MUST occur in the pagehide task
+  before any await or response continuation and before clearing the active
+  session. Each request MUST capture immutable transport arguments, including
+  its path and applicable credential, proof, and run identifier. The client
+  MUST immediately clear local session state, the credential, every proof,
+  and renewal timers after dispatch, and MUST consume request rejections
+  without unhandled promises. Dispatch order does not guarantee server
+  arrival or completion order. Revocation is best effort; a closed tab whose
+  revoke did not arrive leaves the credential valid until `expires_at`,
+  which is why OPR-103 limits its lifetime.
 - **OPR-133** Revocation by another path (`yak credential revoke`, a
   server administrator, or revocation of the credential that issued it —
   the same-actor issuance chain in `Authenticate`) ends the session at the
@@ -298,9 +309,11 @@ ADR-0018 §6 and owner decision 5.
   claim_lost`, `403`, or `404`, or the local deadline passes, the client
   MUST stop the loop, drop the proof, and tell the person that the claim
   ended.
-- **OPR-342** Release (A9) is explicit. The client MUST also release on
-  logout and idle timeout (OPR-130). On tab close it MAY send the release
-  with `keepalive`; otherwise the claim lapses at `expires_at` (L6).
+- **OPR-342** Release (A9) is explicit. Release on logout and idle timeout
+  remains required and ordered before revocation under OPR-130. On pagehide,
+  held-claim release is optional; any chosen `keepalive` releases are
+  dispatched before self-revocation without awaiting responses under OPR-132.
+  If release does not arrive, the claim lapses at `expires_at` (L6).
 - **OPR-343** The client MUST NOT offer complete or fail in v1 (owner
   decision 4). A person who finished the work releases, and the owner or
   an agent settles it.

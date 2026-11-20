@@ -1577,7 +1577,58 @@ async function op17028PreviewCase() {
  assert('all preview and normal assertions execute',assertions===13);
  console.log(`OP17-028 executed ${assertions} assertions across fresh normal and preview fixtures`);
 }
-const operatorCases = new Map([['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17004PagehideCase() {
+ let assertions=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-004: ${name}`,ok)};
+ for(const variant of ['pending','reject','logout','release401']) {
+  await freshIdentityFixture("window.__op.task.state='ready';");
+  try {
+   await ev(`(async()=>{const {OperatorSession}=await import('/operator.js');const hold=OperatorSession.prototype.hold;
+    window.__op004={hold};OperatorSession.prototype.hold=function(...args){window.__op004.session=this;return hold.apply(this,args)};})()`);
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-close-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");await open();
+   await click('Work on this now (while this tab is open)');await confirm('Claim');
+   await until("!!window.__op004.session && !!document.querySelector('.op-lease')");
+   await ev(`(()=>{const x=window.__op004,s=x.session;x.claims=[...s.claims.values()];
+    s.hold('/v1/boards/brd_test/tasks/second',{claim:{id:'second',lease_seconds:300},proof:'synthetic-second'});x.claims.push(s.claims.get('/v1/boards/brd_test/tasks/second'));
+    x.run=s.run;x.credentialPath='/v1/credentials/'+s.me.credential.id;x.fetch=window.fetch;x.calls=[];x.waiting=[];x.timers=[];
+    const unschedule=s.unschedule;s.unschedule=id=>{x.timers.push(id);unschedule(id)};
+    window.fetch=(path,options)=>{if(options?.method==='POST'&&String(path).endsWith('/release')||options?.method==='DELETE'){
+     x.calls.push({path,options,active:s.active,run:s.run,stopped:x.timers.length>=2});
+     if(${JSON.stringify(variant)}==='reject')return Promise.reject(new Error('synthetic close failure'));
+     if(${JSON.stringify(variant)}==='release401')return Promise.resolve(new Response('',{status:401}));
+     return new Promise(resolve=>x.waiting.push(()=>resolve(new Response(null,{status:204}))));
+    }return x.fetch(path,options)};
+    ${['pending','reject'].includes(variant)?"window.dispatchEvent(new Event('pagehide'));":"document.querySelector('#operator-logout').click();"}
+    x.sameTask=x.calls.map(c=>c.options.method);x.cleared=!s.active&&s.me===null&&s.run===null&&s.claims.size===0&&s.pending.size===0&&x.claims.every(c=>c.proof===null);
+   })()`);
+   if(['pending','reject'].includes(variant)) {
+    assert(`${variant}: all three requests dispatched in pagehide task`,await ev("JSON.stringify(window.__op004.sameTask)===JSON.stringify(['POST','POST','DELETE'])"));
+    assert(`${variant}: memory and proofs immediately cleared`,await ev('window.__op004.cleared'));
+    assert(`${variant}: immutable authenticated keepalive arguments`,await ev("window.__op004.calls.length===3&&window.__op004.calls.every(c=>c.active&&c.stopped&&c.run===window.__op004.run&&c.options.keepalive===true&&c.options.headers.Authorization==='Bearer synthetic-close-token'&&c.options.headers['Yak-Run-Id']===window.__op004.run)&&window.__op004.calls[0].options.headers['Yak-Claim-Proof']==='fake-secret-proof'&&window.__op004.calls[1].options.headers['Yak-Claim-Proof']==='synthetic-second'&&window.__op004.calls[2].path===window.__op004.credentialPath"));
+   } else if(variant==='logout') {
+    assert('logout sends only first release initially',await ev("JSON.stringify(window.__op004.sameTask)==='[\"POST\"]'"));
+    await ev('window.__op004.waiting.shift()()');await until('window.__op004.calls.length===2');
+    assert('logout waits for second release before revoke',await ev("window.__op004.calls.every(c=>c.options.method==='POST')"));
+    await ev('window.__op004.waiting.shift()()');await until('window.__op004.calls.length===3');
+    assert('logout revoke follows both responses',await ev("window.__op004.calls[2].options.method==='DELETE'&&window.__op004.calls.every(c=>c.options.keepalive===false)"));
+    await ev('window.__op004.waiting.shift()()');await until('!window.__op004.session.active');
+   } else {
+    await until('!window.__op004.session.active');
+    assert('release401 sends no subsequent credential request',await ev('window.__op004.calls.length===1'));
+   }
+   assert(`${variant}: renewal loops stopped`,await ev('window.__op004.timers.length>=2'));
+   assert(`${variant}: final local state cleared`,await ev('!window.__op004.session.active&&window.__op004.session.me===null&&window.__op004.claims.every(c=>c.proof===null)'));
+  } finally {
+   await ev(`(async()=>{const x=window.__op004;if(!x)return;window.fetch=x.fetch||window.fetch;const {OperatorSession}=await import('/operator.js');OperatorSession.prototype.hold=x.hold;
+    if(x.session?.active){x.session.ending=false;await x.session.end({unauthorized:true});}for(const resolve of x.waiting||[])resolve();})()`);
+   await cmd('Page.navigate',{url:'about:blank'});
+  }
+ }
+ assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
+ console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
+}
+const operatorCases = new Map([['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

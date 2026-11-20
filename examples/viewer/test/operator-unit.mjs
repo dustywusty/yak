@@ -281,10 +281,10 @@ for (const ending of ['logout', 'idle', 'expiry', 'pagehide']) test(`OP17-039 ${
   if (ending === 'idle') mono = 900001;
   if (ending === 'expiry') s.expiry = 0;
   const pending = ending === 'idle' || ending === 'expiry' ? s.tick() : s.end({ keepalive: ending === 'pagehide' });
-  // Cleanup awaits release before dispatching revoke, then retains memory until it settles.
+  // Ordinary cleanup awaits responses; pagehide clears immediately after dispatch.
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls.map(c => c.path), [path, `${path}/claims/q/renew`, `${path}/release`, `${path}/release`, '/v1/credentials/c']);
-  assert.equal(s.run, run); assert.equal(s.active, true); assert.equal(s.ending, true);
+  assert.equal(s.run, ending === 'pagehide' ? null : run); assert.equal(s.active, ending !== 'pagehide'); assert.equal(s.ending, ending !== 'pagehide');
   for (const call of calls) {
    assert.equal(call.memoryRun, run, `${call.path} dispatch retains run`);
    assert.equal(call.headers['Yak-Run-Id'], run, `${call.path} carries session run`);
@@ -620,4 +620,41 @@ test('OP17-032 fixture renew validates proof and lease and returns ClaimView',as
  const view=await response.json();assert.equal(view.id,'q');assert.equal(view.status,'active');assert.equal(view.lease_seconds,30);
  assert.ok(Date.parse(view.expires_at)>Date.parse(view.acquired_at));assert.equal(view.ended_at,null);assert.equal(view.end_recorded_at,null);
  window.__op.task.current_claim=null;assert.equal((await send('/q/renew',{lease_seconds:30})).status,409);
+});
+
+function op17004Session(send) {
+ const timers = new Set(), calls = [], claims = [];
+ const s = new OperatorSession({schedule: () => { const id = {}; timers.add(id); return id; }, unschedule: id => timers.delete(id),
+  send: (...args) => { calls.push({args, active:s.active, run:s.run, timers:timers.size}); return send(...args); }});
+ s.start(me(),server,now);
+ for (const id of ['one','two']) { const path=`/v1/boards/b/tasks/${id}`; s.hold(path,{claim:{id,lease_seconds:300},proof:`synthetic-${id}`}); claims.push(s.claims.get(path)); }
+ s.intent({steps:[]});
+ return {s,timers,calls,claims};
+}
+function op17004Cleared({s,timers,claims}) {
+ assert.equal(s.active,false); assert.equal(s.ending,false); assert.equal(s.me,null); assert.equal(s.run,null);
+ assert.equal(s.generation,null); assert.equal(s.pending.size,0); assert.equal(s.claims.size,0); assert.equal(timers.size,0);
+ for(const c of claims) assert.equal(c.proof,null);
+}
+for(const outcome of ['pending','reject','throw']) test(`OP17-004 pagehide dispatches every release then revoke synchronously (${outcome})`,async()=>{
+ const f=op17004Session(()=>{if(outcome==='pending')return new Promise(()=>{});if(outcome==='throw')throw new Error('synthetic failure');return Promise.reject(new Error('synthetic failure'));});
+ const run=f.s.run;
+ try {
+  const ended=f.s.end({keepalive:true});
+  assert.deepEqual(f.calls.map(c=>c.args[1]),['/v1/boards/b/tasks/one/release','/v1/boards/b/tasks/two/release','/v1/credentials/c']);
+  assert.ok(ended instanceof Promise); op17004Cleared(f);
+  for(const [i,c] of f.calls.entries()) {assert.equal(c.active,true);assert.equal(c.timers,0);assert.equal(c.run,run);assert.equal(c.args[3]['Yak-Run-Id'],run);assert.equal(c.args[4].keepalive,true);if(i<2)assert.equal(c.args[3]['Yak-Claim-Proof'],`synthetic-${['one','two'][i]}`);}
+  await ended; await new Promise(resolve=>setImmediate(resolve)); op17004Cleared(f);
+ } finally {if(f.s.active){f.s.ending=false;await f.s.end({unauthorized:true});}}
+});
+test('OP17-004 ordinary logout waits for both releases then clears on failed revoke',async()=>{
+ const waiting=[]; const f=op17004Session((method)=>method==='DELETE'?Promise.reject(Object.assign(new Error('revoke failed'),{status:503})):new Promise(resolve=>waiting.push(resolve)));
+ const ended=f.s.end();
+ assert.equal(f.calls.length,1);assert.equal(f.timers.size,0);assert.equal(f.s.active,true);
+ waiting[0]();await new Promise(resolve=>setImmediate(resolve));assert.equal(f.calls.length,2);assert.ok(f.calls.every(c=>c.args[0]==='POST'));
+ waiting[1]();await ended;assert.equal(f.calls[2].args[0],'DELETE');assert.ok(f.calls.every(c=>c.args[4].keepalive===false));op17004Cleared(f);assert.match(f.s.notice,/revocation failed/);
+});
+test('OP17-004 ordinary release 401 prevents subsequent release and revoke',async()=>{
+ const f=op17004Session(()=>Promise.reject(Object.assign(new Error('unauthorized'),{status:401})));
+ await f.s.end();assert.equal(f.calls.length,1);op17004Cleared(f);
 });

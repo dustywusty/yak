@@ -81,10 +81,16 @@ the workflow locally.
   8 h is the recommended value.
 - Idle timeout: 15 minutes of no user input, client-side (OPR-113). The
   server has no idle concept in v1.
-- Logout and idle timeout **revoke** the credential with
-  `DELETE /v1/credentials/{own id}` (OPR-131), and release held claims
-  first (OPR-130). Tab close sends a best-effort `keepalive` revoke
-  (OPR-132).
+- Logout and idle timeout stop renewal loops, await best-effort held-claim
+  releases, then revoke the credential with `DELETE /v1/credentials/{own id}`
+  and clear local session state (OPR-130, OPR-131); the first `401` stops
+  further requests with that credential. Pagehide uses the D004 exception
+  (OPR-132, OPR-342): stop renewal loops, synchronously dispatch any optional
+  held-claim `keepalive` releases followed by best-effort `keepalive`
+  self-revoke without awaiting responses, then immediately clear local
+  session state, the credential, proofs, and timers. Capture immutable
+  request arguments before clearing and consume rejections. This orders
+  dispatch only; server arrival and completion are best effort.
 
 ### 4 Ceiling
 
@@ -118,7 +124,9 @@ message delete (owner decisions 3 and 4).
 
 Claim as a person: a claim is runner-shaped (lease ≤ 300 s, proof,
 renewal). The page runs a renewal loop while the tab is open (OPR-340)
-and releases on logout. A closed or sleeping tab lets the claim lapse.
+and releases on logout. On pagehide it may dispatch best-effort releases
+before self-revoke, without awaiting responses (OPR-132, OPR-342). A closed
+or sleeping tab whose release does not arrive lets the claim lapse.
 For a durable "this is mine", assignment is the better tool. The page
 offers both (owner decision 5).
 

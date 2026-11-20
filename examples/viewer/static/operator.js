@@ -217,6 +217,19 @@ export class OperatorSession {
     this.ending = true; clearInterval(this.timer);
     for (const c of this.claims.values()) this.unschedule(c.timer);
     try {
+      if (keepalive && !unauthorized) {
+        // A closing document may never run a response continuation. Capture
+        // each request and dispatch all of them while the transport is active.
+        const dispatch = (method, path, body, headers) => {
+          try { Promise.resolve(this.send(method, path, body, headers, { keepalive: true })).catch(() => {}); }
+          catch { /* Best effort even when transport dispatch throws. */ }
+        };
+        for (const [path, c] of this.claims) {
+          dispatch('POST', `${path}/release`, { reason: 'operator session ended' }, { 'Yak-Claim-Proof': c.proof, 'Idempotency-Key': randomKey(), 'Yak-Run-Id': run });
+        }
+        dispatch('DELETE', `/v1/credentials/${this.me.credential.id}`, null, { 'Yak-Run-Id': run });
+        return;
+      }
       if (!unauthorized) {
         for (const [path, c] of this.claims) {
           try { await this.send('POST', `${path}/release`, { reason: 'operator session ended' }, { 'Yak-Claim-Proof': c.proof, 'Idempotency-Key': randomKey(), 'Yak-Run-Id': run }, { keepalive }); }

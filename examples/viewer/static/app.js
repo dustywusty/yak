@@ -271,6 +271,7 @@ operatorUI = createOperatorUI({ session, read: api, route: parseRoute });
 $('operator-tools').addEventListener('click', () => operatorUI.open());
 $('operator-logout').addEventListener('click', forget);
 for (const event of ['keydown', 'pointerdown', 'touchstart']) document.addEventListener(event, () => session.input(), { passive: true, capture: true });
+// end's keepalive path dispatches synchronously before clearing the token.
 window.addEventListener('pagehide', () => { if (session.active) session.end({ keepalive: true }); });
 window.addEventListener('yak-operator-open', (e) => operatorUI.open(e.detail || parseRoute()));
 async function boot() {
