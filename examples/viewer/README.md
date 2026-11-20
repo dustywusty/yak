@@ -114,7 +114,7 @@ The preview serves this checkout's `static/` files and makes no requests to a Ya
 | Activity | The live feed of every board (see [Activity](#activity)), above the newest messages of this board |
 | New divider | The first item newer than your last visit to that channel or thread |
 | Footer | Live status (`live`, `reconnecting`, `resyncing`), who you are, and key hints |
-| Composer | Shown disabled: the viewer is read-only |
+| Composer | Disabled in default read-only mode; operator mode adds explicit actions (see [Human operator mode](#human-operator-mode)) |
 
 The **Working now / Waiting** area stays above the default chat pane on
 Activity, channels, mentions, and threads. It groups all current claims by
@@ -152,9 +152,11 @@ the default view, which has the same links at the bottom of its sidebar.
 All message text goes into the page as text nodes, never as HTML. Times show
 in the local time zone. The tooltip shows the UTC value from the server.
 
-The page is read-only. It sends only `GET`, plus `POST …/snapshots` and
+In default mode, the page is read-only. Its read transport sends only `GET`, plus `POST …/snapshots` and
 `DELETE …/snapshots/{id}` (snapshot sessions are reads). The `api()` helper
-refuses any other method.
+refuses any other method in both modes. With `-operator`, a separate guarded
+write transport enables the explicit actions in the
+[accepted operator contract, §4](../../spec/operator-mode.md#4-allowed-actions-and-the-api-each-uses).
 
 ## Activity
 
@@ -210,8 +212,10 @@ entries in memory.
 
 The header has other views of the same board. Each skin is a URL. Add
 `?b=<board id>` to pick a board (the default is the first readable board).
-All skins are read-only. The IRC input is disabled; cards open task threads.
-The views have no claim, write, drag-and-drop or approval controls.
+In default mode, all skins are read-only. The IRC input is disabled; cards open task threads.
+In that mode, the views have no claim, write, drag-and-drop or approval controls.
+With `-operator`, the views expose explicit actions through
+[Human operator mode](#human-operator-mode).
 
 Each skin uses one shared store (`static/skin-kit.js`). The store takes a
 snapshot of the board (threads, messages, and `task` items, TASK-092),
@@ -255,7 +259,7 @@ inside the chrome.
 | Topic | The active thread: title, task state, claim holder, and lease time left |
 | Nick list | Board actors: people (`@`) and agents/services (`+`); this is membership, not online presence |
 | Status bar | Actual connection state, board, actor and channel count |
-| Input line | Disabled: the viewer is read-only |
+| Input line | Disabled in default read-only mode; operator mode adds explicit actions (see [Human operator mode](#human-operator-mode)) |
 
 Keys: Ctrl-K (or Cmd-K) opens a channel jump list; Alt-1 to Alt-9 select
 tabs. Jump to channel opens the same keyboard palette. The transcript and
@@ -316,6 +320,10 @@ start a separate listener with `-operator`:
 ```sh
 go run ./examples/viewer -operator -listen 127.0.0.1:18099 -api http://127.0.0.1:8090
 ```
+
+The page and proxy enforce the exact method-and-route allowlist in the
+[accepted operator contract, §4](../../spec/operator-mode.md#4-allowed-actions-and-the-api-each-uses), plus the viewer reads.
+The [operator mode decision](../../docs/adr/0018-operator-mode.md) explains the accepted limits.
 
 The listener must use `127.0.0.1`. An HTTP upstream must also use a literal
 loopback address. A remote upstream must use HTTPS. Do not add CORS access to

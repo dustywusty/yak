@@ -1,5 +1,7 @@
-// Yak viewer: a view-only client of the Yak HTTP API, built only from
+// Yak viewer: a client of the Yak HTTP API, read-only by default, built only from
 // spec/openapi.yaml, spec/schemas, spec/protocol.md and spec/p2-tasks.md.
+// The read transport stays read-only; opt-in operator writes use a separate
+// guarded transport under spec/operator-mode.md §4.
 // All user content is inserted as text nodes, never as HTML.
 //
 // Views: #/ and #/b/<board>?ch=&t=&m=&v= (term.js, the default chat view,
