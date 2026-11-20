@@ -3,6 +3,8 @@ export const op17042ClaimCorpus = [{"id":"q","task_id":"t","actor_id":"a","execu
 // Disposable in-page API. No real token, server, board or task is touched.
 export function operatorFixture() {
   const B='brd_test',now=Date.now(),iso=()=>new Date().toISOString();
+  // Snapshot creation and store polling share a signal; the feed owns another.
+  let snapshotSignal = null;
   const actors=[{id:'a',handle:'alice',kind:'human'},{id:'bot',handle:'bot',kind:'agent'}];
   const thread={id:'th',board_id:B,channel_path:'ops',title:'<img onerror=alert(1)> gate',root_message_id:'root',labels:{gate:'pending'},task_id:'t',revision:1,updated_at:iso(),created_at:iso()};
   const task={id:'t',board_id:B,thread_id:'th',channel_path:'ops',title:thread.title,owner_actor_id:'a',assignee_actor_id:null,current_claim:null,revision:3,brief_revision:1,state:'blocked',direct_action_required:true,block:{reason:'waiting for review'},dependencies:[],created_at:iso(),state_changed_at:iso()};
@@ -25,11 +27,22 @@ export function operatorFixture() {
       if(p.endsWith('/messages'))return json({messages:[root],next_page_token:null});
       if(p.endsWith('/tasks/t'))return json(task);
       if(p.endsWith('/tasks'))return json({items:[task],next_page_token:null});
-      if(p.endsWith('/events')) {if(T.resync&&u.searchParams.get('cursor')){T.resync=false;return json({code:'resync_required'},409)}if(opts.signal?.aborted)throw new DOMException('aborted','AbortError');if(u.searchParams.get('wait_ms'))await new Promise(r=>setTimeout(r,100));return json({events:T.events,next_cursor:'cur',caught_up:true});}
+      if(p.endsWith('/events')) {
+        if(opts.signal?.aborted)throw new DOMException('aborted','AbortError');
+        if(T.resync && snapshotSignal != null && opts.signal === snapshotSignal && u.searchParams.get('cursor')) {
+          T.resync=false;return json({code:'resync_required'},409);
+        }
+        if(u.searchParams.get('wait_ms'))await new Promise(r=>setTimeout(r,100));
+        return json({events:T.events,next_cursor:'cur',caught_up:true});
+      }
       if(/\/snapshots\//.test(p))return json({items:[{type:'thread',id:thread.id,data:thread},{type:'message',id:root.id,data:root},{type:'task',id:task.id,data:task}],next_page_token:null,continuation_cursor:'cur'});
       if(p.endsWith(B))return json({id:B,name:'test'});
     }
-    if(p.endsWith('/snapshots')){T.snapshots++;return json({id:'s'})}
+    if(p.endsWith('/snapshots')) {
+      if(opts.signal?.aborted)throw new DOMException('aborted','AbortError');
+      snapshotSignal = opts.signal ?? null;
+      T.snapshots++;return json({id:'s'});
+    }
     if(/\/snapshots\//.test(p))return json(null,204);
     const body=opts.body?JSON.parse(opts.body):null;
     T.writes.push({method:m,path:p,body,headers:opts.headers});
