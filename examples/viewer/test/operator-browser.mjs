@@ -69,14 +69,15 @@ async function matrix(action,named=action,setup='',report=check,reject=false){
  const check=report;
  if(setup)await ev(setup);
  const n=await count();
- await ev("for(const input of document.querySelectorAll('.op-workspace input,.op-workspace textarea')){input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));}");check(`${action}: Enter in text fields sends nothing`,await count()===n);
+ await op17027TextFields('.op-workspace',action,check);check(`${action}: Enter in text fields sends nothing`,await count()===n);
  await click(action);await until("!!document.querySelector('.op-confirm[open]')");
  check(`${action}: no write on open`,await count()===n);
  const text=await ev("document.querySelector('.op-confirm').textContent");check(`${action}: read state and acting identity`,['alice','ops',...(action==='Create task'?['Needs my approval']:['Revision:','Claim holder:','Assignee:','State:'])].every(x=>text.includes(x)),text);
  check(`${action}: Cancel focused`,await ev("document.activeElement.textContent==='Cancel'"));await cancel();check(`${action}: Cancel sends nothing`,await count()===n);
  await click(action);await until("!!document.querySelector('.op-confirm[open]')");
- await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+ await op17027Enter();
  check(`${action}: Enter on Cancel sends nothing`,await count()===n);
+ if(await ev("!!document.querySelector('.op-confirm[open]')"))await op17027TextFields('.op-confirm',action,check);
  if(await ev("!!document.querySelector('.op-confirm[open]')"))await cancel();
  const receipts=await ev("document.querySelectorAll('.op-pending').length");
  await ev(`window.__op.enableConfirmationDelay();window.__op.delayConfirmation=true;window.__op.rejectConfirmation=${reject}`);
@@ -90,6 +91,62 @@ async function matrix(action,named=action,setup='',report=check,reject=false){
  await until(`[...document.querySelectorAll('.op-pending')].length===${receipts+1} && ![...document.querySelectorAll('.op-pending')].at(-1).textContent.includes('Sending')`);
  check(`${action}: explicit confirmation writes exact ordered intent`,await op17026Matches(n,reject?expected.slice(0,1):expected));
  check(`${action}: one receipt after settlement`,await ev(`document.querySelectorAll('.op-pending').length===${receipts+1}`));
+}
+// CDP input invokes browser default actions, unlike dispatchEvent(KeyboardEvent).
+async function op17027Enter() {
+ for(const type of ['keyDown','keyUp']) {
+  const result=await cmd('Input.dispatchKeyEvent',{type,key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13,text:type==='keyDown'?'\r':undefined});
+  if(result.error)throw new Error(`OP17-027 native Enter failed: ${JSON.stringify(result.error)}`);
+ }
+ await sleep(150); // Let implicit submission and asynchronous write capture settle.
+}
+async function op17027TextFields(scope,variant,assert) {
+ const selector=scope+' input:not([type=checkbox]):not([type=radio]):not([type=hidden]),'+scope+' textarea';
+ const editable=`Array.from(document.querySelectorAll(${JSON.stringify(selector)})).filter(f=>!f.disabled && !f.readOnly)`;
+ const fields=await ev(`${editable}.map(f=>f.getAttribute('aria-label') || f.name || f.tagName)`);
+ for(const [index,label] of fields.entries()) {
+  const before=await count();
+  const focused=await ev(`(()=>{const f=(${editable})[${index}];if(!f)return false;if(!f.value)f.value='OP17-027 nonempty value';f.focus();return document.activeElement===f && !!f.value;})()`);
+  assert(`${variant}: ${scope} ${label} focused with nonempty value`,focused);
+  await op17027Enter();
+  assert(`${variant}: ${scope} ${label} native Enter sends no writes`,await count()===before);
+ }
+ return fields.length;
+}
+async function op17027NativeEnterCase() {
+ let assertions=0,fixtures=0,fields=0;
+ const assert=(name,ok,detail='')=>{assertions++;check(`OP17-027: ${name}`,ok,detail)};
+ const variants=[
+  ['A6','Approve and unblock'],['A7','Work on this now (while this tab is open)'],['A9','Release'],
+  ['A10 assign','Assign to myself'],['A10 unassign','Assign / unassign'],
+  ['A11 approval off','Create task',false],['A11 approval on','Create task',true],
+  ['A12','Request changes'],['A13 false→true','Require my approval'],['A13 true→false','Remove approval requirement'],
+ ];
+ for(const [variant,action,approval=false] of variants) {
+  await freshIdentityFixture(`window.__op.task.state=${JSON.stringify(['A7','A9'].includes(variant)?'ready':'blocked')};window.__op.task.direct_action_required=${action!=='Require my approval'};window.__op.task.assignee_actor_id=${variant==='A10 unassign'?"'a'":'null'};`);fixtures++;
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-enter-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");await open();
+   if(action==='Release'){await click('Work on this now (while this tab is open)');await confirm('Claim');await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");}
+   await ev(`document.querySelector('input[aria-label^="Task title"]').value='Native Enter task';document.querySelector('textarea[aria-label^="Message"]').value='Native Enter brief';document.querySelector('input[aria-label^="Needs my approval"]').checked=${approval};const note=document.querySelector('textarea[aria-label="Gate note t"]');if(note)note.value='Please change this';`);
+   if(variant==='A10 unassign')await ev("document.querySelector('select[aria-label=\"New assignee\"]').value=''");
+   const before=await count();
+   const tested=await op17027TextFields('.op-workspace',variant,assert);fields+=tested;
+   assert(`${variant}: workspace text fields executed`,tested>=2);
+   assert(`${variant}: native Enter before confirmation sends no writes`,await count()===before);
+   await click(action);await until("!!document.querySelector('.op-confirm[open]')");
+   assert(`${variant}: Cancel initially focused`,await ev("document.activeElement.matches('.op-confirm button') && document.activeElement.textContent==='Cancel'"));
+   await op17027Enter();assert(`${variant}: native Enter on Cancel sends no writes`,await count()===before);
+   if(await ev("!!document.querySelector('.op-confirm[open]')"))await cancel();
+   await click(action);await until("!!document.querySelector('.op-confirm[open]')");
+   const dialogFields=await op17027TextFields('.op-confirm',variant,assert);fields+=dialogFields;
+   assert(`${variant}: dialog fields inspected (${dialogFields} editable) and no writes`,await count()===before);
+   await cancel();assert(`${variant}: Cancel after field input sends no writes`,await count()===before);
+  } finally {await ev("document.querySelector('#operator-logout')?.click()");}
+ }
+ assert('all ten action variants and workspace fields executed',fixtures===10 && fields>=20 && assertions>=100);
+ assert('no browser exceptions',errors.length===0,errors.join(' | '));
+ console.log(`OP17-027 executed ${assertions} assertions, ${fields} native text-field Enter cases across ${fixtures} fresh fixtures`);
 }
 // Independent wire table: fixed fixture values and values read before confirmation.
 async function op17026ExpectedWrites(action) {
@@ -1295,7 +1352,7 @@ async function op17044WireCase() {
  if(assertions!==10)throw new Error(`OP17-044 executed ${assertions}, expected 10`);
  console.log(`OP17-044 executed ${assertions} assertions across two fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
