@@ -93,8 +93,10 @@ func TestChannelIsolation(t *testing.T) { // AUTH-010..016, PAR-003
 	if r.Status != 404 && r.Status != 403 {
 		t.Fatalf("reply into private thread: %d", r.Status)
 	}
-	bob.wantProblem(403, "forbidden", bob.do("POST", f.p("/threads"), J{"channel": "eng/security", "title": "x", "text": "y"}, newKey()))
-	bob.wantProblem(403, "forbidden", bob.do("POST", f.p("/threads"), J{"channel": "eng/security/sub", "title": "x", "text": "y"}, newKey()))
+	// Unreadable channels look exactly like absent ones, so private paths
+	// cannot be probed by posting (AUTH-015).
+	bob.wantProblem(404, "not_found", bob.do("POST", f.p("/threads"), J{"channel": "eng/security", "title": "x", "text": "y"}, newKey()))
+	bob.wantProblem(404, "not_found", bob.do("POST", f.p("/threads"), J{"channel": "eng/security/sub", "title": "x", "text": "y"}, newKey()))
 	// Listings, channel lists, events and snapshots never mention it.
 	for _, path := range []string{"/threads", "/channels", "/events?limit=200"} {
 		raw := string(bob.must(200, bob.do("GET", f.p(path), nil)).Raw)
@@ -119,9 +121,15 @@ func TestChannelIsolation(t *testing.T) { // AUTH-010..016, PAR-003
 	f.grant(t, alice, "eng/security", "deny", "read")
 	alice.wantProblem(404, "not_found", alice.do("GET", f.p("/threads/"+sid), nil))
 	// Effective-permission introspection.
-	pv := bob.must(200, bob.do("GET", f.p("/permissions?channel=eng/security"), nil)).Body
-	if len(pv["capabilities"].([]any)) != 0 || pv["private_boundary"] != "eng/security" {
-		t.Fatalf("permissions: %v", pv)
+	// The governing boundary is revealed only to callers who can read it.
+	pv := bob.must(200, bob.do("GET", f.p("/permissions?channel=eng/security/x"), nil)).Body
+	if len(pv["capabilities"].([]any)) != 0 || pv["private_boundary"] != nil {
+		t.Fatalf("bob permissions: %v", pv)
+	}
+	f.grant(t, alice, "eng/security/*", "allow", "read")
+	pa := alice.must(200, alice.do("GET", f.p("/permissions?channel=eng/security/x"), nil)).Body
+	if pa["private_boundary"] != nil {
+		t.Fatalf("alice is denied read on the boundary itself: %v", pa)
 	}
 }
 

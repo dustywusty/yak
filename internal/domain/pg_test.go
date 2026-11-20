@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -140,3 +141,84 @@ func TestRetentionAndEpoch(t *testing.T) {
 		t.Fatal("cursor board binding")
 	}
 }
+
+func TestSnapshotItemLimit(t *testing.T) { // SNAP-004
+	svc, p, board := setup(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := svc.CreateThread(ctx, p, board, &domain.Idem{Key: fmt.Sprint("s", i), Namespace: board, Method: "POST", Path: "/t"},
+			domain.CreateThreadRequest{Channel: "c", Title: "t", Text: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc.Cfg.SnapshotMaxItems = 4 // 3 threads x (thread + root) = 6 items
+	_, err := svc.CreateSnapshot(ctx, p, board, events.Filter{})
+	var de *domain.Error
+	if !errors.As(err, &de) || de.Status != 413 || de.Code != "limit_exceeded" {
+		t.Fatalf("want 413 limit_exceeded, got %v", err)
+	}
+	var n int
+	if err := svc.DB.QueryRow(ctx, `SELECT count(*) FROM snapshot_sessions WHERE board_id=$1`, board).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a rejected snapshot must not leave a session (n=%d, err=%v)", n, err)
+	}
+}
+
+// H2 regression: a deletion that races snapshot capture must not leak the
+// former body. Simulate the race by restoring a pre-deletion item payload.
+func TestSnapshotPageOverlaysTombstones(t *testing.T) { // RED-001
+	svc, p, board := setup(t)
+	ctx := context.Background()
+	res, err := svc.CreateThread(ctx, p, board, &domain.Idem{Key: "o1", Namespace: board, Method: "POST", Path: "/t"},
+		domain.CreateThreadRequest{Channel: "c", Title: "t", Text: "RACE-SECRET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := res.Body.(domain.ThreadWithRoot).Root
+	snap, err := svc.CreateSnapshot(ctx, p, board, events.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stale []byte
+	if err := svc.DB.QueryRow(ctx, `SELECT payload FROM snapshot_items WHERE snapshot_id=$1 AND resource_id=$2`, snap.ID, root.ID).Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.DeleteMessage(ctx, p, board, root.ID, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.DB.Exec(ctx, `UPDATE snapshot_items SET payload=$3 WHERE snapshot_id=$1 AND resource_id=$2`, snap.ID, root.ID, stale); err != nil {
+		t.Fatal(err)
+	}
+	page, err := svc.SnapshotPage(ctx, p, board, snap.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range page.Items {
+		if bytesContains(it.Data, "RACE-SECRET") {
+			t.Fatalf("snapshot page leaked deleted text: %s", it.Data)
+		}
+	}
+}
+
+// M3 regression: rotating the history epoch during a long poll ends the
+// wait with resync_required instead of re-stamping the old position.
+func TestEpochRotationDuringWait(t *testing.T) { // EVT-009, EVT-011
+	svc, p, board := setup(t)
+	ctx := context.Background()
+	res, err := svc.CreateCredential(ctx, p, &domain.Idem{Key: "ep", Namespace: "server", Method: "POST", Path: "/v1/credentials"},
+		domain.CreateCredentialRequest{Scopes: []string{"*"}, ExpiresInSeconds: 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := res.Body.(*domain.IssuedCredential).Token
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_, _ = postgres.RotateEpoch(ctx, svc.DB)
+	}()
+	_, err = svc.ReadEvents(ctx, p, board, domain.ReadEventsRequest{From: "latest", Limit: 10, Wait: 8 * time.Second, Token: tok})
+	var de *domain.Error
+	if !errors.As(err, &de) || de.Code != "resync_required" {
+		t.Fatalf("want resync_required, got %v", err)
+	}
+}
+
+func bytesContains(b []byte, s string) bool { return strings.Contains(string(b), s) }

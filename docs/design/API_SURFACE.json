@@ -1,0 +1,628 @@
+{
+  "document_type": "api_operation_inventory",
+  "project": "Abby",
+  "design_version": "0.2",
+  "status": "proposal_not_an_openapi_document",
+  "canonical_design": "Abby_Design.md",
+  "target_protocol_major": 1,
+  "required_expansion": [
+    "operationId",
+    "request and response schemas",
+    "security requirements",
+    "preconditions",
+    "idempotency scope",
+    "event types",
+    "error responses",
+    "capability and phase"
+  ],
+  "operations": [
+    {
+      "method": "GET",
+      "path": "/v1/server",
+      "purpose": "Protocol discovery, capabilities, limits, implementation version",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me",
+      "purpose": "Authenticated identity and credential scope",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards",
+      "purpose": "List accessible boards or create a board",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards",
+      "purpose": "List accessible boards or create a board",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/credentials",
+      "purpose": "List or issue credentials within caller authority",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/credentials",
+      "purpose": "List or issue credentials within caller authority",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/credentials/{credential_id}",
+      "purpose": "Revoke a credential",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}",
+      "purpose": "Board metadata and conditional edits",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/boards/{board_id}",
+      "purpose": "Board metadata and conditional edits",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/channels",
+      "purpose": "List or create channels",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/channels",
+      "purpose": "List or create channels",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/actors",
+      "purpose": "Discover visible participants",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/grants",
+      "purpose": "Inspect and create grants",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/grants",
+      "purpose": "Inspect and create grants",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/boards/{board_id}/grants/{grant_id}",
+      "purpose": "Change or revoke a grant",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/boards/{board_id}/grants/{grant_id}",
+      "purpose": "Change or revoke a grant",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/audit-events",
+      "purpose": "Query board administrative metadata under `board_admin`",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/threads",
+      "purpose": "Query or create conversations",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/threads",
+      "purpose": "Query or create conversations",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/threads/{thread_id}",
+      "purpose": "Read or conditionally edit thread metadata",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/boards/{board_id}/threads/{thread_id}",
+      "purpose": "Read or conditionally edit thread metadata",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/threads/{thread_id}/messages",
+      "purpose": "List messages or append a reply",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/threads/{thread_id}/messages",
+      "purpose": "List messages or append a reply",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/messages/{message_id}",
+      "purpose": "Read, edit, or tombstone a message",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/boards/{board_id}/messages/{message_id}",
+      "purpose": "Read, edit, or tombstone a message",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/boards/{board_id}/messages/{message_id}",
+      "purpose": "Read, edit, or tombstone a message",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/boards/{board_id}/messages/{message_id}/labels",
+      "purpose": "Conditional label mutations",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/boards/{board_id}/messages/{message_id}/reactions/{key}",
+      "purpose": "Add or remove the caller's reaction",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/boards/{board_id}/messages/{message_id}/reactions/{key}",
+      "purpose": "Add or remove the caller's reaction",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/schemas",
+      "purpose": "Discover or register schema versions",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/schemas",
+      "purpose": "Discover or register schema versions",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/schemas/{name}/{version}",
+      "purpose": "Read an immutable schema",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/attachments",
+      "purpose": "Allocate a staged upload",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/boards/{board_id}/attachments/{attachment_id}/content",
+      "purpose": "Transfer bytes or obtain a negotiated upload flow",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/attachments/{attachment_id}/finalize",
+      "purpose": "Verify and finalize upload",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/attachments/{attachment_id}/content",
+      "purpose": "Authorized download",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/tasks",
+      "purpose": "Query or create tasks",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks",
+      "purpose": "Query or create tasks",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}",
+      "purpose": "Read or safely edit task metadata",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}",
+      "purpose": "Read or safely edit task metadata",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/briefs",
+      "purpose": "Read accepted brief versions or perform a task-aware brief update",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/briefs",
+      "purpose": "Read accepted brief versions or perform a task-aware brief update",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/root-redaction",
+      "purpose": "Enforce both message and task rights for root redaction",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/batch",
+      "purpose": "Atomically create a bounded plan",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/claim-next",
+      "purpose": "Atomically select and claim eligible work",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/claims",
+      "purpose": "Claim one specified task",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/claims/{claim_id}/renew",
+      "purpose": "Renew current ownership",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/release",
+      "purpose": "Release a current claim",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/complete",
+      "purpose": "Record successful outcome",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/fail",
+      "purpose": "Record failed outcome",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/block",
+      "purpose": "Hold work and revoke an active claim",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/unblock",
+      "purpose": "Re-evaluate readiness after a hold",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/cancel",
+      "purpose": "Cancel unfinished work",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/reopen",
+      "purpose": "Start a new attempt after failure or cancellation",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/assignee",
+      "purpose": "Replace assignment only without a live claim or terminal state",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/boards/{board_id}/tasks/{task_id}/dependencies",
+      "purpose": "Replace the dependency set",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/events",
+      "purpose": "Paginated catch-up or bounded long polling",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/events/stream",
+      "purpose": "Optional SSE transport",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/snapshots",
+      "purpose": "Capture a consistent materialized snapshot",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/snapshots/{snapshot_id}",
+      "purpose": "Page through or discard a snapshot",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/boards/{board_id}/snapshots/{snapshot_id}",
+      "purpose": "Page through or discard a snapshot",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/subscriptions",
+      "purpose": "List or create durable subscriptions",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/subscriptions",
+      "purpose": "List or create durable subscriptions",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/subscriptions/{subscription_id}",
+      "purpose": "Inspect, pause, change, or remove subscriptions",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/boards/{board_id}/subscriptions/{subscription_id}",
+      "purpose": "Inspect, pause, change, or remove subscriptions",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/boards/{board_id}/subscriptions/{subscription_id}",
+      "purpose": "Inspect, pause, change, or remove subscriptions",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/subscriptions/{subscription_id}/deliveries",
+      "purpose": "Inspect delivery state and attempts",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/deliveries/{delivery_id}/retry",
+      "purpose": "Explicitly retry a failed delivery",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/deliveries/{delivery_id}/skip",
+      "purpose": "Record an authorized, audited skip after an attempt has ended",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/schedules",
+      "purpose": "List or create future posts",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/schedules",
+      "purpose": "List or create future posts",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/schedules/{schedule_id}",
+      "purpose": "Inspect or cancel a schedule",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/boards/{board_id}/schedules/{schedule_id}",
+      "purpose": "Inspect or cancel a schedule",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/boards/{board_id}/external-links",
+      "purpose": "Inspect or create integration mappings",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/boards/{board_id}/external-links",
+      "purpose": "Inspect or create integration mappings",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/boards/{board_id}/external-links/{link_id}",
+      "purpose": "Unlink future synchronization",
+      "status": "proposed",
+      "request_schema": "to_define_in_P0",
+      "response_schema": "to_define_in_P0"
+    }
+  ]
+}

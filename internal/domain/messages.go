@@ -312,8 +312,13 @@ func (s *Service) CreateThread(ctx context.Context, p *Principal, boardID string
 	}
 	idem.Request = req
 	return s.boardMutation(ctx, p, boardID, idem, func(b *btx) (*Result, error) {
-		if !b.policy.Has(req.Channel, authz.Read) || !b.policy.Has(req.Channel, authz.Post) {
-			return nil, Forbidden("read and post required in %q", req.Channel)
+		// Without read, a channel is indistinguishable from an absent one
+		// (AUTH-015); only readable targets reveal a 403.
+		if !b.policy.Has(req.Channel, authz.Read) {
+			return nil, E(404, "not_found", "channel %q not found", req.Channel)
+		}
+		if !b.policy.Has(req.Channel, authz.Post) {
+			return nil, Forbidden("post required in %q", req.Channel)
 		}
 		ch, ok := b.chans[req.Channel]
 		if !ok {
@@ -396,8 +401,15 @@ func (s *Service) ListThreads(ctx context.Context, p *Principal, boardID string,
 		return out, nil
 	}
 	cursor := after
-	batchSize := limit + 1
-	for {
+	batchSize := max(limit+1, 200)
+	for batches := 0; ; batches++ {
+		if batches == 10 {
+			// Bound the work of one request; continue from the last
+			// examined thread (the page may be short or empty).
+			tok := encodePageToken(cursor)
+			out.NextPageToken = &tok
+			return out, nil
+		}
 		rows, err := s.DB.Query(ctx, `SELECT `+threadCols+` FROM threads t WHERE t.board_id=$1 AND t.channel_id = ANY($2) AND t.created_position > $3
 			AND ($4 = '' OR t.created_by = $4) ORDER BY t.created_position LIMIT $5`, boardID, readable, cursor, f.AuthorID, batchSize)
 		if err != nil {
@@ -710,8 +722,14 @@ func (s *Service) DeleteMessage(ctx context.Context, p *Principal, boardID, mess
 // the tombstone: event payloads and facets, and snapshot items.
 func (b *btx) scrubMessage(tomb MessageView, rootLabels map[string]string) error {
 	tj, _ := json.Marshal(tomb)
-	rows, err := b.Query(b.ctx, `SELECT position, facets FROM events WHERE board_id=$1 AND (resource_id=$2 OR (type='thread.created' AND payload->'message'->>'id'=$2))`,
-		b.board.ID, tomb.ID)
+	// Root messages also appear inside their thread.created event, whose
+	// resource is the thread; both lookups use the resource_id index.
+	rootThread := ""
+	if tomb.IsRoot {
+		rootThread = tomb.ThreadID
+	}
+	rows, err := b.Query(b.ctx, `SELECT position, facets FROM events WHERE board_id=$1 AND (resource_id=$2 OR (resource_id=$3 AND type='thread.created'))`,
+		b.board.ID, tomb.ID, rootThread)
 	if err != nil {
 		return err
 	}

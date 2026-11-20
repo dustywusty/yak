@@ -106,7 +106,7 @@ func (s *Service) ReadEvents(ctx context.Context, p *Principal, boardID string, 
 	notify, unsubscribe := s.Hub.Subscribe(boardID)
 	defer unsubscribe()
 	start := int64(-1)
-	firstFP := ""
+	firstFP, firstEpoch := "", ""
 	for iter := 0; ; iter++ {
 		if iter > 0 {
 			var err error
@@ -114,12 +114,14 @@ func (s *Service) ReadEvents(ctx context.Context, p *Principal, boardID string, 
 				return nil, err
 			}
 		}
-		page, pos, fp, err := s.readEventsOnce(ctx, p, boardID, req, start)
+		page, pos, fp, epoch, err := s.readEventsOnce(ctx, p, boardID, req, start)
 		if err != nil {
 			return nil, err
 		}
 		if firstFP == "" {
-			firstFP = fp
+			firstFP, firstEpoch = fp, epoch
+		} else if epoch != firstEpoch {
+			return nil, resync("history_reset", "board history was reset or restored during the wait; take a snapshot")
 		} else if fp != firstFP {
 			// Access changed during the wait: explicit recovery, never a
 			// silent change of what this read position means (§4.2).
@@ -145,45 +147,60 @@ func (s *Service) ReadEvents(ctx context.Context, p *Principal, boardID string, 
 	}
 }
 
-func (s *Service) readEventsOnce(ctx context.Context, p *Principal, boardID string, req ReadEventsRequest, startOverride int64) (*EventPage, int64, string, error) {
-	v, err := s.viewBoard(ctx, s.DB, p, boardID)
+// readEventsOnce evaluates policy, epoch, head, retention, and the event scan
+// in one REPEATABLE READ snapshot, so a channel, grant, or retention change
+// committed mid-read cannot make the reader skip or misjudge events.
+func (s *Service) readEventsOnce(ctx context.Context, p *Principal, boardID string, req ReadEventsRequest, startOverride int64) (page *EventPage, pos int64, fp, epoch string, err error) {
+	err = pgx.BeginTxFunc(ctx, s.DB, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		var e error
+		page, pos, fp, epoch, e = s.readEventsTx(ctx, tx, p, boardID, req, startOverride)
+		return e
+	})
+	return
+}
+
+func (s *Service) readEventsTx(ctx context.Context, q pgx.Tx, p *Principal, boardID string, req ReadEventsRequest, startOverride int64) (*EventPage, int64, string, string, error) {
+	v, err := s.viewBoard(ctx, q, p, boardID)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
-	epoch, err := s.historyEpoch(ctx, s.DB)
+	epoch, err := s.historyEpoch(ctx, q)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
 	var head, retained int64
-	if err := s.DB.QueryRow(ctx, `SELECT head_position, retained_from_position FROM board_heads WHERE board_id=$1`, boardID).Scan(&head, &retained); err != nil {
-		return nil, 0, "", err
+	if err := q.QueryRow(ctx, `SELECT head_position, retained_from_position FROM board_heads WHERE board_id=$1`, boardID).Scan(&head, &retained); err != nil {
+		return nil, 0, "", "", err
 	}
 	qh, fp := req.Filter.Hash(), v.policy.Fingerprint()
 	var pos int64
 	switch {
 	case startOverride >= 0:
+		if startOverride < retained-1 {
+			return nil, 0, "", "", E(410, "cursor_expired", "events after this read position were removed by retention; take a snapshot")
+		}
 		pos = startOverride
 	case req.Cursor != "":
 		c, err := events.DecodeCursor(req.Cursor)
 		if err != nil {
-			return nil, 0, "", Validation("malformed cursor")
+			return nil, 0, "", "", Validation("malformed cursor")
 		}
 		if c.BoardID != boardID || c.Query != qh {
-			return nil, 0, "", Validation("cursor was issued for a different board or query; obtain a new read position")
+			return nil, 0, "", "", Validation("cursor was issued for a different board or query; obtain a new read position")
 		}
 		if c.Epoch != epoch {
-			return nil, 0, "", resync("history_reset", "board history was reset or restored; take a snapshot and continue from its cursor")
+			return nil, 0, "", "", resync("history_reset", "board history was reset or restored; take a snapshot and continue from its cursor")
 		}
 		if c.Policy != fp {
-			return nil, 0, "", resync("policy_changed", "effective access changed; take a snapshot and continue from its cursor")
+			return nil, 0, "", "", resync("policy_changed", "effective access changed; take a snapshot and continue from its cursor")
 		}
 		if c.Position > head {
-			return nil, 0, "", resync("history_reset", "cursor is ahead of board history")
+			return nil, 0, "", "", resync("history_reset", "cursor is ahead of board history")
 		}
 		if c.Position < retained-1 {
 			e := E(410, "cursor_expired", "events after this cursor are no longer retained; take a snapshot")
 			e.Extra = map[string]any{"retained_from_position_available": true}
-			return nil, 0, "", e
+			return nil, 0, "", "", e
 		}
 		pos = c.Position
 	case req.From == "latest":
@@ -196,11 +213,11 @@ func (s *Service) readEventsOnce(ctx context.Context, p *Principal, boardID stri
 	}
 	page := &EventPage{Events: []EventView{}}
 	for scans := 0; scans < 20; scans++ {
-		rows, err := s.DB.Query(ctx, `SELECT position, id, type, actor_id, credential_id, run_id, channel_id, thread_id, resource_type, resource_id,
+		rows, err := q.Query(ctx, `SELECT position, id, type, actor_id, credential_id, run_id, channel_id, thread_id, resource_type, resource_id,
 			resource_revision, payload, facets, recorded_at, effective_at FROM events WHERE board_id=$1 AND position > $2 AND position <= $3
 			ORDER BY position LIMIT $4`, boardID, pos, head, s.Cfg.EventScanBatch)
 		if err != nil {
-			return nil, 0, "", err
+			return nil, 0, "", "", err
 		}
 		n := 0
 		for rows.Next() {
@@ -211,7 +228,7 @@ func (s *Service) readEventsOnce(ctx context.Context, p *Principal, boardID stri
 			if err := rows.Scan(&position, &ev.ID, &ev.Type, &ev.ActorID, &ev.CredentialID, &ev.RunID, &ev.ChannelID, &ev.ThreadID,
 				&ev.Resource.Type, &ev.Resource.ID, &ev.Resource.Revision, &ev.Payload, &facets, &ev.RecordedAt, &ev.EffectiveAt); err != nil {
 				rows.Close()
-				return nil, 0, "", err
+				return nil, 0, "", "", err
 			}
 			pos = position
 			if ev.ChannelID == nil {
@@ -232,7 +249,7 @@ func (s *Service) readEventsOnce(ctx context.Context, p *Principal, boardID stri
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, 0, "", err
+			return nil, 0, "", "", err
 		}
 		if len(page.Events) >= req.Limit || n < s.Cfg.EventScanBatch {
 			break
@@ -240,7 +257,7 @@ func (s *Service) readEventsOnce(ctx context.Context, p *Principal, boardID stri
 	}
 	page.CaughtUp = pos >= head
 	page.NextCursor = mk(pos)
-	return page, pos, fp, nil
+	return page, pos, fp, epoch, nil
 }
 
 // ---- snapshots ----
@@ -317,6 +334,7 @@ func (s *Service) CreateSnapshot(ctx context.Context, p *Principal, boardID stri
 			return err
 		}
 		var ord int64
+		scanned := 0
 		add := func(typ, id string, data any) error {
 			ord++
 			if ord > int64(s.Cfg.SnapshotMaxItems) {
@@ -334,6 +352,10 @@ func (s *Service) CreateSnapshot(ctx context.Context, p *Principal, boardID stri
 			msgs, err := pgx.CollectRows(mrows, func(r pgx.CollectableRow) (MessageView, error) { return scanMessage(r, v.chans) })
 			if err != nil {
 				return err
+			}
+			scanned += len(msgs)
+			if scanned > 10*s.Cfg.SnapshotMaxItems {
+				return E(413, "limit_exceeded", "snapshot would examine more than %d messages; narrow the filter", 10*s.Cfg.SnapshotMaxItems)
 			}
 			var matched []MessageView
 			for _, m := range msgs {
@@ -424,6 +446,36 @@ func (s *Service) SnapshotPage(ctx context.Context, p *Principal, boardID, id st
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	// Redaction overlay: a deletion that committed while this snapshot was
+	// being captured may not have scrubbed its items yet; project current
+	// tombstones at read time so no page can return erased content (RED-001).
+	var msgIDs []string
+	for _, it := range page.Items {
+		if it.Type == "message" {
+			msgIDs = append(msgIDs, it.ID)
+		}
+	}
+	if len(msgIDs) > 0 {
+		drows, err := s.DB.Query(ctx, `SELECT id FROM messages WHERE board_id=$1 AND id = ANY($2) AND deleted_at IS NOT NULL`, boardID, msgIDs)
+		if err != nil {
+			return nil, err
+		}
+		deleted, err := pgx.CollectRows(drows, pgx.RowTo[string])
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range deleted {
+			m, err := loadMessage(ctx, s.DB, boardID, id, v.chans, false)
+			if err != nil {
+				return nil, err
+			}
+			for i := range page.Items {
+				if page.Items[i].Type == "message" && page.Items[i].ID == id {
+					page.Items[i].Data = jsonOf(m)
+				}
+			}
+		}
 	}
 	if last < r.info.ItemCount {
 		tok := encodePageToken(last)

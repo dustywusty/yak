@@ -41,7 +41,7 @@ func addGlobalFlags(root *cobra.Command) {
 	pf.StringVar(&gf.profile, "profile", "", "config profile (env ABBY_PROFILE)")
 	pf.StringVar(&gf.url, "url", "", "server base URL (env ABBY_URL)")
 	pf.StringVar(&gf.board, "board", "", "board ID (env ABBY_BOARD)")
-	pf.StringVar(&gf.tokenFile, "token-file", "", "read the bearer token from this file (env ABBY_TOKEN holds a token)")
+	pf.StringVar(&gf.tokenFile, "token-file", "", "read the bearer token from this file (env ABBY_TOKEN_FILE; ABBY_TOKEN holds a token)")
 	pf.BoolVar(&gf.json, "json", false, "print JSON (NDJSON for streams)")
 	pf.StringVar(&gf.runID, "run-id", "", "attach Abby-Run-Id to requests (env ABBY_RUN_ID); attribution only")
 }
@@ -118,8 +118,12 @@ func resolved() (Profile, error) {
 	if v := os.Getenv("ABBY_TOKEN"); v != "" {
 		p.Token = v
 	}
+	tf := os.Getenv("ABBY_TOKEN_FILE")
 	if gf.tokenFile != "" {
-		b, err := os.ReadFile(gf.tokenFile)
+		tf = gf.tokenFile
+	}
+	if tf != "" {
+		b, err := os.ReadFile(tf)
 		if err != nil {
 			return p, err
 		}

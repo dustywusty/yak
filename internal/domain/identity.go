@@ -85,6 +85,21 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 	if subtle.ConstantTimeCompare(ver, verifier(secret)) != 1 || revoked != nil || disabled != nil || !s.Now().Before(p.ExpiresAt) {
 		return nil, errUnauthenticated
 	}
+	// A self-issued credential is only as valid as its issuance chain:
+	// revoking a credential disables everything its actor minted from it.
+	// The chain stops at credentials issued by a different actor.
+	var brokenAncestor bool
+	if err := s.DB.QueryRow(ctx, `WITH RECURSIVE chain(id, actor_id, parent, revoked_at, depth) AS (
+			SELECT id, actor_id, issued_by_credential_id, revoked_at, 0 FROM credentials WHERE id=$1
+			UNION ALL
+			SELECT c.id, c.actor_id, c.issued_by_credential_id, c.revoked_at, chain.depth+1
+			FROM credentials c JOIN chain ON c.id = chain.parent AND c.actor_id = chain.actor_id WHERE chain.depth < 64)
+		SELECT EXISTS(SELECT 1 FROM chain WHERE depth > 0 AND revoked_at IS NOT NULL)`, credID).Scan(&brokenAncestor); err != nil {
+		return nil, err
+	}
+	if brokenAncestor {
+		return nil, errUnauthenticated
+	}
 	p.ServerAdmin = actorAdm && (slices.Contains(p.Scopes, authz.AllScopes) || slices.Contains(p.Scopes, authz.ServerAdmin))
 	return &p, nil
 }
@@ -302,8 +317,9 @@ func (s *Service) CreateCredential(ctx context.Context, p *Principal, idem *Idem
 	if req.ExpiresInSeconds < 60 || time.Duration(req.ExpiresInSeconds)*time.Second > s.Cfg.CredentialMaxTTL {
 		return nil, Validation("expires_in_seconds must be between 60 and %d", int64(s.Cfg.CredentialMaxTTL/time.Second))
 	}
-	if req.ActorID == p.ActorID && !p.ServerAdmin {
-		// Ceiling: a credential cannot mint broader authority than itself.
+	if req.ActorID == p.ActorID {
+		// Ceiling: a credential never mints broader authority than itself,
+		// including a server administrator's own credentials (AUTH-005).
 		if !slices.Contains(p.Scopes, authz.AllScopes) {
 			for _, sc := range req.Scopes {
 				if !slices.Contains(p.Scopes, sc) {
@@ -328,7 +344,10 @@ func (s *Service) CreateCredential(ctx context.Context, p *Principal, idem *Idem
 			return nil, err
 		}
 		exp := now.Add(time.Duration(req.ExpiresInSeconds) * time.Second)
-		if req.ActorID == p.ActorID && !p.ServerAdmin && exp.After(p.ExpiresAt) {
+		// A self-issued credential never outlives its issuer. Credentials a
+		// server administrator issues to other actors are independent grants
+		// of authority and are not tied to the administrator's token.
+		if req.ActorID == p.ActorID && exp.After(p.ExpiresAt) {
 			exp = p.ExpiresAt
 		}
 		issuer := p.CredentialID

@@ -65,7 +65,9 @@ func serverCmds() []*cobra.Command {
 				return nil
 			}
 			go svc.Hub.Listen(ctx, dbURL, log)
-			srv := &http.Server{Addr: listen, Handler: httpapi.New(svc, log), ReadHeaderTimeout: 10 * time.Second}
+			srv := &http.Server{Addr: listen, Handler: httpapi.New(svc, log), ReadHeaderTimeout: 10 * time.Second,
+				// Bodies are at most 1 MiB; long polls last at most 30 s.
+				ReadTimeout: 30 * time.Second, WriteTimeout: 45 * time.Second, IdleTimeout: 120 * time.Second}
 			go func() {
 				<-ctx.Done()
 				sctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)

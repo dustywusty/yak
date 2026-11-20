@@ -89,7 +89,10 @@ func (c *Client) Do(ctx context.Context, r Request, out any) (*Response, error) 
 	if len(r.Query) > 0 {
 		u += "?" + r.Query.Encode()
 	}
-	retryable := r.Method == http.MethodGet || r.IdempotencyKey != "" || r.IfMatch != ""
+	// Only GETs and keyed writes are retried. A write guarded only by
+	// If-Match is not: if it committed and the response was lost, a retry
+	// would report 412 for a write that succeeded. Re-read instead.
+	retryable := r.Method == http.MethodGet || r.IdempotencyKey != ""
 	var lastErr error
 	for attempt := 0; attempt <= c.MaxRetries; attempt++ {
 		if attempt > 0 {

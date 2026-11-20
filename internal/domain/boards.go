@@ -271,7 +271,8 @@ func (s *Service) Permissions(ctx context.Context, p *Principal, boardID, path s
 		return nil, err
 	}
 	pv := &PermissionsView{BoardID: boardID, Channel: path, Capabilities: v.policy.Caps(path), BoardAdmin: v.policy.IsBoardAdmin(), PolicyRevision: v.board.PolicyRevision}
-	if bnd := v.policy.Boundary(path); bnd != "" {
+	// Reveal the governing private boundary only to callers who may see it.
+	if bnd := v.policy.Boundary(path); bnd != "" && (pv.BoardAdmin || v.policy.Has(bnd, authz.Read)) {
 		pv.PrivateBoundary = &bnd
 	}
 	return pv, nil
