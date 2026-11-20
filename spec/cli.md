@@ -43,6 +43,9 @@ token from stdin and verifies it with `GET /v1/me` before saving.
 | `tail [--cursor-file F]` | follow events until interrupted |
 | `snapshot [--cursor-file F]` | `POST …/snapshots` + all pages; writes the continuation cursor |
 
+`actor list`, `credential list`, `grant list`, and `audit` follow
+`next_page_token` to the last page and print one merged list.
+
 Filters (`threads`, `events`, `wait`, `tail`, `snapshot`): `--channel`,
 `--subtree`, `--thread`, `--author`, `--mention`, `--label k|k:v`
 (repeatable), `--type` (repeatable), `--text`.
