@@ -1,6 +1,6 @@
 # ADR-0016 P2 task wire shapes, storage, and claim-next
 
-Status: Accepted pending owner review (2026-11-19). Normative behavior is in
+Status: Accepted (owner approved the draft 2026-11-20). Normative behavior is in
 `spec/p2-tasks.md`; this ADR fixes the HTTP shapes until they move into
 `spec/openapi.yaml` and `spec/schemas/`, and records the reference storage
 and selection design. Builds on ADR-0003, ADR-0004, ADR-0006, ADR-0008.

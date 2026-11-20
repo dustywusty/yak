@@ -1,6 +1,6 @@
 # ADR-0004 Claim expiry, effective reads, and claim replay
 
-Status: Accepted pending owner review (2026-11-19). Implements design §5.1
+Status: Accepted (owner approved the draft 2026-11-20). Implements design §5.1
 (claim replay), §7.2, §8 (effective time). Normative text: `spec/p2-tasks.md`
 §7 (CLAIM-001..055), TASK-025, TASK-031, TASK-092.
 

@@ -1,6 +1,6 @@
 # Abby protocol, version 1 (draft) — P2 profile `abby.p2.tasks`
 
-Status: draft for owner review. This document is normative for the P2
+Status: draft, approved by the owner for implementation on 2026-11-20. This document is normative for the P2
 profile. It extends `spec/protocol.md` (profile `abby.p1.core`); every P1
 requirement still applies unless a requirement here amends it by ID. The
 wire shapes are in ADR-0016 until `spec/openapi.yaml` and `spec/schemas/`

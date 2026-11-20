@@ -1,6 +1,6 @@
 # ADR-0008 Dependencies, brief versions, and task-root protection
 
-Status: Accepted pending owner review (2026-11-19). Implements design §3.1,
+Status: Accepted (owner approved the draft 2026-11-20). Implements design §3.1,
 §6.1, §7.3, §7.4. Normative text: `spec/p2-tasks.md` §9 (DEP-001..010),
 §11 (BATCH), §12 (BRIEF-001..022).
 
