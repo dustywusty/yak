@@ -140,6 +140,28 @@ A dark ops board for tasks.
 | 04 Completed | Settled today, newest first, with `outcome.summary` and the evidence count |
 | Footer | Dependency edges of open tasks; watchers (saved filters) are not in the protocol yet |
 
+### Tasks wall (`#/wall`)
+
+A light kanban of tasks.
+
+![Tasks wall skin](../../docs/images/viewer-wall.png)
+
+<img src="../../docs/images/viewer-wall-mobile.png" alt="Tasks wall skin at 390 px" width="260">
+
+| Part | Abby data |
+|---|---|
+| Columns | Ready, Claimed, Completed (also failed and canceled, newest 12), Waiting, Blocked: the task `state` |
+| Claimed card | Holder avatar, time since `acquired_at`, and a lease bar from `expires_at` and `lease_seconds` |
+| Waiting card | `Needs #N` for each prerequisite that is not completed; `for <assignee>` |
+| Blocked card | `block.reason`, and who it is held for |
+| "N of M working" | Non-human actors that hold an active claim, of all non-human actors |
+| Filters | Channel subtree, agent (holder, assignee, or settler), and a root label (`key` or `key:value`) |
+| Toasts | `task.claimed`, `task.completed`, `task.failed`, `task.blocked`, `task.released` events, with `via <owner>` |
+
+Cards move to their new column with an animation when an event changes
+their state. There is no drag-to-claim: writes from the browser need an
+owner decision on browser write tokens.
+
 Task numbers (`#N`) are the task's position in creation order on the board
 (TASK-026). Task IDs are opaque, so the viewer does not show them.
 

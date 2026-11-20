@@ -110,3 +110,56 @@ button.ro { cursor: not-allowed; opacity: .55; }
   .d-grid { grid-template-columns: 1fr; }
   .d-agents { grid-auto-flow: column; grid-auto-columns: minmax(170px, 1fr); grid-template-columns: none; overflow-x: auto; }
 }
+
+/* ---------- Tasks wall ---------- */
+.skin-wall {
+  --w-bg: #eef5f1; --w-col: #dfeae4; --w-card: #fff; --w-fg: #17231e; --w-mute: #5f6f68; --w-acc: #0f6b4f; --w-line: #c9d8d0;
+  --w-hold: #fde49b; --w-bad: #b3261e;
+  background: var(--w-bg); color: var(--w-fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.w-wrap { padding: 1.2rem 1.5rem 3rem; max-width: 1280px; margin: 0 auto; }
+.w-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.w-head h1 { font: 400 2rem/1.1 system-ui, sans-serif; margin: 0; letter-spacing: -.01em; }
+.w-spacer { flex: 1; }
+.w-working { color: var(--w-mute); font-size: .85rem; }
+.w-stack { display: inline-flex; }
+.w-stack > span { margin-left: -.2rem; border: 2px solid var(--w-bg); border-radius: 50%; filter: grayscale(1) opacity(.45); }
+.w-stack > span.on { filter: none; }
+.w-stack .av { font-size: .85rem; background: var(--w-acc); }
+.w-filters { display: flex; gap: .5rem; flex-wrap: wrap; margin: .8rem 0 1rem; }
+.w-filters select, .w-filters input { background: #fff; color: var(--w-fg); border: 1px solid var(--w-line); border-radius: 6px; padding: .3rem .5rem; font: inherit; max-width: 100%; }
+.w-filters input { width: 14rem; }
+.w-cols { display: grid; grid-template-columns: repeat(6, 1fr); gap: .8rem; }
+.w-col { grid-column: span 2; background: var(--w-col); border-radius: 14px; padding: .7rem; display: flex; flex-direction: column; gap: .55rem; min-height: 8rem; min-width: 0; }
+.w-col-waiting, .w-col-blocked { grid-column: span 3; }
+.w-col-ready, .w-col-claimed, .w-col-completed { max-height: 68vh; overflow-y: auto; }
+.w-col h2 { display: flex; justify-content: space-between; margin: .1rem .2rem .2rem; font: 500 .95rem/1.2 system-ui, sans-serif; color: var(--w-fg); text-transform: none; letter-spacing: 0; }
+.w-col h2 span { color: var(--w-mute); font-weight: 400; }
+.w-card { background: var(--w-card); border-radius: 10px; padding: .6rem .7rem; box-shadow: 0 1px 2px rgb(20 40 30 / .08); display: grid; gap: .3rem; }
+.w-card-completed, .w-card-failed, .w-card-canceled { background: transparent; box-shadow: none; border: 1px solid var(--w-line); }
+.w-card-blocked { background: var(--w-hold); }
+.w-num { font-size: .72rem; color: var(--w-mute); font-family: ui-monospace, Menlo, monospace; }
+.w-title { color: var(--w-fg); font-weight: 500; overflow-wrap: anywhere; }
+.w-card-completed .w-title { color: var(--w-mute); font-weight: 400; }
+.w-foot { display: grid; gap: .35rem; margin-top: .3rem; }
+.w-person { display: inline-flex; align-items: center; gap: .35rem; font-size: .8rem; color: var(--w-mute); min-width: 0; }
+.w-person b { color: var(--w-fg); }
+.w-person .av { background: var(--w-acc); }
+.w-meta { font-size: .78rem; color: var(--w-mute); overflow-wrap: anywhere; }
+.w-failed, .w-canceled { color: var(--w-bad); }
+.w-bar { height: 4px; border-radius: 2px; background: var(--w-line); overflow: hidden; }
+.w-bar i { display: block; height: 100%; background: var(--w-acc); transition: width 1s linear; }
+.w-reason { margin: 0; font-size: .82rem; color: #5b4500; overflow-wrap: anywhere; }
+.w-slot { border: 1.5px dashed var(--w-line); border-radius: 10px; min-height: 4rem; }
+.w-more { margin: 0 .2rem; color: var(--w-mute); font-size: .8rem; }
+.w-new { animation: w-in .5s ease-out; }
+@keyframes w-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
+.w-toasts { position: fixed; z-index: 5; bottom: 1rem; left: 50%; transform: translateX(-50%); display: grid; gap: .4rem; width: max-content; max-width: calc(100% - 32px); }
+.w-toast { display: flex; align-items: center; gap: .5rem; background: #2d3833; color: #e8f2ec; padding: .5rem .8rem; border-radius: 8px; font-size: .85rem; animation: w-in .3s ease-out; }
+.w-toast b { color: #9fe3c4; }
+@media (max-width: 760px) {
+  .w-wrap { padding: 1rem 16px 3rem; }
+  .w-cols { grid-template-columns: 1fr; }
+  .w-col, .w-col-waiting, .w-col-blocked { grid-column: auto; max-height: none; }
+  .w-filters input { width: 100%; }
+}
