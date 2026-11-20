@@ -210,6 +210,7 @@ $('login-form').addEventListener('submit', async (ev) => {
       S.me = me;
       try { sessionStorage.setItem(TOKEN_KEY, v); } catch { /* memory only */ }
     }
+    renderTop();
     await onRoute();
   } catch (e) { needToken(e.status === 401 ? UNAUTHORIZED : e.message); }
   finally { $('connect').disabled = false; }
@@ -264,7 +265,7 @@ async function boot() {
   loadToken();
   // Only credentials validated as read-only may be restored from older viewers.
   if (S.token) {
-    try { const me = await api('GET', '/v1/me'); if (!me.credential.scopes.every((s) => s === 'read')) return needToken('Stored token was not read-only. Paste a short-lived operator token to enter operator mode.'); S.me = me; }
+    try { const me = await api('GET', '/v1/me'); if (!me.credential.scopes.every((s) => s === 'read')) return needToken('Stored token was not read-only. Paste a short-lived operator token to enter operator mode.'); S.me = me; renderTop(); }
     catch { return needToken(UNAUTHORIZED); }
   }
   onRoute();

@@ -80,8 +80,66 @@ async function matrix(action,named=action,setup=''){
  await click(action);await confirm(named);check(`${action}: explicit confirmation writes`,await count()>n);
  await until("!document.querySelector('.op-pending')?.textContent.includes('Sending')");
 }
+// Each named regression owns a fresh in-page fixture and its write capture.
+async function freshIdentityFixture(setup = '') {
+ const { result: { identifier } } = await cmd('Page.addScriptToEvaluateOnNewDocument', {source: `if(location.origin===${JSON.stringify(ORIGIN)}){sessionStorage.clear();${setup}}`});
+ try {
+  await cmd('Page.navigate', {url:'about:blank'});
+  await cmd('Page.navigate', {url:ORIGIN+'/#/boards'});
+  await until("!!window.__op && !document.querySelector('#operator-option').hidden && ['login','boards'].includes(document.body.dataset.view)");
+ } finally { await cmd('Page.removeScriptToEvaluateOnNewDocument', {identifier}); }
+}
+async function identityNavigationCase() {
+ let assertions = 0;
+ const assert = (name, ok, detail = '') => { assertions++; check(`OP17-003: ${name}`, ok, detail); };
+ const header = async (name, label) => {
+  assert(`${name} shows @alice`, await ev("document.querySelector('#me').textContent==='@alice'"));
+  assert(`${name} shows ${label}`, await ev(`!document.querySelector('#forget').hidden && document.querySelector('#forget').textContent===${JSON.stringify(label)} && !document.querySelector('#nav').hidden`));
+ };
+ const cleared = async (name) => {
+  await until("!document.querySelector('#login').hidden");
+  assert(`${name} clears identity and logout control`, await ev("document.querySelector('#me').textContent==='' && document.querySelector('#forget').hidden && document.querySelector('#operator-session').hidden && !document.body.dataset.operator && !sessionStorage.length"));
+ };
+ const login = async (operator) => {
+  await ev(`document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-identity-token';document.querySelector('#login-form').requestSubmit()`);
+  await until("document.body.dataset.view==='boards'");
+ };
+ await freshIdentityFixture("window.__op.scope=['read'];");
+ await login(false);
+ await header('fresh read-only login', 'Forget token');
+ assert('read-only login persists only its tab token', await ev("sessionStorage.getItem('yak-viewer-token')==='synthetic-identity-token' && window.__op.writes.length===0"));
+ await ev("document.querySelector('#forget').click()");
+ await cleared('read-only forget');
+ assert('read-only forget sends no writes', await count()===0);
+ await freshIdentityFixture("window.__op.scope=['read'];sessionStorage.setItem('yak-viewer-token','synthetic-restored-token');");
+ await until("document.body.dataset.view==='boards'");
+ await header('restored read-only token', 'Forget token');
+ assert('restoration retains read-only tab token without writes', await ev("sessionStorage.getItem('yak-viewer-token')==='synthetic-restored-token' && window.__op.writes.length===0"));
+ for (const selector of ['#forget', '#operator-logout']) {
+  await freshIdentityFixture();
+  await login(true);
+  await header(`operator login via ${selector}`, 'Logout (revokes token everywhere)');
+  assert(`operator login via ${selector} shows session identity`, await ev("!document.querySelector('#operator-session').hidden && document.querySelector('#operator-identity').textContent.includes('@alice (human)') && !sessionStorage.length"));
+  await ev(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  await cleared(`logout via ${selector}`);
+  assert(`logout via ${selector} revokes only its credential`, await ev("window.__op.revoked && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
+ }
+ for (const [name, setup, operator] of [['rejected read-only credential', 'window.__op.expired=true', false], ['refused operator credential', "window.__op.kind='agent'", true]]) {
+  await freshIdentityFixture();
+  await ev(`${setup};document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-invalid-token';document.querySelector('#login-form').requestSubmit()`);
+  await until("!document.querySelector('#login-error').hidden && !document.querySelector('#connect').disabled");
+  await cleared(name);
+  assert(`${name} sends no writes`, await count()===0);
+ }
+ assert('browser has no exceptions', errors.length===0, errors.join(' | '));
+ console.log(`OP17-003 executed ${assertions} assertions across fresh login, restoration, two logout entries and two rejected credentials`);
+}
+const operatorCases = new Map([['OP17-003', identityNavigationCase]]);
+const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
+ if (selectedCase && !operatorCases.has(selectedCase)) throw new Error(`Unknown OPERATOR_CASE: ${selectedCase}`);
+ if (!selectedCase) {
  // Unsafe credentials fail closed without writing or persistence.
  for(const [name,setup]of [['agent',"window.__op.kind='agent'"],['broad scope',"window.__op.scope=['*']"],['credential flag',"window.__op.flags=false"]]){
   await ev(`${setup};document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='fake-operator';document.querySelector('#login-form').requestSubmit()`);await sleep(150);
@@ -152,6 +210,8 @@ try {
  await ev("Date.now=()=>window.__realNow()+901000");await until("!document.querySelector('#login').hidden");
  check('idle timeout releases then self-revokes without polling extending it',await ev("window.__op.writes.at(-2).path.endsWith('/release') && window.__op.revoked && !document.body.dataset.operator"));
  check('no browser exceptions',errors.length===0,errors.join(' | '));
+ }
+ for (const [name, run] of operatorCases) if (!selectedCase || name===selectedCase) await run();
 } catch(e) {check('operator browser run',false,[e.message,...errors,await ev("document.querySelector('.op-workspace')?.textContent")].join(' | '));}
 finally {browser.close();chrome.kill();server.close();await sleep(300);await rm(profile,{recursive:true,force:true}).catch(()=>{});}
 process.exit(failed?1:0);
