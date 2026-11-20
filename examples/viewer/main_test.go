@@ -2,18 +2,27 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestProxyBoundary(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/v1/me" && r.Header.Get("Idempotency-Key") == "" {
+			fmt.Fprint(w, `{"credential":{"id":"self"}}`)
+			return
+		}
 		for _, k := range []string{"Authorization", "Idempotency-Key", "If-Match", "Yak-Claim-Proof", "Yak-Run-Id"} {
 			if r.Header.Get(k) != "test-"+k {
 				t.Errorf("lost %s", k)
@@ -429,6 +438,10 @@ func TestOP17038(t *testing.T) {
 func TestOP17045(t *testing.T) {
 	var upstreamCalls atomic.Int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/v1/me" && r.Header.Get("Authorization") == "Bearer OP17-045-synthetic" {
+			fmt.Fprint(w, `{"credential":{"id":"c"}}`)
+			return
+		}
 		upstreamCalls.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -449,7 +462,11 @@ func TestOP17045(t *testing.T) {
 			}
 			before := upstreamCalls.Load()
 			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+			r := httptest.NewRequest(method, path, nil)
+			if method == "DELETE" && strings.HasPrefix(path, "/v1/credentials/") {
+				r.Header.Set("Authorization", "Bearer OP17-045-synthetic")
+			}
+			handler.ServeHTTP(w, r)
 			wantStatus, wantCalls := http.StatusForbidden, int64(0)
 			if allowed {
 				wantStatus, wantCalls = http.StatusNoContent, 1
@@ -519,4 +536,240 @@ func TestOP17045(t *testing.T) {
 	if cases == 0 || assertions == 0 {
 		t.Fatal("allowlist matrix did not execute")
 	}
+}
+
+// TestOP17017 uses only disposable authenticated upstreams and synthetic envelopes.
+func TestOP17017(t *testing.T) {
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(old)
+	var assertions atomic.Int64
+	envelopes := map[string][]string{"A": {"Bearer SYNTHETIC-A", "opaque-second-A"}, "B": {"Bearer SYNTHETIC-B", "opaque-second-B"}}
+	headers := func(r *http.Request, who string) {
+		r.Header["Authorization"] = append([]string(nil), envelopes[who]...)
+		for _, k := range []string{"Idempotency-Key", "If-Match", "Yak-Claim-Proof", "Yak-Run-Id"} {
+			r.Header[k] = []string{"SYNTHETIC-" + k, "second-" + k}
+		}
+		r.Header.Set("Cookie", "SYNTHETIC-cookie")
+		r.Header.Set("X-Own-Credential-ID", "B")
+		r.Header.Set("Content-Type", "application/json")
+	}
+	cases := []struct {
+		name, who, id, body string
+		status, want        int
+	}{
+		{"A-self", "A", "A", `{"credential":{"id":"A"}}`, 200, 204},
+		{"A-other-spoof", "A", "B", `{"credential":{"id":"A"}}`, 200, 403},
+		{"B-self", "B", "B", `{"credential":{"id":"B"}}`, 200, 204},
+		{"case-sensitive-ID", "A", "a", `{"credential":{"id":"A"}}`, 200, 403},
+		{"metadata-only", "A", "A", `{"actor":{"id":"B"},"credential":{"id":"A","ignored":true}}`, 200, 204},
+		{"malformed", "A", "A", `{`, 200, 502},
+		{"missing", "A", "A", `{}`, 200, 502},
+		{"empty", "A", "A", `{"credential":{"id":""}}`, 200, 502},
+		{"wrong-type", "A", "A", `{"credential":{"id":12}}`, 200, 502},
+		{"trailing", "A", "A", `{"credential":{"id":"A"}} {}`, 200, 502},
+		{"unauthorized", "A", "A", `SYNTHETIC-response-secret`, 401, 401},
+		{"forbidden-status", "A", "A", `{}`, 403, 502},
+		{"server-error", "A", "A", `{}`, 500, 502},
+		{"empty-status", "A", "A", ``, 204, 502},
+		{"redirect", "A", "A", ``, 302, 502},
+		{"oversize", "A", "A", `{"credential":{"id":"A"},"padding":"` + strings.Repeat("x", 65536) + `"}`, 200, 502},
+		{"timeout", "A", "A", ``, 200, 502},
+		{"transport", "A", "A", ``, 200, 502},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var me, deletes, redirects atomic.Int64
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/prefix/v1/me" {
+					me.Add(1)
+					assertions.Add(1)
+					if r.Method != "GET" || r.URL.RawQuery != "" || r.ContentLength != 0 {
+						t.Errorf("unsafe discovery envelope: method=%s query=%q length=%d", r.Method, r.URL.RawQuery, r.ContentLength)
+					}
+					b, _ := io.ReadAll(r.Body)
+					assertions.Add(1)
+					if len(b) != 0 {
+						t.Error("discovery body forwarded")
+					}
+					assertions.Add(1)
+					if !reflect.DeepEqual(r.Header.Values("Authorization"), envelopes[tc.who]) {
+						t.Error("opaque authentication changed")
+					}
+					for _, k := range []string{"Cookie", "Yak-Claim-Proof", "Yak-Run-Id", "Idempotency-Key", "If-Match", "Content-Type", "X-Own-Credential-ID"} {
+						assertions.Add(1)
+						if len(r.Header.Values(k)) != 0 {
+							t.Errorf("discovery leaked %s", k)
+						}
+					}
+					if tc.name == "timeout" {
+						select {
+						case <-r.Context().Done():
+						case <-time.After(4 * time.Second):
+						}
+						return
+					}
+					if tc.name == "redirect" {
+						w.Header().Set("Location", "/redirect")
+					}
+					w.WriteHeader(tc.status)
+					fmt.Fprint(w, tc.body)
+					return
+				}
+				if r.URL.Path == "/redirect" {
+					redirects.Add(1)
+					fmt.Fprint(w, `{"credential":{"id":"A"}}`)
+					return
+				}
+				deletes.Add(1)
+				expected := httptest.NewRequest("DELETE", "/", nil)
+				headers(expected, tc.who)
+				for _, k := range []string{"Authorization", "Idempotency-Key", "If-Match", "Yak-Claim-Proof", "Yak-Run-Id"} {
+					assertions.Add(1)
+					if !reflect.DeepEqual(r.Header.Values(k), expected.Header.Values(k)) {
+						t.Errorf("DELETE changed %s", k)
+					}
+				}
+				b, _ := io.ReadAll(r.Body)
+				assertions.Add(1)
+				if string(b) != `{"credential":{"id":"B"}}` || r.URL.RawQuery != "spoof=B" {
+					t.Error("original DELETE envelope changed")
+				}
+				w.WriteHeader(204)
+			}))
+			defer upstream.Close()
+			target, _ := url.Parse(upstream.URL + "/prefix")
+			if tc.name == "transport" {
+				upstream.Close()
+			}
+			r := httptest.NewRequest("DELETE", "/v1/credentials/"+tc.id+"?spoof=B", strings.NewReader(`{"credential":{"id":"B"}}`))
+			headers(r, tc.who)
+			w := httptest.NewRecorder()
+			started := time.Now()
+			viewerHandler(target, true).ServeHTTP(w, r)
+			assertions.Add(1)
+			if w.Code != tc.want {
+				t.Errorf("status=%d want=%d", w.Code, tc.want)
+			}
+			wantDeletes := int64(0)
+			if tc.want == 204 {
+				wantDeletes = 1
+			}
+			assertions.Add(1)
+			if deletes.Load() != wantDeletes {
+				t.Errorf("DELETE forwarded=%d want=%d", deletes.Load(), wantDeletes)
+			}
+			assertions.Add(1)
+			if redirects.Load() != 0 {
+				t.Error("followed identity redirect")
+			}
+			assertions.Add(1)
+			if tc.name != "transport" && me.Load() != 1 {
+				t.Errorf("identity calls=%d want=1", me.Load())
+			}
+			assertions.Add(1)
+			if time.Since(started) > 3*time.Second {
+				t.Error("discovery exceeded time bound")
+			}
+		})
+	}
+	t.Run("simultaneous-and-no-cache", func(t *testing.T) {
+		var me, deletes atomic.Int64
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			who := "A"
+			if reflect.DeepEqual(r.Header.Values("Authorization"), envelopes["B"]) {
+				who = "B"
+			}
+			if r.URL.Path == "/v1/me" {
+				me.Add(1)
+				fmt.Fprintf(w, `{"credential":{"id":%q}}`, who)
+				return
+			}
+			deletes.Add(1)
+			assertions.Add(1)
+			if r.URL.Path != "/v1/credentials/"+who {
+				t.Error("cross-bound identity")
+			}
+			w.WriteHeader(204)
+		}))
+		defer upstream.Close()
+		target, _ := url.Parse(upstream.URL)
+		handler := viewerHandler(target, true)
+		var wg sync.WaitGroup
+		for i := 0; i < 24; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				who := []string{"A", "B"}[i%2]
+				id := who
+				want := 204
+				if i%3 == 0 {
+					id = "other"
+					want = 403
+				}
+				r := httptest.NewRequest("DELETE", "/v1/credentials/"+id, nil)
+				headers(r, who)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				assertions.Add(1)
+				if w.Code != want {
+					t.Errorf("concurrent status=%d want=%d", w.Code, want)
+				}
+			}(i)
+		}
+		wg.Wait()
+		assertions.Add(2)
+		if me.Load() != 24 || deletes.Load() != 16 {
+			t.Errorf("request isolation: me=%d DELETE=%d", me.Load(), deletes.Load())
+		}
+	})
+	t.Run("identity-not-cached", func(t *testing.T) {
+		var me, deletes atomic.Int64
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/me" {
+				id := "A"
+				if me.Add(1) > 1 {
+					id = "B"
+				}
+				fmt.Fprintf(w, `{"credential":{"id":%q}}`, id)
+				return
+			}
+			deletes.Add(1)
+			w.WriteHeader(204)
+		}))
+		defer upstream.Close()
+		target, _ := url.Parse(upstream.URL)
+		handler := viewerHandler(target, true)
+		for _, want := range []int{204, 403} {
+			r := httptest.NewRequest("DELETE", "/v1/credentials/A", nil)
+			headers(r, "A")
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			assertions.Add(1)
+			if w.Code != want {
+				t.Errorf("cached identity: status=%d want=%d", w.Code, want)
+			}
+		}
+		assertions.Add(1)
+		if me.Load() != 2 || deletes.Load() != 1 {
+			t.Errorf("cached lookup: me=%d deletes=%d", me.Load(), deletes.Load())
+		}
+	})
+	for _, target := range []*url.URL{nil, {}, {Scheme: "http"}} {
+		w := httptest.NewRecorder()
+		viewerHandler(target, true).ServeHTTP(w, httptest.NewRequest("DELETE", "/v1/credentials/A", nil))
+		assertions.Add(1)
+		if w.Code != 502 {
+			t.Errorf("missing upstream status=%d", w.Code)
+		}
+	}
+	assertions.Add(1)
+	if strings.Contains(logs.String(), "SYNTHETIC") || strings.Contains(logs.String(), "Bearer") {
+		t.Error("secret in discovery logs")
+	}
+	if assertions.Load() == 0 {
+		t.Fatal("no assertions executed")
+	}
+	t.Logf("OP17-017 executed assertions=%d, table_cases=%d, concurrent_requests=24", assertions.Load(), len(cases))
 }

@@ -4,13 +4,17 @@
 // is same-origin with the API.
 //
 // The proxy passes the Authorization header through unchanged. It never
-// reads, adds, or logs it.
+// extracts, adds, or logs its value. Self-revoke discovery clones its opaque
+// request-scoped envelope (D017).
 package main
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -129,6 +133,64 @@ func setResponseHeaders(h http.Header) {
 	h.Set("Referrer-Policy", "no-referrer")
 }
 
+// ownCredentialStatus verifies this request's exact revoke target. Only the opaque
+// authentication envelope reaches discovery; no identity or token association is retained.
+func ownCredentialStatus(r *http.Request, target *url.URL) int {
+	if target == nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
+		return http.StatusBadGateway
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	discovery := r.Clone(ctx)
+	discovery.Method = http.MethodGet
+	discovery.URL.Path, discovery.URL.RawPath = "/v1/me", ""
+	discovery.URL.RawQuery, discovery.URL.ForceQuery, discovery.URL.Fragment = "", false, ""
+	discovery.Body, discovery.GetBody, discovery.ContentLength = nil, nil, 0
+	discovery.TransferEncoding, discovery.Trailer = nil, nil
+	discovery.RequestURI = ""
+	// Clone preserves every authentication header value without extracting a bearer.
+	// Discard cookies, proofs, browser identity hints, and all mutation headers.
+	for name := range discovery.Header {
+		if !strings.EqualFold(name, "Authorization") {
+			discovery.Header.Del(name)
+		}
+	}
+	envelope := &httputil.ProxyRequest{Out: discovery}
+	envelope.SetURL(target)
+	client := &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	response, err := client.Do(discovery)
+	if err != nil {
+		return http.StatusBadGateway
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized {
+		return http.StatusUnauthorized
+	}
+	if response.StatusCode != http.StatusOK {
+		return http.StatusBadGateway
+	}
+	const maxIdentityBytes = 64 * 1024
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxIdentityBytes+1))
+	if err != nil || len(body) > maxIdentityBytes {
+		return http.StatusBadGateway
+	}
+	var identity struct {
+		Credential struct {
+			ID string `json:"id"`
+		} `json:"credential"`
+	}
+	if json.Unmarshal(body, &identity) != nil || identity.Credential.ID == "" {
+		return http.StatusBadGateway
+	}
+	if identity.Credential.ID != strings.TrimPrefix(r.URL.Path, "/v1/credentials/") {
+		return http.StatusForbidden
+	}
+	return http.StatusOK
+}
+
 func viewerHandler(target *url.URL, operator bool) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -176,6 +238,20 @@ func viewerHandler(target *url.URL, operator bool) http.Handler {
 		if r.Method != "GET" && ((r.Header.Get("Origin") != "" && r.Header.Get("Origin") != "http://"+r.Host) || (r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin")) {
 			routeProblem(w, 403, "forbidden")
 			return
+		}
+		if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/credentials/") {
+			if status := ownCredentialStatus(r, target); status != http.StatusOK {
+				log.Printf("viewer: upstream %s %s %d", http.MethodGet, "/v1/me", status)
+				code := "upstream_identity_unavailable"
+				if status == http.StatusForbidden {
+					code = "forbidden"
+				}
+				if status == http.StatusUnauthorized {
+					code = "unauthorized"
+				}
+				routeProblem(w, status, code)
+				return
+			}
 		}
 		// ReverseProxy appends upstream headers. Let ModifyResponse (or the
 		// ErrorHandler) supply exactly one copy of each required header.

@@ -136,7 +136,10 @@ ship with that feature.
   is used. A revoke failure other than `401` MUST be shown, and the
   credential MUST be removed from memory anyway.
 - **OPR-132** On `pagehide`, the client SHOULD send the revoke with
-  `fetch(…, {keepalive: true})`. This is best effort. A closed tab whose
+  `fetch(…, {keepalive: true})`. D004 permits dispatching optional best-effort
+  claim releases first, then self-revoke, without awaiting either response,
+  and requires immediate local clearing. Ordinary logout retains OPR-130's
+  ordered release, revoke, and clearing. This is best effort. A closed tab whose
   revoke did not arrive leaves the credential valid until `expires_at`.
   That is why OPR-103 limits the lifetime.
 - **OPR-133** Revocation by another path (`yak credential revoke`, a
@@ -181,9 +184,18 @@ credential, so cross-site request forgery does not apply.
 
 - **OPR-210** The proxy MUST pass `Authorization`, `Idempotency-Key`,
   `If-Match`, `Yak-Claim-Proof`, and `Yak-Run-Id` through unchanged. It
-  MUST NOT read, add, store, or log `Authorization` or
-  `Yak-Claim-Proof`. Error logs MUST contain only method, path, and
-  status.
+  MUST NOT extract, parse, add, store, or log bearer or proof values.
+  D017 permits cloning the opaque authentication header envelope only for
+  request-scoped, same-upstream `GET /v1/me` verification before a credential
+  DELETE. Discovery MUST omit body, query, cookie, proof, and mutation headers,
+  disable redirects, and bound time and response size. Only `credential.id`
+  metadata may be parsed; it MUST exactly match the decoded DELETE target.
+  A mismatch returns `403`; discovery `401` returns `401`; transport, other
+  status, malformed, timeout, or oversized responses fail closed with `502`.
+  No token association or identity cache may survive the request. The original
+  allowed DELETE headers MUST remain unchanged. Browser identity hints are
+  not proof, and missing upstream configuration MUST fail closed.
+  Error logs MUST contain only method, path, and status.
 - **OPR-211** Without the `-operator` flag the proxy MUST forward only
   `GET`, `POST …/snapshots`, and `DELETE …/snapshots/{id}`, and MUST
   answer every other request with `405 method_not_allowed`. (Today the

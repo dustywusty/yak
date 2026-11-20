@@ -84,7 +84,9 @@ the workflow locally.
 - Logout and idle timeout **revoke** the credential with
   `DELETE /v1/credentials/{own id}` (OPR-131), and release held claims
   first (OPR-130). Tab close sends a best-effort `keepalive` revoke
-  (OPR-132).
+  (OPR-132). D004 permits optional claim-release dispatch followed by
+  self-revoke on tab close without awaiting responses, with immediate local
+  clearing; ordinary logout keeps the ordered release/revoke sequence.
 
 ### 4 Ceiling
 
@@ -190,7 +192,17 @@ writes as "A for P" and never as an approval (OPR-606).
   for the caller's own actor. A stolen operator token can mint children
   (bounded: no broader, no longer, revoked with the parent) and can revoke
   the person's other credentials (for example their CLI token). The proxy
-  allowlist stops this through the page, not through a stolen token.
+  allowlist stops this through the viewer, including direct proxy requests.
+  D017 authorizes a request-scoped authenticated `GET /v1/me` to the same
+  configured upstream before credential DELETE. The proxy clones the opaque
+  authentication envelope without parsing or retaining bearer values, strips
+  body/query/cookie/proof/mutation headers from discovery, disables redirects,
+  and bounds discovery time and body size. It parses only `credential.id` and
+  compares the exact decoded target: mismatch is `403`, discovery `401` stays
+  `401`, and discovery failures are `502`. Only a match forwards the original
+  DELETE with its allowed headers unchanged. No identity cache or token
+  association survives the request, and browser-supplied IDs are not proof.
+  These proxy checks do not constrain a stolen token used outside the viewer.
 - **C2 — Approving needs full manager rights.** **Accepted for v1**
   (owner decision 2). The gate check now uses `direct_action_required`,
   so a delegated agent with `task_admin` still cannot approve. Unblock needs owner +
