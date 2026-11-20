@@ -10,11 +10,15 @@ package main
 import (
 	"embed"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -25,28 +29,92 @@ var staticFiles embed.FS
 // loads remote code and never inserts user content as HTML.
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; " +
 	"connect-src 'self'; img-src 'self' data:; base-uri 'none'; " +
-	"form-action 'none'; frame-ancestors 'none'"
+	"form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'"
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8099", "address to serve the viewer on")
 	api := flag.String("api", "http://127.0.0.1:8090", "base URL of the Yak server")
+	operator := flag.Bool("operator", false, "enable the loopback human operator client")
 	flag.Parse()
+	if *operator && !validOperatorListen(*listen) {
+		log.Fatal("viewer: -operator requires -listen 127.0.0.1:<port>")
+	}
 
 	target, err := url.Parse(*api)
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
 		log.Fatalf("viewer: -api must be an http(s) URL, got %q", *api)
 	}
 
+	if *operator && !validOperatorTarget(target) {
+		log.Fatal("viewer: -operator requires a loopback HTTP API or HTTPS, without URL credentials, query or fragment")
+	}
+	handler := viewerHandler(target, *operator)
+
+	srv := &http.Server{
+		Addr:              *listen,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		// No WriteTimeout: event long polls hold a response open for up to
+		// limits.max_wait_ms (30 s).
+		IdleTimeout: 120 * time.Second,
+	}
+	log.Printf("viewer: serving http://%s, proxying /v1/ to %s", *listen, target)
+	log.Fatal(srv.ListenAndServe())
+}
+
+func validOperatorListen(address string) bool {
+	host, port, err := net.SplitHostPort(address)
+	return err == nil && host == "127.0.0.1" && port != ""
+}
+func validOperatorTarget(u *url.URL) bool {
+	return u.User == nil && u.RawQuery == "" && u.Fragment == "" && (u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))
+}
+
+func routeProblem(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	w.Write([]byte(`{"type":"about:blank","status":` + fmt.Sprint(status) + `,"code":"` + code + `","reason":"operator_route_not_allowed"}`))
+}
+
+var boardRead = regexp.MustCompile(`^/v1/boards/[^/]+(?:/(?:actors|channels|permissions|threads|messages|tasks|events|snapshots)(?:/[^/]+(?:/(?:messages|briefs|events))?)?)?$`)
+var snapshotRoute = regexp.MustCompile(`^/v1/boards/[^/]+/snapshots$`)
+var snapshotItem = regexp.MustCompile(`^/v1/boards/[^/]+/snapshots/[^/]+$`)
+var operatorRoutes = map[string]*regexp.Regexp{
+	"POST":   regexp.MustCompile(`^/v1/boards/[^/]+/(?:threads|threads/[^/]+/messages|tasks|tasks/[^/]+/(?:unblock|claims|release)|tasks/[^/]+/claims/[^/]+/renew)$`),
+	"PATCH":  regexp.MustCompile(`^/v1/boards/[^/]+/(?:messages/[^/]+(?:/labels)?|tasks/[^/]+)$`),
+	"PUT":    regexp.MustCompile(`^/v1/boards/[^/]+/(?:tasks/[^/]+/assignee|messages/[^/]+/reactions/[^/]+)$`),
+	"DELETE": regexp.MustCompile(`^/v1/(?:credentials/[^/]+|boards/[^/]+/messages/[^/]+/reactions/[^/]+)$`),
+}
+
+func allowedRoute(method, path string, operator bool) bool {
+	if strings.Contains(path, "%") || strings.Contains(path, "..") || strings.Contains(path, "//") {
+		return false
+	}
+	if method == "GET" {
+		if !operator {
+			return true
+		}
+		return path == "/v1/server" || path == "/v1/me" || path == "/v1/boards" || boardRead.MatchString(path)
+	}
+	if method == "POST" && snapshotRoute.MatchString(path) || method == "DELETE" && snapshotItem.MatchString(path) {
+		return true
+	}
+	re := operatorRoutes[method]
+	return operator && re != nil && re.MatchString(path)
+}
+func viewerHandler(target *url.URL, operator bool) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			// SetURL rewrites scheme, host, and path prefix. Headers,
 			// including Authorization, pass through as sent.
 			r.SetURL(target)
+			r.Out.Header.Del("Cookie")
 		},
+		ModifyResponse: func(r *http.Response) error { r.Header.Del("Set-Cookie"); return nil },
 		// Flush at once so long-poll responses are not held back.
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("viewer: upstream %s %s: %v", r.Method, r.URL.Path, err)
+			log.Printf("viewer: upstream %s %s %d", r.Method, r.URL.Path, http.StatusBadGateway)
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"type":"about:blank","title":"Bad Gateway","status":502,` +
@@ -61,7 +129,30 @@ func main() {
 	files := http.FileServer(http.FS(sub))
 
 	mux := http.NewServeMux()
-	mux.Handle("/v1/", proxy)
+	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" && ((r.Header.Get("Origin") != "" && r.Header.Get("Origin") != "http://"+r.Host) || (r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin")) {
+			routeProblem(w, 403, "forbidden")
+			return
+		}
+		if !allowedRoute(r.Method, r.URL.EscapedPath(), operator) {
+			if !operator {
+				routeProblem(w, 405, "method_not_allowed")
+			} else {
+				routeProblem(w, 403, "forbidden")
+			}
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/viewer-config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		if operator {
+			w.Write([]byte(`{"operator":true}`))
+		} else {
+			w.Write([]byte(`{"operator":false}`))
+		}
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -70,20 +161,12 @@ func main() {
 		}
 		h := w.Header()
 		h.Set("Content-Security-Policy", csp)
+		h.Set("X-Frame-Options", "DENY")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	})
 
-	srv := &http.Server{
-		Addr:              *listen,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		// No WriteTimeout: event long polls hold a response open for up to
-		// limits.max_wait_ms (30 s).
-		IdleTimeout: 120 * time.Second,
-	}
-	log.Printf("viewer: serving http://%s, proxying /v1/ to %s", *listen, target)
-	log.Fatal(srv.ListenAndServe())
+	return mux
 }

@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="skins.css">
 <link rel="stylesheet" href="term.css">
+<link rel="stylesheet" href="operator.css">
 <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -20,15 +21,17 @@
   <span id="me" class="me"></span>
   <button id="forget" type="button" hidden>Forget token</button>
 </header>
+<aside id="operator-session" hidden aria-label="Operator session"><span id="operator-identity"></span> <button id="operator-tools" type="button">Operator tools</button> <button id="operator-logout" type="button">Logout (revokes token everywhere)</button></aside>
 <div id="banner" class="banner" role="status" hidden></div>
 
 <main id="login" class="panel narrow" hidden>
   <h1>Connect</h1>
-  <p>Paste an Yak bearer token. Use a read-scoped credential. The token stays in this tab's session storage only.</p>
+  <p>Paste a read-scoped Yak token for read-only viewing. It stays in this tab’s session storage. Operator tokens stay in memory, expire within 12 hours, and must have credential management and delegation disabled.</p>
   <form id="login-form">
     <label for="token">Token</label>
     <input id="token" type="password" autocomplete="off" spellcheck="false" required placeholder="yak.cred_….…">
-    <button type="submit">Connect</button>
+    <label id="operator-option" hidden><input id="operator-login" type="checkbox"> Enter operator mode (human, board-limited token; memory only; logout revokes it everywhere)</label>
+    <button id="connect" type="submit">Connect</button>
   </form>
   <p id="login-error" class="error" hidden></p>
 </main>

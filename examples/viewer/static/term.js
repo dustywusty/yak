@@ -114,10 +114,10 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     .filter((m) => m.mentions.includes(meId())).sort((a, b) => a.created_at.localeCompare(b.created_at));
 
   // ---------- pieces ----------
-  function who(id, ts) {
+  function who(id, ts, principal) {
     const a = st().actor(id), via = st().via(id);
-    return h('div', { class: 't-who' }, h('b', {}, st().handle(id)), via ? h('span', { class: 't-mute' }, ` via ${via}`) : '',
-      a && a.kind !== 'human' ? h('span', { class: 't-badge' }, a.kind === 'agent' ? 'AGENT' : 'SERVICE') : '', ts ? [' ', h('span', { class: 't-mute' }, time(ts))] : '');
+    return h('div', { class: 't-who' }, h('b', {}, st().handle(id)), principal ? ` for ${st().handle(principal)} (${st().actor(principal)?.kind || 'unknown'})` : '', via ? h('span', { class: 't-mute' }, ` via ${via}`) : '',
+      a ? h('span', { class: 't-badge' }, a.kind) : '', ts ? [' ', h('span', { class: 't-mute' }, time(ts))] : '');
   }
 
   function text(m) {
@@ -149,7 +149,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     const replies = msgs.filter((m) => !m.is_root);
     const people = [...new Set(replies.map((m) => st().handle(m.author_actor_id)))].slice(0, 3);
     return h('article', { class: 't-item', 'data-thread': t.id, onclick: (e) => { if (!e.target.closest('a')) go({ ch: t.channel_path, t: t.id }); } },
-      root ? who(root.author_actor_id, root.created_at) : null,
+      root ? who(root.author_actor_id, root.created_at, root.on_behalf_of_actor_id) : null,
       h('a', { class: 't-title', href: href({ board: cur.boardId, ch: t.channel_path, t: t.id }) }, t.title),
       labels(t.labels), root ? text({ ...root, text: snip(root.text, 400) }) : null, taskChip(taskOf(t.id)),
       replies.length ? h('div', { class: 't-replies' }, people.join(', '), ' ',
@@ -160,7 +160,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   function message(m, byId) {
     const parent = m.reply_to_message_id && byId.get(m.reply_to_message_id);
     return h('article', { class: `t-item${m.id === route.m ? ' t-target' : ''}`, id: `tm-${m.id}` },
-      who(m.author_actor_id, m.created_at),
+      who(m.author_actor_id, m.created_at, m.on_behalf_of_actor_id),
       parent && !parent.is_root ? h('div', { class: 't-mute t-small' }, `↪ reply to ${st().handle(parent.author_actor_id)} #${parent.seq}`) : null,
       m.edited_at && !m.deleted ? h('span', { class: 't-mute t-small' }, '(edited)') : null,
       labels(m.is_root ? null : m.labels), text(m));
@@ -214,7 +214,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       head: [h('b', {}, '@ Mentions'), h('span', { class: 't-mute' }, `${ms.length}`)],
       body: ms.length ? dividers(ms, (m) => m.created_at, (m) => h('article', { class: 't-item', 'data-thread': m.thread_id, 'data-msg': m.id,
         onclick: () => go({ ch: m.channel_path, t: m.thread_id, m: m.id }) },
-        h('div', { class: 't-mute t-small' }, `# ${m.channel_path} · ${st().thread(m.thread_id)?.title || ''}`), who(m.author_actor_id, m.created_at), text(m)))
+        h('div', { class: 't-mute t-small' }, `# ${m.channel_path} · ${st().thread(m.thread_id)?.title || ''}`), who(m.author_actor_id, m.created_at, m.on_behalf_of_actor_id), text(m)))
         : [h('p', { class: 't-mute t-pad' }, `No messages mention @${st().S.me?.handle}.`)],
       composer: null,
     };
@@ -228,7 +228,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       head: [h('b', {}, '~ Activity'), h('span', { class: 't-mute' }, 'all boards, newest first')],
       body: [h('div', { class: 't-day' }, h('span', {}, `Earlier on ${st().S.board.name}`)),
         recent.map((m) => h('article', { class: 't-item', 'data-thread': m.thread_id, 'data-msg': m.id, onclick: () => go({ ch: m.channel_path, t: m.thread_id, m: m.id }) },
-          h('div', { class: 't-mute t-small' }, `# ${m.channel_path} · ${st().thread(m.thread_id)?.title || ''}`), who(m.author_actor_id, m.created_at),
+          h('div', { class: 't-mute t-small' }, `# ${m.channel_path} · ${st().thread(m.thread_id)?.title || ''}`), who(m.author_actor_id, m.created_at, m.on_behalf_of_actor_id),
           text(m.deleted ? m : { ...m, text: snip(m.text, 300) })))],
       composer: null, activity: true,
     };
@@ -268,13 +268,13 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       h('div', { class: 't-sidefoot' },
         h('div', {}, h('a', { href: `#/board?b=${encodeURIComponent(cur.boardId)}` }, 'Lanes'), ' · ', h('a', { href: `#/irc?b=${encodeURIComponent(cur.boardId)}` }, 'IRC'), ' · ', h('a', { href: '#/boards' }, 'Switch board')),
         h('div', {}, h('button', { type: 'button', onclick: () => { theme = theme === 'dark' ? 'light' : 'dark'; store_.set(THEME_KEY, theme); render(); } }, theme === 'dark' ? '◐ light' : '◑ dark'),
-          ' ', h('button', { type: 'button', onclick: onForget }, 'Forget token'))));
+          ' ', h('button', { type: 'button', onclick: onForget }, document.body.dataset.operator ? 'Logout (revokes token everywhere)' : 'Forget token'))));
     const scroll = h('div', { class: `t-scroll${view.activity ? ' t-activity' : ''}`, role: 'log' }, view.body);
     activity = createAgentActivity(st(), href, status);
     const main = h('section', { class: 't-main' },
       h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', onclick: () => { sideOpen = !sideOpen; render(); } }, '☰'), view.head),
       activity.root, scroll,
-      view.composer ? h('div', { class: 't-composer' }, h('input', { type: 'text', disabled: true, 'aria-label': `${view.composer} (read-only)`, placeholder: `${view.composer} (read-only viewer)` })) : null);
+      view.composer ? h('div', { class: 't-composer' }, document.body.dataset.operator ? h('button', { type: 'button', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: cur.boardId, ch: activeCh, t: route.t } })) }, route.t ? 'Reply / task actions' : 'New thread / task') : h('input', { type: 'text', disabled: true, 'aria-label': `${view.composer} (read-only)`, placeholder: `${view.composer} (read-only viewer)` })) : null);
     const hints = route.t ? [['↑↓', 'move'], ['esc', 'close'], ['^K', 'jump'], ['?', 'help']] : [['↑↓', 'move'], ['⏎', 'open'], ['^K', 'jump'], ['?', 'help']];
     const foot = h('footer', { class: 't-foot' }, h('span', { class: `t-dot t-${status}` }), ` ${status} `,
       h('span', { class: 't-mute' }, `${S.me?.handle} on ${S.board.name}`), h('span', { class: 't-spacer' }),
@@ -282,7 +282,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     const helpBox = help ? h('div', { class: 't-help', role: 'dialog' }, h('b', {}, 'Keys'),
       [['↑ / ↓  or  k / j', 'move the selection'], ['Enter', 'open the selected thread'], ['Esc', 'close the thread or this help'],
         ['Ctrl-K / Cmd-K', 'jump to a channel or thread'], ['g a / g m', 'go to Activity / Mentions'], ['?', 'show or hide this help']]
-        .map(([k, v]) => h('div', {}, h('kbd', {}, k), ` ${v}`)), h('p', { class: 't-mute' }, 'This viewer is read-only.')) : null;
+        .map(([k, v]) => h('div', {}, h('kbd', {}, k), ` ${v}`)), h('p', { class: 't-mute' }, document.body.dataset.operator ? 'Use Operator tools for messages and confirmed task actions.' : 'This viewer is read-only.')) : null;
     root().replaceChildren(h('div', { class: `t-app${sideOpen ? ' t-sideopen' : ''}`, 'data-theme': theme }, side, main, foot, helpBox));
     if (view.activity && liveEl) { liveEl.hidden = false; scroll.prepend(liveEl); }
     activity.root.scrollTop = activityTop;

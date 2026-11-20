@@ -9,12 +9,15 @@
 import { createFeed } from './feed.js';
 import { createSkins } from './skins.js';
 import { createTerm } from './term.js';
+import { OperatorSession, allowedRequest, credentialRefusal } from './operator.js';
+import { createOperatorUI } from './operator-ui.js';
 import { h } from './skin-kit.js';
 
 const TOKEN_KEY = 'yak-viewer-token';
 const UNAUTHORIZED = 'The server rejected the token (401). Paste a valid token.';
 const $ = (id) => document.getElementById(id);
-const S = { token: null, me: null, abort: new AbortController() };
+const S = { token: null, me: null, abort: new AbortController(), operatorEnabled: false, serverDate: NaN };
+let session, operatorUI;
 
 // ---------- HTTP ----------
 
@@ -28,9 +31,10 @@ class ApiError extends Error {
 
 async function api(method, path, params = {}, signal = S.abort.signal) {
   // Read-only guard: only GET, plus snapshot sessions (which are reads).
-  if (method !== 'GET' && !/\/snapshots(\/[^/]+)?$/.test(path)) {
+  if (method !== 'GET' && !(method === 'POST' && /^\/v1\/boards\/[^/]+\/snapshots$/.test(path)) && !(method === 'DELETE' && /^\/v1\/boards\/[^/]+\/snapshots\/[^/]+$/.test(path))) {
     throw new Error(`viewer is read-only: refusing ${method} ${path}`);
   }
+  if (session?.active && !allowedRequest(method, path, session.me.credential.id)) throw new Error('Operator read route refused.');
   const url = new URL(path, location.origin);
   for (const [k, v] of Object.entries(params)) {
     if (v == null || v === '') continue;
@@ -43,12 +47,14 @@ async function api(method, path, params = {}, signal = S.abort.signal) {
       headers: { Authorization: `Bearer ${S.token}`, Accept: 'application/json' },
       signal,
       cache: 'no-store',
+      credentials: 'omit',
     });
   } catch (e) {
     if (e.name === 'AbortError') throw e;
     throw new ApiError(0, { code: 'network', detail: 'network error' });
   }
   if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
+  if (path === '/v1/server') S.serverDate = Date.parse(res.headers.get('Date'));
   if (res.status === 204) return null;
   const body = await res.json().catch(() => ({}));
   // Cancellation can outlive fetch while the response body is being read.
@@ -69,6 +75,10 @@ function loadToken() {
 }
 
 function needToken(message) {
+  if (session?.ending) return;
+  if (session?.active) { session.end({ unauthorized: true }).finally(() => needToken(message)); return; }
+  operatorUI?.clear();
+  document.body.removeAttribute('data-operator');
   feed.stop();
   skins.unmount();
   term.unmount();
@@ -156,6 +166,7 @@ function renderTop() {
   $('me').replaceChildren(S.me && S.token
     ? h('span', { title: `scopes: ${S.me.credential.scopes.join(', ')}` }, `@${S.me.actor.handle}`) : '');
   $('forget').hidden = !S.token;
+  $('forget').textContent = session?.active ? 'Logout (revokes token everywhere)' : 'Forget token';
 }
 
 function setStatus(state) {
@@ -181,15 +192,30 @@ $('login-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const v = $('token').value.trim();
   $('token').value = '';
-  if (!v) return;
-  S.token = v;
-  try { sessionStorage.setItem(TOKEN_KEY, v); } catch { /* kept in memory only */ }
-  S.me = null;
-  $('login-error').hidden = true;
-  await onRoute();
+  if (!v || session?.ending) return;
+  $('connect').disabled = true;
+  S.token = v; S.me = null;
+  try {
+    const [me, server] = await Promise.all([api('GET', '/v1/me'), api('GET', '/v1/server')]);
+    if ($('operator-login').checked && S.operatorEnabled) {
+      const why = credentialRefusal(me, server, S.serverDate);
+      if (why) throw new Error(why);
+      try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* unavailable */ }
+      S.me = me; session.start(me, server, S.serverDate);
+      document.body.dataset.operator = 'true';
+      if (!server.capabilities?.includes('yak.credentials.restrictions')) banner("Warning: a stolen token could issue and revoke your credentials. This server has no credential restrictions.");
+    } else {
+      if (!me.credential.scopes.every((s) => s === 'read')) throw new Error('A write credential requires operator mode. Use a read-only credential here.');
+      S.me = me;
+      try { sessionStorage.setItem(TOKEN_KEY, v); } catch { /* memory only */ }
+    }
+    await onRoute();
+  } catch (e) { needToken(e.status === 401 ? UNAUTHORIZED : e.message); }
+  finally { $('connect').disabled = false; }
 });
 
 function forget() {
+  if (session?.active) { session.end().finally(() => needToken(session.notice || 'Logged out; token revoked everywhere.')); return; }
   needToken('Token forgotten.');
   history.replaceState(null, '', location.pathname);
 }
@@ -200,5 +226,46 @@ const skins = createSkins({ api, setStatus, onUnauthorized: () => needToken(UNAU
 const term = createTerm({ api, href, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED), onForget: forget, liveEl: $('live') });
 
 window.addEventListener('hashchange', onRoute);
-loadToken();
-onRoute();
+// Raw operator transport is separate from the viewer's read transport.
+// It always passes through the same exact allowlist and owns no stored token.
+async function write(method, path, body, headers = {}, options = {}) {
+  if (!S.operatorEnabled || !session.active || !allowedRequest(method, path, session.me.credential.id)) throw new Error('Operator route refused.');
+  if (method === 'PATCH' && /\/tasks\/[^/]+$/.test(path) && (!body || Object.keys(body).length !== 1 || typeof body.direct_action_required !== 'boolean')) throw new Error('Operator task patches may only change direct_action_required.');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(path, { method, headers: { ...headers, Authorization: `Bearer ${S.token}`, Accept: 'application/json', ...(body != null ? { 'Content-Type': 'application/json' } : {}) }, body: body == null ? undefined : JSON.stringify(body), credentials: 'omit', cache: 'no-store', signal: controller.signal, ...options });
+    const result = res.status === 204 ? null : await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, result);
+    return result;
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    throw new ApiError(0, { code: 'network', detail: 'Request outcome unknown. Retry this same intent.' });
+  } finally { clearTimeout(timeout); }
+}
+session = new OperatorSession({ send: write, changed: () => {
+  operatorUI?.update();
+  const el = $('operator-session'); el.hidden = !session.active;
+  if (session.active) {
+    const c = session.me.credential;
+    $('operator-identity').textContent = `@${session.me.actor.handle} (${session.me.actor.kind}) · boards ${c.board_ids.join(', ')} · scopes ${c.scopes.join(', ')} · expires in ${Math.max(0, Math.ceil((session.expiry - session.mono()) / 60000))} min · idle ${Math.max(0, Math.ceil((900000 - session.mono() + session.lastInput) / 1000))} s${session.mono() - session.lastInput >= 840000 ? ' — idle logout in less than 60 seconds' : ''}${session.notice ? ` · ${session.notice}` : ''}`;
+  } else if (S.me && document.body.dataset.operator) needToken(session.notice || 'Operator session ended.');
+} });
+operatorUI = createOperatorUI({ session, read: api, route: parseRoute });
+$('operator-tools').addEventListener('click', () => operatorUI.open());
+$('operator-logout').addEventListener('click', forget);
+for (const event of ['keydown', 'pointerdown', 'touchstart']) document.addEventListener(event, () => session.input(), { passive: true, capture: true });
+window.addEventListener('pagehide', () => { if (session.active) session.end({ keepalive: true }); });
+window.addEventListener('yak-operator-open', (e) => operatorUI.open(e.detail || parseRoute()));
+async function boot() {
+  try { S.operatorEnabled = (await (await fetch('/viewer-config', { cache: 'no-store' })).json()).operator === true; } catch { /* default read-only */ }
+  $('operator-option').hidden = !S.operatorEnabled;
+  loadToken();
+  // Only credentials validated as read-only may be restored from older viewers.
+  if (S.token) {
+    try { const me = await api('GET', '/v1/me'); if (!me.credential.scopes.every((s) => s === 'read')) return needToken('Stored token was not read-only. Paste a short-lived operator token to enter operator mode.'); S.me = me; }
+    catch { return needToken(UNAUTHORIZED); }
+  }
+  onRoute();
+}
+boot();

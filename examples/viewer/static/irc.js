@@ -20,11 +20,11 @@ export function irc(root, { threadHref }) {
   chrome.before(chromeHome);
   let connection = 'resyncing';
 
-  const nick = (st, id) => {
+  const nick = (st, id, principal) => {
     const a = st.actor(id);
     const mode = a?.kind === 'human' ? '@' : '+';
     const via = st.via(id);
-    return h('span', { class: `i-nick ${mode === '@' ? 'i-person' : 'i-agent'}` }, `<${mode}${st.handle(id)}${via ? `|${via}` : ''}>`);
+    return h('span', { class: `i-nick ${mode === '@' ? 'i-person' : 'i-agent'}` }, `<${mode}${st.handle(id)}${via ? `|${via}` : ''}> (${a?.kind || 'unknown'})${principal ? ` for ${st.handle(principal)} (${st.actor(principal)?.kind || 'unknown'})` : ''}`);
   };
 
   // Message text with highlighted mentions; text nodes only.
@@ -42,7 +42,7 @@ export function irc(root, { threadHref }) {
       for (const m of st.messages(t.id)) {
         out.push({ ts: m.created_at, thread: t.id, el: m.deleted
           ? [h('span', { class: 'i-act' }, `* ${st.handle(m.author_actor_id)}'s message was deleted`)]
-          : [nick(st, m.author_actor_id), ' ', body(st, m)] });
+          : [nick(st, m.author_actor_id, m.on_behalf_of_actor_id), ' ', body(st, m)] });
       }
     }
     for (const task of st.tasks().filter((t) => t.channel_path === tab)) {
@@ -73,7 +73,7 @@ export function irc(root, { threadHref }) {
     const S = st.S;
     const items = [`*** ${connection} · ${S.board.name} as ${S.me?.handle}`,
       `*** ${S.channels.length} channels, ${S.threads.size} threads, ${S.tasks.size} tasks`,
-      '*** This window is read-only. /commands are disabled.',
+      document.body.dataset.operator ? '*** Use Operator tools for messages and confirmed task actions. /commands are disabled.' : '*** This window is read-only. /commands are disabled.',
       ...log.map((x) => `[${hhmm(x.ts)}] #${x.channel} ${x.text}`)];
     return items.map((t) => h('div', { class: 'i-line i-status' }, t));
   }
@@ -139,7 +139,7 @@ export function irc(root, { threadHref }) {
           agents.map((a) => h('div', { class: 'i-agent' }, `+${a.handle}`)),
           h('div', { class: 'i-count' }, `${actors.length} board actors`), h('div', { class: 'i-count' }, ` ${people.length} people (@)`),
           h('div', { class: 'i-count' }, ` ${agents.length} agents/services (+)`))),
-      h('input', { class: 'i-input', type: 'text', disabled: true, 'aria-label': 'message input (read-only)', placeholder: 'read-only viewer: /commands and messages are disabled' }),
+      document.body.dataset.operator ? h('button', { type: 'button', class: 'i-input', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: S.board.id, ch: tab, t: topicThread } })) }, 'Reply / task actions') : h('input', { class: 'i-input', type: 'text', disabled: true, 'aria-label': 'message input (read-only)', placeholder: 'read-only viewer: /commands and messages are disabled' }),
       h('div', { class: 'i-statusbar' }, h('span', {}, `${connection} · ${S.board.name} as ${S.me?.handle}`),
         h('span', {}, 'Ctrl-K jump'), h('span', {}, `${S.channels.length} channels`)));
     root.replaceChildren(h('div', { class: 'i-desk' }, win));
@@ -166,8 +166,8 @@ export function irc(root, { threadHref }) {
     const p = ev.payload || {};
     const channel = p.message?.channel_path || p.thread?.channel_path || p.task?.channel_path;
     if (!channel) return;
-    if (LOGGED[ev.type]) log.push({ ts: ev.recorded_at, thread: ev.thread_id, channel, text: `* ${st.handle(ev.actor_id)} ${LOGGED[ev.type](p)} ${st.num(p.task.id)}`,
-      el: [h('span', { class: 'i-act' }, `* ${st.handle(ev.actor_id)} ${LOGGED[ev.type](p)} ${st.num(p.task.id)}`)] });
+    if (LOGGED[ev.type]) log.push({ ts: ev.recorded_at, thread: ev.thread_id, channel, text: `* ${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})${ev.on_behalf_of_actor_id ? ` for ${st.handle(ev.on_behalf_of_actor_id)}` : ''} ${LOGGED[ev.type](p)} ${st.num(p.task.id)}`,
+      el: [h('span', { class: 'i-act' }, `* ${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})${ev.on_behalf_of_actor_id ? ` for ${st.handle(ev.on_behalf_of_actor_id)}` : ''} ${LOGGED[ev.type](p)} ${st.num(p.task.id)}`)] });
     if (log.length > 300) log.shift();
     if ((ev.type === 'message.created' || ev.type === 'thread.created' || LOGGED[ev.type]) && channel !== tab) unread.set(channel, (unread.get(channel) || 0) + 1);
   }

@@ -138,7 +138,7 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
 
   function who(rec, id) {
     const a = rec.actors.get(id);
-    return a ? `@${a.handle}` : short(id);
+    return a ? `@${a.handle} (${a.kind})` : short(id);
   }
 
   // One line of detail per event type; text only.
@@ -160,7 +160,8 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
       case 'task.completed': return snip(p.outcome?.summary) || 'completed';
       case 'task.failed': return snip(p.outcome?.reason || p.outcome?.summary) || 'failed';
       case 'task.blocked': return `${p.reason ?? ''} (${p.cause})`;
-      case 'task.unblocked': case 'task.reopened': return p.reason ?? '';
+      case 'task.unblocked': return `${p.reason ?? ''}${ev.on_behalf_of_actor_id || ev.delegation_id || rec.actors.get(ev.actor_id)?.kind !== 'human' ? `; unblocked by ${who(rec, ev.actor_id)}${ev.on_behalf_of_actor_id ? ` for ${who(rec, ev.on_behalf_of_actor_id)}` : ''}, not a person's approval` : ''}`;
+      case 'task.reopened': return p.reason ?? '';
       case 'task.canceled': return `${p.reason ?? ''} (${p.cause})`;
       case 'task.assigned': return `${p.assignee_before ? who(rec, p.assignee_before) : 'none'} → ${p.assignee_after ? who(rec, p.assignee_after) : 'none'}`;
       case 'task.dependencies_changed': return `+${p.added?.length ?? 0} −${p.removed?.length ?? 0} deps · ${p.state_before} → ${p.state_after}`;
@@ -194,7 +195,7 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
       : href({ board: rec.board.id, sub: true, ch: path || '' });
     return h('li', {}, h('a', { href: link },
       h('div', { class: 'meta' }, time(e.at), ` · ${rec.board.name}`, path ? ` · #${path}` : '',
-        ' · ', h('span', { class: 'actor' }, who(rec, ev.actor_id))),
+        ' · ', h('span', { class: 'actor' }, `${who(rec, ev.actor_id)}${ev.on_behalf_of_actor_id ? ` for ${who(rec, ev.on_behalf_of_actor_id)}` : ''}`)),
       h('div', {}, h('span', { class: `type type-${kind}` }, ev.type), e.count > 1 ? ` ×${e.count} ` : ' ',
         h('span', { class: 'title' }, p.thread?.title || p.task?.title || p.thread_title || title(rec, ev.thread_id))),
       h('div', { class: 'snippet' }, detail(rec, ev))));
