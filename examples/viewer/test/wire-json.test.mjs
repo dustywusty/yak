@@ -175,3 +175,108 @@ test('OP17-043 INT-01 B6 escaped boundaries and member order preserve entire sub
 test('OP17-043 INT-01 B7 opaque subtrees require valid JSON', () => {
   for (const raw of ['{"metadata":{"revision":0,}}', '{"outcome":{"data":{"revision":01}}}', '{"extensions":{"vendor.feature":[0,]}}', '{"metadata":{"bad":"\\q"}}', '{"metadata":{"revision":0}} trailing']) assert.throws(() => parseWireJSON(raw), SyntaxError);
 });
+
+
+export const int02Event = '{"id":"evt-int02","cursor":"c1.event-int02","type":"future.changed","board_id":"b","actor_id":"a","credential_id":null,"run_id":null,"resource":{"type":"task","id":"t","revision":null},"channel_id":"ch","thread_id":"th","recorded_at":"2026-11-20T00:00:00Z","effective_at":"2026-11-20T00:00:00Z","payload":{"task":{"id":"t","revision":9007199254740993,"brief_revision":9223372036854775807}}}';
+export const int02Page = event => `{"events":[${event}],"next_cursor":"c1.next-int02","caught_up":true,"timed_out":false}`;
+const int02Shape = JSON.parse(int02Event);
+// Restore fixture digits when making structural variants with JSON.stringify.
+// Production parsing always consumes the original raw decimal tokens.
+const int02Raw = shape => JSON.stringify(shape)
+  .replaceAll('9007199254740992', '9007199254740993')
+  .replaceAll('9223372036854776000', '9223372036854775807');
+function int02Exact(raw, page = false) {
+  const doc = parseWireJSON(raw), event = page ? doc.events[0] : doc;
+  assert.equal(event.resource.revision, null);
+  assert.equal(event.payload.task.revision, '9007199254740993');
+  assert.equal(event.payload.task.brief_revision, '9223372036854775807');
+}
+test('OP17-043 INT-02 complete root and page Event preserve nullable resource and exact payload', () => {
+  int02Exact(int02Event); int02Exact(int02Page(int02Event), true);
+});
+test('OP17-043 INT-02 order escaped decoded keys and opaque cursors do not alter roles', () => {
+  const { resource, ...markers } = int02Shape;
+  for (const shape of [{ resource, ...markers }, { ...markers, resource }]) {
+    let raw = int02Raw(shape);
+    raw = raw.replace('c1.event-int02', 'opaque-anything');
+    for (const key of ['resource', 'revision', 'type', 'cursor']) raw = raw.replaceAll(`"${key}"`, `"\\u${key.charCodeAt(0).toString(16).padStart(4, '0')}${key.slice(1)}"`);
+    int02Exact(raw); int02Exact(int02Page(raw), true);
+  }
+});
+for (const key of Object.keys(int02Shape)) for (const mode of ['omitted', 'mistyped']) {
+  test(`OP17-043 INT-02 Event marker ${key} ${mode} rejects null`, () => {
+    const shape = structuredClone(int02Shape);
+    if (mode === 'omitted') delete shape[key]; else shape[key] = 7;
+    if (key === 'resource') shape.unknown = { revision: null };
+    for (const raw of [int02Raw(shape), int02Page(int02Raw(shape))]) assert.throws(() => parseWireJSON(raw));
+  });
+}
+for (const key of ['events', 'next_cursor', 'caught_up', 'timed_out']) for (const mode of ['omitted', 'mistyped']) {
+  test(`OP17-043 INT-02 page marker ${key} ${mode} rejects null`, () => {
+    const shape = JSON.parse(int02Page(int02Event));
+    if (mode === 'omitted') delete shape[key]; else shape[key] = 7;
+    if (key === 'resource') shape.unknown = { revision: null };
+    // Keep an unrecognized Event reachable even when the events slot is removed/mistyped.
+    if (key === 'events') shape.other = [int02Shape];
+    assert.throws(() => parseWireJSON(int02Raw(shape)));
+  });
+}
+for (const key of ['type', 'id', 'revision']) for (const mode of ['omitted', 'mistyped']) {
+  test(`OP17-043 INT-02 resource marker ${key} ${mode} cannot establish role`, () => {
+    const shape = structuredClone(int02Shape);
+    if (mode === 'omitted') delete shape.resource[key]; else shape.resource[key] = false;
+    // A nested null guard makes absence of revision observable without requiring schema validation.
+    if (key === 'revision') shape.resource.nested = { revision: null };
+    assert.throws(() => parseWireJSON(int02Raw(shape)));
+  });
+}
+test('OP17-043 INT-02 nonempty patterned and object markers are required', () => {
+  for (const [key, value] of [['id',''], ['cursor',''], ['type','changed'], ['type','Future.changed'], ['payload',null], ['payload',[]], ['resource',null], ['resource',[]]]) {
+    const shape = { ...int02Shape, [key]: value };
+    if (key === 'resource') shape.unknown = { revision: null };
+    assert.throws(() => parseWireJSON(int02Raw(shape)));
+  }
+  assert.throws(() => parseWireJSON(int02Page(int02Event).replace('c1.next-int02', '')));
+});
+test('OP17-043 INT-02 numeric tokens stay exact and all nonnull invalid tokens reject', () => {
+  for (const token of ['1','9007199254740993','9223372036854775807','"ordinary string"']) {
+    const raw = int02Event.replace('"revision":null', `"revision":${token}`);
+    for (const text of [raw, int02Page(raw)]) {
+      const doc = parseWireJSON(text), event = doc.events ? doc.events[0] : doc;
+      assert.equal(event.resource.revision, token[0] === '"' ? JSON.parse(token) : token);
+    }
+  }
+  for (const token of ['-1','-0','0','1.5','1e2','9223372036854775808','true','{}','[]','01']) {
+    const raw = int02Event.replace('"revision":null', `"revision":${token}`);
+    assert.throws(() => parseWireJSON(raw)); assert.throws(() => parseWireJSON(int02Page(raw)));
+  }
+});
+test('OP17-043 INT-02 only direct recognized resource revision may be null', () => {
+  for (const raw of ['{"revision":null}', '{"brief_revision":null}', '{"resource":{"revision":null}}', '{"type":"task.changed","resource":{"type":"task","id":"t","revision":null}}', ...['task','claim'].flatMap(kind => ['revision','brief_revision'].map(key => `{"${kind}":{"${key}":null}}`)), `{"wrapper":${int02Event}}`, `[${int02Event}]`, `{"events":[${int02Event}]}`, `{"wrapper":${int02Page(int02Event)}}`]) assert.throws(() => parseWireJSON(raw));
+  for (const mutate of [e => e.resource.brief_revision = null, e => e.resource.nested = { revision:null }, e => e.unknown = { revision:null }, ...['task','claim'].flatMap(kind => ['revision','brief_revision'].map(key => e => e.payload[kind] = { [key]:null }))]) {
+    const event = structuredClone(int02Shape); mutate(event);
+    assert.throws(() => parseWireJSON(int02Raw(event)));
+  }
+});
+test('OP17-043 INT-02 malformed JSON and duplicate guards retain baseline semantics', () => {
+  for (const raw of [int02Event + ' trailing', int02Event.replace(/}$/, ',}'), int02Event.replace('"id":"t"','"id":"\\q"'), int02Event.replace('"revision":null','"revision":null,"x":01'), int02Event.replace('"payload":{','"metadata":{"revision":01},"payload":{'), int02Event.replace('"payload":{','"metadata":{"x":"\\q"},"payload":{'), int02Event.replace('"payload":{','"metadata":[1,],"payload":{'), int02Event.replace('"revision":null','"revision":0,"revision":null')]) assert.throws(() => parseWireJSON(raw));
+  const duplicate = parseWireJSON(int02Event.replace('"revision":null','"revision":1,"revision":null'));
+  assert.equal(duplicate.resource.revision, null);
+  int02Exact(int02Event.replace('"type":"future.changed"','"type":"ignored","type":"future.changed"'));
+  assert.throws(() => parseWireJSON(int02Event.replace('"type":"future.changed"','"type":"future.changed","type":"ignored"')));
+});
+test('OP17-043 INT-02 INT-01 opaque precedence includes fake Events and arbitrary null resources', () => {
+  for (const raw of [int02Event, '{"type":"fake","resource":{"revision":null,"brief_revision":null}}']) {
+    for (const boundary of [`{"metadata":${raw}}`, `{"wrapper":{"extensions":${raw}}}`, `{"outcome":{"data":${raw}}}`, `{"wrapper":{"previous_outcome":{"data":${raw}}}}`]) assert.deepEqual(parseWireJSON(boundary), JSON.parse(boundary));
+  }
+  assert.throws(() => parseWireJSON(`{"outcome":{"wrapper":{"data":${int02Event}}}}`));
+});
+
+test('OP17-043 INT-02 nullable marker strings and own properties follow approved kinds', () => {
+  const event = { ...int02Shape, board_id: '', actor_id: '', recorded_at: '', effective_at: '', credential_id: 'cred', run_id: 'run', channel_id: null, thread_id: null };
+  int02Exact(int02Raw(event));
+  for (const key of ['id', 'cursor', 'type', 'board_id', 'actor_id', 'credential_id', 'run_id', 'channel_id', 'thread_id', 'recorded_at', 'effective_at', 'payload']) {
+    const own = { ...int02Shape }; delete own[key];
+    assert.throws(() => parseWireJSON(int02Raw(own).replace('{', `{"__proto__":${JSON.stringify({ [key]: int02Shape[key] })},`)));
+  }
+});

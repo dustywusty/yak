@@ -773,3 +773,64 @@ for (const type of ['task.completed', 'task.failed']) {
   } finally { clearTimeout(timeout); store?.stop(); }
  });
 }
+
+
+const { int02Event, int02Page } = await import('./wire-json.test.mjs');
+test('OP17-043 INT-02 production api decodes complete nullable EventPage', async () => {
+ const request = await int01ReadTransport(async (url, options) => {
+  assert.equal(options.method, 'GET'); assert.equal(url.pathname, '/v1/boards/b/events');
+  return new Response(int02Page(int02Event));
+ });
+ const page = await request('GET', '/v1/boards/b/events');
+ assert.equal(page.events[0].resource.revision, null);
+ assert.equal(page.events[0].payload.task.revision, '9007199254740993');
+ assert.equal(page.events[0].payload.task.brief_revision, '9223372036854775807');
+});
+test('OP17-043 INT-02 production api and store advance cursor without reconnect on null resource revision', { timeout: 3000 }, async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/skin-kit.js', import.meta.url), 'utf8');
+ const calls = [], statuses = [], observations = [], events = [];
+ let resolveDone, rejectDone, store, timeout, readError;
+ const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+ const transport = await int01ReadTransport(async (url, options) => {
+  calls.push(`${options.method} ${url.pathname}`);
+  if (url.pathname.endsWith('/events')) {
+   assert.equal(url.searchParams.get('cursor'), 'c1.snapshot-int02');
+   return new Response(int02Page(int02Event.replace('9007199254740993', '9007199254740994')));
+  }
+  if (url.pathname.endsWith('/snapshots/s')) return options.method === 'DELETE' ? new Response(null, { status: 204 }) : new Response(`{"items":[{"id":"t","type":"task","data":${int01Task('null')}}],"next_page_token":null,"continuation_cursor":"c1.snapshot-int02"}`);
+  if (url.pathname.endsWith('/snapshots')) return new Response('{"id":"s"}');
+  if (url.pathname.endsWith('/actors')) return new Response('{"actors":[],"next_page_token":null}');
+  if (url.pathname.endsWith('/channels')) return new Response('{"channels":[]}');
+  if (url.pathname === '/v1/me') return new Response('{"actor":{"id":"a"}}');
+  assert.equal(url.pathname, '/v1/boards/b'); return new Response('{"id":"b"}');
+ });
+ const request = async (...args) => { try { return await transport(...args); } catch (error) { readError = error; throw error; } };
+ const create = runInNewContext(`${source.slice(source.indexOf('export function createStore('), source.indexOf('// The gate label')).replace('export function', 'function')}\ncreateStore`, {
+  compareRevision, enc: encodeURIComponent, AbortController, DOMException, setInterval, clearInterval, setTimeout, clearTimeout,
+  clock: { limits: { max_page_size: 200, max_wait_ms: 1 } }, now: Date.now, syncClock: async () => {},
+  sleep: () => new Promise(() => {}), console
+ });
+ try {
+  timeout = setTimeout(() => rejectDone(new Error(`store stalled: ${statuses}`)), 1000);
+  store = create({ api: request, boardId: 'b', onEvent: event => events.push(event), onStatus: status => {
+   statuses.push(status);
+   if (status === 'reconnecting') rejectDone(new Error(`null resource event caused reconnect: ${readError?.name}: ${readError?.message}`, { cause: readError }));
+  }, onChange: () => {
+   try {
+    const task = store.S.tasks.get('t');
+    assert.equal(task.brief_revision, '9223372036854775807');
+    observations.push([store.S.cursor, task.revision]);
+    if (store.S.cursor === 'c1.next-int02') { store.stop(); resolveDone(); }
+   } catch (error) { rejectDone(error); }
+  } });
+  await done;
+  assert.deepEqual(observations, [['c1.snapshot-int02','9007199254740993'], ['c1.next-int02','9007199254740994']]);
+  assert.equal(events.length, 1); assert.equal(events[0].resource.revision, null);
+  assert.equal(store.S.events, 1); assert.equal(store.S.seen.has('evt-int02'), true); assert.equal(store.S.seen.size, 1);
+  assert.equal(store.S.cursor, 'c1.next-int02'); assert.equal(statuses.includes('reconnecting'), false);
+  assert.equal(calls.filter(c => c === 'POST /v1/boards/b/snapshots').length, 1);
+  assert.equal(calls.filter(c => c === 'GET /v1/boards/b/events').length, 1);
+ } finally { clearTimeout(timeout); store?.stop(); }
+});
