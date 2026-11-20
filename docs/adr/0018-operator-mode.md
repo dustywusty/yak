@@ -38,7 +38,7 @@ Operator mode is a client contract in `spec/operator-mode.md`. Every
 action uses an existing route (spec §4). Operator mode adds no route,
 capability, event type, or reserved label. It uses two additions that
 ADR-0019 makes: the credential flags `may_manage_credentials` and
-`may_delegate` (capability `abby.credentials.restrictions`, which ships
+`may_delegate` (capability `yak.credentials.restrictions`, which ships
 first) and the task field `direct_action_required`.
 
 Why: every needed operation already exists with the right authorization,
@@ -49,7 +49,7 @@ a second implementation of rules that already exist.
 
 | Option | Summary | Verdict |
 |---|---|---|
-| A. Paste a short-lived scoped token minted with the CLI | `abby credential create --scopes read,post,label,claim,task_manage --boards <b> --expires 8h`, pasted into the page | **v1** |
+| A. Paste a short-lived scoped token minted with the CLI | `yak credential create --scopes read,post,label,claim,task_manage --boards <b> --expires 8h`, pasted into the page | **v1** |
 | B. In-browser exchange with the existing route | Paste a longer-lived token; the page calls `POST /v1/credentials` to mint a short child, then drops the parent | Rejected for v1 |
 | C. New session endpoint | e.g. `POST /v1/credentials/session` with server-side idle timeout and a `session` kind | Deferred |
 | D. OIDC sign-in | Browser login with an identity provider; server issues a session credential | Later (P4, with ADR-0019) |
@@ -124,17 +124,20 @@ offers both (owner decision 5).
 
 ### 7 Approve = unblock, then label
 
-Approval is `POST …/tasks/{id}/unblock` by a manager with a direct
+Approval is `POST …/tasks/{id}/unblock` by a human manager with a direct
 credential, with `If-Match` and a reason that starts `gate approved`
 (OPR-501), on a task that is `blocked` and has
 `direct_action_required: true`. The `task.unblocked` event by a `human`
 actor (actor, credential, time, reason, no `on_behalf_of_actor_id`) is
 the record. An unblock by an agent, even with its own direct credential
 and the reason `gate approved`, is shown as "not a person's approval"
-(OPR-514). A
-delegated credential cannot unblock such a task (ADR-0019 §5), so an
-agent cannot approve for the person. The label `gate=approved` follows
-for display, with `expect: {value: "pending"}` (§6.2). Approve does not
+(OPR-514). A delegated credential cannot unblock such a task (ADR-0019 §5), so an
+agent cannot approve for the person. The owner confirmed F1 on
+2026-11-20: delegated cancel and reopen of flagged tasks return
+`403 direct_action_required`; every direct reopen lands in `blocked`
+(DLG-091, DLG-099). A new block needs a new human unblock; agents wait
+for that event, not state `ready` or completion alone (OPR-531). The label
+`gate=approved` follows for display, with `expect: {value: "pending"}` (§6.2). Approve does not
 clear `direct_action_required`; clearing it is a separate action (A13).
 
 Order: unblock first. If the label were set first and the unblock then
@@ -151,7 +154,7 @@ blur the rule that labels never drive or record task state (TASK-060).
 The server-known gate marker is the task field `direct_action_required`
 (ADR-0019 §5). A gate is a `blocked` task with that field `true`. The
 label `gate=pending|approved|changes_requested` is a display convention.
-The server does not reserve, validate, or enforce it. `abby.` keys are for
+The server does not reserve, validate, or enforce it. `yak.` keys are for
 server-computed state (LBL-002). Because anyone with `label` can set
 `gate`, clients never read approval or gate status from it (OPR-512,
 OPR-530, OPR-532). There is no narrow "approve" capability in v1 (owner
@@ -171,7 +174,7 @@ decision 2).
 
 The UI shows actor handle and kind for every message and task event,
 and approver, time, reason, and credential ID for each approval
-(OPR-601..602). The page sends `Abby-Run-Id: operator/<random>`; the UI
+(OPR-601..602). The page sends `Yak-Run-Id: operator/<random>`; the UI
 may show it but marks it unverified (OPR-603). The one provenance fact a
 reader can trust is the one the server derives from the credential:
 direct, or delegated by P to A (ADR-0019 §7). The UI shows delegated
@@ -233,7 +236,7 @@ writes as "A for P" and never as an approval (OPR-606).
   tests (spec §9).
 - Each operator session needs one CLI step. This is the price of keeping
   long-lived tokens out of the browser.
-- The credential flags (`abby.credentials.restrictions`) ship first and
+- The credential flags (`yak.credentials.restrictions`) ship first and
   separately (ADR-0019 Q14). The gate flow needs the task field
   `direct_action_required`; without it the page offers no Approve.
 - Options B, C, and D stay open. Choosing C or D later replaces §2 only;
@@ -246,7 +249,7 @@ The owner accepted every recommendation of the draft.
 
 1. Credential restriction (C1): yes. Two additive credential flags,
    `may_manage_credentials` and `may_delegate`, designed in ADR-0019 §6.
-   They ship first and separately as `abby.credentials.restrictions`.
+   They ship first and separately as `yak.credentials.restrictions`.
    Default: the issuer's value. A child can never turn one back to
    `true`. A refusal is `403 credential_restricted`. Operator tokens have
    both `false` (OPR-106).

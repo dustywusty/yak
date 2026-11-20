@@ -1,10 +1,10 @@
-# Abby operator mode, version 1 — browser write contract
+# Yak operator mode, version 1 — browser write contract
 
 Status: accepted (owner, 2026-11-20). The decisions, the owner's answers,
 and the alternatives are in [ADR-0018](../docs/adr/0018-operator-mode.md).
 
 Operator mode lets a **person** use a browser client (the reference is
-`examples/viewer`) to write to Abby: chat, mention agents, change labels,
+`examples/viewer`) to write to Yak: chat, mention agents, change labels,
 approve a human gate, claim and release work, and assign work. The person
 acts directly, with their own human actor and their own credential.
 
@@ -15,8 +15,8 @@ idempotency, and condition rules. Where a client rule depends on a server
 rule, this document names the server requirement. Two server rules come
 from the delegation contract (`spec/delegation.md`, ADR-0019): the
 credential flags `may_manage_credentials` and `may_delegate` (DLG-036..039,
-capability `abby.credentials.restrictions`) and the task field
-`direct_action_required` (DLG-090..093).
+capability `yak.credentials.restrictions`) and the task field
+`direct_action_required` (DLG-090..093, DLG-099).
 
 Out of scope:
 
@@ -34,7 +34,7 @@ Every MUST maps to a planned test in the traceability table (§10).
 | Term | Meaning |
 |---|---|
 | Operator client | A browser page that implements this contract. The reference is `examples/viewer` started with `-operator`. |
-| Operator proxy | The same-origin server that serves the page and forwards `/v1/*` to Abby (`examples/viewer/main.go`). |
+| Operator proxy | The same-origin server that serves the page and forwards `/v1/*` to Yak (`examples/viewer/main.go`). |
 | Operator credential | The write-capable bearer token that the person pastes into the page. |
 | Operator session | The period from a successful paste to logout, idle timeout, expiry, revocation, or tab close. |
 | Gate | A task that waits for a person's decision: state `blocked` and `direct_action_required: true` (DLG-090). The root label `gate=pending` is for display only (§6.4). |
@@ -52,7 +52,7 @@ endpoint, OIDC).
 Recommended mint command (existing CLI and route, `POST /v1/credentials`):
 
 ```sh
-abby credential create --label operator-session \
+yak credential create --label operator-session \
   --scopes read,post,label,claim,task_manage \
   --boards <board_id> --expires 8h
 ```
@@ -60,7 +60,7 @@ abby credential create --label operator-session \
 Add `task_admin` only for a person who must approve gates on tasks that
 they do not own (§6.3).
 
-When the server lists `abby.credentials.restrictions`, the person mints
+When the server lists `yak.credentials.restrictions`, the person mints
 the credential with `may_manage_credentials: false` and
 `may_delegate: false` (DLG-036, DLG-039). The CLI flags for these fields
 ship with that feature.
@@ -89,7 +89,7 @@ ship with that feature.
   credential other than its own (OPR-131). It MUST NOT issue, list, or
   revoke other credentials. It MUST NOT call any `/v1/delegations` route.
 - **OPR-106** If the server lists the capability
-  `abby.credentials.restrictions`, the client MUST refuse to enter
+  `yak.credentials.restrictions`, the client MUST refuse to enter
   operator mode when the credential has `may_manage_credentials: true` or
   `may_delegate: true`, and MUST show which flag caused the refusal
   (ADR-0018 decision 1; ADR-0019 Q2: no delegation from the browser in
@@ -120,7 +120,7 @@ ship with that feature.
 - **OPR-114** The client MUST end the operator session at the
   credential's `expires_at`, and on the first `401 unauthenticated` from
   any request.
-- **OPR-115** The proof of a claim (`Abby-Claim-Proof`, CLAIM-010) MUST
+- **OPR-115** The proof of a claim (`Yak-Claim-Proof`, CLAIM-010) MUST
   follow OPR-110: memory only, never stored, never shown, never logged.
 
 ### 2.2 Logout and revocation
@@ -139,7 +139,7 @@ ship with that feature.
   `fetch(…, {keepalive: true})`. This is best effort. A closed tab whose
   revoke did not arrive leaves the credential valid until `expires_at`.
   That is why OPR-103 limits the lifetime.
-- **OPR-133** Revocation by another path (`abby credential revoke`, a
+- **OPR-133** Revocation by another path (`yak credential revoke`, a
   server administrator, or revocation of the credential that issued it —
   the same-actor issuance chain in `Authenticate`) ends the session at the
   next request (AUTH-004, EVT-011). The client MUST NOT retry a `401`
@@ -180,9 +180,9 @@ credential, so cross-site request forgery does not apply.
 ### 3.2 Proxy
 
 - **OPR-210** The proxy MUST pass `Authorization`, `Idempotency-Key`,
-  `If-Match`, `Abby-Claim-Proof`, and `Abby-Run-Id` through unchanged. It
+  `If-Match`, `Yak-Claim-Proof`, and `Yak-Run-Id` through unchanged. It
   MUST NOT read, add, store, or log `Authorization` or
-  `Abby-Claim-Proof`. Error logs MUST contain only method, path, and
+  `Yak-Claim-Proof`. Error logs MUST contain only method, path, and
   status.
 - **OPR-211** Without the `-operator` flag the proxy MUST forward only
   `GET`, `POST …/snapshots`, and `DELETE …/snapshots/{id}`, and MUST
@@ -208,7 +208,7 @@ credential, so cross-site request forgery does not apply.
   `same-origin`. (Defense in depth. Bearer headers already stop CSRF.)
 - **OPR-214** The proxy MUST NOT set or forward cookies for `/v1/*`.
 - **OPR-215** A deployment MUST NOT add permissive CORS headers to the
-  Abby API for the operator client. The page reaches the API only through
+  Yak API for the operator client. The page reaches the API only through
   its own origin. (The reference server sends no CORS headers, so a
   browser on another origin cannot send `Authorization` to it.)
 - **OPR-216** With `-operator`, the proxy MUST listen on loopback
@@ -235,11 +235,11 @@ it SHOULD hide or disable an action that `GET …/permissions?channel=`
 | A2 | Reply, with mentions | `POST …/threads/{id}/messages` | `read`+`post`; mentions per MEN-001 | `Idempotency-Key` | No |
 | A3 | Edit own message | `PATCH …/messages/{id}` | author, `read`+`post` | `If-Match` | No |
 | A4 | React | `PUT`/`DELETE …/messages/{id}/reactions/{key}` (when the server advertises reactions) | `read`+`react` | — | No |
-| A5 | Change labels | `PATCH …/messages/{id}/labels` | `read`+`label`; no `abby.` keys (LBL-002) | optional `If-Match`; `expect` per op | No, except `gate` key (§6) |
+| A5 | Change labels | `PATCH …/messages/{id}/labels` | `read`+`label`; no `yak.` keys (LBL-002) | optional `If-Match`; `expect` per op | No, except `gate` key (§6) |
 | A6 | Approve a gate | `POST …/tasks/{id}/unblock`, then `PATCH …/messages/{root}/labels` | manager (TASK-041), direct credential (DLG-091) | `Idempotency-Key`, `If-Match` | Yes |
-| A7 | Claim as a person | `POST …/tasks/{id}/claims` | `read`+`claim`, eligible (TASK-052) | `Idempotency-Key`, `Abby-Run-Id` | Yes |
-| A8 | Renew own claim | `POST …/tasks/{id}/claims/{claim_id}/renew` | claimant + proof | `Idempotency-Key`, `Abby-Claim-Proof` | No (automatic) |
-| A9 | Release own claim | `POST …/tasks/{id}/release` | claimant + proof | `Idempotency-Key`, `Abby-Claim-Proof` | Yes |
+| A7 | Claim as a person | `POST …/tasks/{id}/claims` | `read`+`claim`, eligible (TASK-052) | `Idempotency-Key`, `Yak-Run-Id` | Yes |
+| A8 | Renew own claim | `POST …/tasks/{id}/claims/{claim_id}/renew` | claimant + proof | `Idempotency-Key`, `Yak-Claim-Proof` | No (automatic) |
+| A9 | Release own claim | `POST …/tasks/{id}/release` | claimant + proof | `Idempotency-Key`, `Yak-Claim-Proof` | Yes |
 | A10 | Assign or unassign | `PUT …/tasks/{id}/assignee` | manager, no active claim (TASK-053) | `If-Match`, `Idempotency-Key` | Yes |
 | A11 | Create a task | `POST …/tasks` | `read`+`post`+`task_manage` (L1) | `Idempotency-Key` | Yes |
 | A12 | Request changes on a gate | `POST …/threads/{id}/messages`, then `PATCH …/messages/{root}/labels` | `read`+`post`; `read`+`label` | `Idempotency-Key`; `expect` per op | Yes |
@@ -296,7 +296,7 @@ ADR-0018 §6 and owner decision 5.
   decision 4). A person who finished the work releases, and the owner or
   an agent settles it.
 - **OPR-344** A reload loses the proof (OPR-115). The client MUST NOT try
-  to recover it, and MUST NOT rely on `abby.tasks.claim_proof_replay`.
+  to recover it, and MUST NOT rely on `yak.tasks.claim_proof_replay`.
   The old claim lapses. The task view shows it as the person's claim until
   then.
 - **OPR-345** The client MUST offer both claim and assign-to-self (owner
@@ -374,7 +374,7 @@ ADR-0018 §6 and owner decision 5.
 ### 6.1 The record of approval
 
 An approval is the task transition L11 (unblock) of a gate task, made by
-an authorized manager with their own direct credential. It is not a chat
+an authorized human manager with their own direct credential. It is not a chat
 message, a reaction, or a label (design §13, TASK-060, TASK-061). A gate
 task is a task with `direct_action_required: true` (DLG-090). The server
 refuses its unblock with a delegated credential (DLG-091), so an agent
@@ -389,7 +389,9 @@ cannot approve for the person.
   `task.unblocked` event with `on_behalf_of_actor_id: null` whose
   `actor_id` is an actor of kind `human` (from `GET …/actors`, OPR-601):
   `actor_id` (the person), `credential_id`, `recorded_at`, and
-  `payload.reason`. The client MUST show approval status from task
+  `payload.reason`, after the latest block. A prior approval does not
+  approve a reopened gate (DLG-099), and completion alone never passes
+  a human gate. The client MUST show approval status from task
   events, not from labels or messages. A `task.unblocked` or
   `task.completed` event with a non-null `on_behalf_of_actor_id` is never
   an approval (DLG-096). A `task.unblocked` by an actor that is not
@@ -431,7 +433,7 @@ the task, checks it, and then does two calls in this order:
   An agent can unblock its own gate with its own direct credential, so a
   `gate approved` reason alone proves nothing. A gate task that left
   `blocked` after its last `task.blocked` without an approval (for
-  example through cancel and then reopen) MUST be shown as "not
+  example on an older server through cancel and then reopen) MUST be shown as "not
   approved".
 - **OPR-513** Approve MUST NOT clear `direct_action_required`. The flag
   stays on the task, so a delegated credential still cannot settle it or
@@ -465,7 +467,7 @@ approves them needs `task_admin` on that channel.
 The gate is the task field `direct_action_required` (DLG-090) plus the
 task state. The `gate` root label is a documented **display
 convention**, not a protocol rule. The server does not reserve, validate,
-or enforce it. (`abby.` keys are server-maintained and clients cannot set
+or enforce it. (`yak.` keys are server-maintained and clients cannot set
 them, LBL-002.)
 
 | Root label | Meaning (display) | Set by |
@@ -479,15 +481,15 @@ them, LBL-002.)
   "Request changes" (A12): a reply with the requested changes, then the
   label `gate=changes_requested` with `expect: {value: "pending"}`. The
   task stays `blocked` and the flag stays set.
-- **OPR-531** Agents that wait on a gate SHOULD wait for the task state
-  (`task.unblocked`, then `task.became_ready` or state `ready`), not for
-  the label. (This is guidance for agents; the reference CLI `abby wait`
-  already filters by event type.)
-  <!-- TODO(F1): pending owner confirmation of the F1 fix (review
-  msg_y7eqfu7bba4u3lw6vxuvhyinuq). State `ready` alone does not prove
-  approval (cancel then reopen). Replace this rule with the confirmed
-  wording: wait for a `task.unblocked` by a human actor with
-  `on_behalf_of_actor_id: null`. -->
+- **OPR-531** Agents that wait on a human gate SHOULD wait for a
+  `task.unblocked` after the latest block, by an actor of kind `human`
+  with `on_behalf_of_actor_id: null` (OPR-502), then wait for state
+  `ready` if prerequisites are still pending. State `ready`, completion,
+  labels, and an agent's direct unblock do not prove human approval.
+  Reopening a task with the flag lands in `blocked` for everyone;
+  delegated cancel and reopen return `403 direct_action_required`
+  (DLG-091, DLG-099). This is guidance for agents; `yak wait` filters
+  event types, so the caller also checks the event's actor and attribution.
 - **OPR-532** The client MUST NOT read gate status or approval from the
   `gate` label. Gate status comes from the task state and
   `direct_action_required`; approval comes from task events (OPR-502).
@@ -511,7 +513,7 @@ Events and messages already record `actor_id`, `credential_id`, and
   `human` actor) the client MUST show: the approver's handle and kind,
   the time (`recorded_at`), the reason, and the `credential_id`. Other
   unblocks follow OPR-514.
-- **OPR-603** The client MUST send `Abby-Run-Id: operator/<random>` with
+- **OPR-603** The client MUST send `Yak-Run-Id: operator/<random>` with
   one random value per operator session. The UI MAY show "from operator
   client" for an event whose `run_id` starts with `operator/`, and if it
   does, it MUST mark this as unverified (the run ID is client data and
@@ -572,7 +574,7 @@ Planned tests:
 
 | Test | What it checks |
 |---|---|
-| UX-CRED-GUARD | Paste an agent token or a delegated token → read-only with reason. Paste tokens with `*`, `board_admin`, `server_admin`, `channel_manage`, `board_ids: null`, 30-day expiry, `may_manage_credentials: true`, or `may_delegate: true` → refused with the reason. On a server without `abby.credentials.restrictions` → warning shown. Paste a valid operator token → operator mode. |
+| UX-CRED-GUARD | Paste an agent token or a delegated token → read-only with reason. Paste tokens with `*`, `board_admin`, `server_admin`, `channel_manage`, `board_ids: null`, 30-day expiry, `may_manage_credentials: true`, or `may_delegate: true` → refused with the reason. On a server without `yak.credentials.restrictions` → warning shown. Paste a valid operator token → operator mode. |
 | UX-STORAGE | After paste: no token in `localStorage`, `sessionStorage`, IndexedDB, cookies, `location`, `history.state`, or `document.title`. Reload → read-only login. |
 | UX-IDLE | Fake clock: warning at 14 min; at 15 min the session ends, `DELETE /v1/credentials/{id}` is sent, and the claim is released. |
 | UX-LOGOUT | Logout releases claims, revokes, clears memory; the old token then gets `401`. |
@@ -581,13 +583,13 @@ Planned tests:
 | UX-CONFIRM | Each of A6, A7, A9, A10 shows the confirmation fields of OPR-401; Cancel has focus; Enter in a text field does not confirm. |
 | UX-IDEM | Drop the response of a confirmed unblock (proxy fault injection) → the retry reuses the key and shows success with `Idempotent-Replayed`; a double click sends one intent. |
 | UX-412 | Change the task in another session between read and confirm → `412` → page shows the change and asks again; no automatic retry. |
-| UX-GATE | Approve offered only on `blocked` + `direct_action_required: true` for a manager; unblock first, then label with `expect`; the flag stays set; fault after step 1 → "Approved; label not updated" and retry of step 2 only. Label-only `gate=approved` on a blocked task → shown as not approved. `gate=pending` without the flag → "label only; not a gate", no Approve. Server without the field → no Approve. Delegated `task.unblocked` → "A for P", no approval badge. Direct `task.unblocked` by an agent with reason `gate approved` → "unblocked by <handle> (agent), not a person's approval", no approval badge. Gate task canceled and then reopened (state `ready`, no `task.unblocked`) → "not approved". Request changes → reply, then `gate=changes_requested` with `expect`; task stays `blocked`. |
+| UX-GATE | Approve offered only on `blocked` + `direct_action_required: true` for a manager; unblock first, then label with `expect`; the flag stays set; fault after step 1 → "Approved; label not updated" and retry of step 2 only. Label-only `gate=approved` on a blocked task → shown as not approved. `gate=pending` without the flag → "label only; not a gate", no Approve. Server without the field → no Approve. Delegated `task.unblocked` → "A for P", no approval badge. Direct `task.unblocked` by an agent with reason `gate approved` → "unblocked by <handle> (agent), not a person's approval", no approval badge. Gate task directly canceled and then reopened → `blocked`, flag kept, new block recorded, no approval; an earlier approval does not approve the new block. Legacy history or a task whose flag was cleared that reaches `ready` without a human `task.unblocked` after the latest block → "not approved". `task.completed` alone → no human gate approval. Request changes → reply, then `gate=changes_requested` with `expect`; task stays `blocked`. |
 | UX-TASK | Create task with "Needs my approval" sends `direct_action_required: true`; no dependency field. A13 sends only `direct_action_required` with `If-Match`. Claim action is labeled "Work on this now (while this tab is open)"; assign-to-self is offered. |
 | UX-CLAIM | Claim → renew loop at about one third of the lease; lost claim → loop stops and the UI says so; release sends the proof; the proof is never in storage, DOM, or logs. |
 | UX-PROV | Approval shows handle, kind, time, reason, credential ID; `operator/` run ID shown as unverified. |
 | UX-ALLOWLIST | The page's `api()` refuses a request outside §4. |
 | VWR-HEADERS | Page responses carry the CSP of OPR-201 and the headers of OPR-205. |
-| VWR-PASS | `Authorization`, `Idempotency-Key`, `If-Match`, `Abby-Claim-Proof`, `Abby-Run-Id` reach the upstream unchanged; no cookie is set. |
+| VWR-PASS | `Authorization`, `Idempotency-Key`, `If-Match`, `Yak-Claim-Proof`, `Yak-Run-Id` reach the upstream unchanged; no cookie is set. |
 | VWR-NOLOG | Proxy logs for success and upstream failure contain no `Authorization` or proof value. |
 | VWR-READONLY | Without `-operator`: only `GET` and snapshot `POST`/`DELETE` pass; others get `405`. |
 | VWR-ALLOWLIST | With `-operator`: each route of §4 passes; each route of OPR-212 gets `403 operator_route_not_allowed`. |
