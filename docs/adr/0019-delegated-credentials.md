@@ -150,8 +150,15 @@ Decision: add `direct_action_required: true` on a task (set and cleared
 only with a direct credential). For such a task, a delegated credential
 cannot unblock, claim, renew, release, complete, fail, update the brief,
 change root labels, or remove it from another task's prerequisites
-(`403 direct_action_required`). Block, cancel, reopen, and assign stay
-allowed; none of them can approve. Clients never show a delegated
+(`403 direct_action_required`). A delegated credential also cannot
+create a task with the flag or change the flag (DLG-098). Block, cancel,
+reopen, and assign stay allowed; none of them can approve.
+
+<!-- TODO(F1): pending owner confirmation of the F1 fix (review
+msg_y7eqfu7bba4u3lw6vxuvhyinuq). Cancel then reopen of a gate task by a
+delegated credential reaches `ready` with no `task.unblocked`, so "none
+of them can approve" is not true for that pair. Replace this paragraph
+with the confirmed wording, and update owner decision 7. --> Clients never show a delegated
 `task.unblocked` or `task.completed` as an approval (DLG-096), even on
 tasks that were not marked.
 
@@ -259,9 +266,15 @@ classes and never-delegable operations, for consent screens.
   accepted ADR-0018 marks C1 and C5 closed. Its operator tokens have both
   credential flags `false` (OPR-106). ADR-0018 keeps option A (pasted
   token) for v1; option B stays out of v1.
-- **D4 — IDEM-002, TASK-042/043, TASK-052, AUTH-005, EVT-003/005** are
-  amended by ID (spec §17). P1/P2 behavior for direct credentials does
-  not change.
+- **D4 — Amended rules.** AUTH-001 (DLG-081), AUTH-002, AUTH-005,
+  AUTH-016 (DLG-073), AUTH-018 (DLG-131, DLG-132), the AUTH-020 rows
+  "Edit own message", "Delete own message", and "Edit thread title"
+  (DLG-111, DLG-112), the "own credentials only" authorization of
+  `DELETE /v1/credentials/{id}` in `spec/openapi.yaml` (DLG-083),
+  IDEM-002, EVT-003/005, EVT-009 and SNAP-003 (DLG-075), TASK-041
+  (DLG-110), TASK-042/043, TASK-052, SEL-002 (DLG-091), P2 L2 root
+  authorship (DLG-112), and BATCH-003 (DLG-098) are amended by ID (spec
+  §17). P1/P2 behavior for direct credentials does not change.
 - **D5 — PAR-039 is P4** in the design milestone table. The owner pulled
   it forward; §15 and A3 of the design need an update with the
   implementation.

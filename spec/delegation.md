@@ -381,14 +381,14 @@ D2).
 - **DLG-090** A task MAY have `direct_action_required: true` (a "gate
   task"). It is set at creation (`POST …/tasks`, batch item) or by
   `PATCH …/tasks/{id}` by a manager. Setting or clearing it MUST need a
-  direct credential. The default is `false`. This amends ADR-0016
+  direct credential (DLG-098). The default is `false`. This amends ADR-0016
   (`Task`, `CreateTaskRequest`, `PatchTaskRequest`). The field is in
   every task view and in `task.created` / `task.updated` payloads. An
-  actor that opens a gate MUST set the field (at creation, or by `PATCH`
-  with a direct credential) before it blocks the task and sets the
-  display label `gate=pending` (OPR-533). A label without the field is
-  not a gate. An agent that holds only a delegated credential asks the
-  owner to set it.
+  actor that opens a gate SHOULD set the field (at creation, or by
+  `PATCH` with a direct credential) before it blocks the task and sets
+  the display label `gate=pending` (guidance, OPR-533). A label without
+  the field is not a gate. An agent that holds only a delegated
+  credential asks the owner to set it.
 - **DLG-091** For a gate task, these operations MUST return `403
   forbidden` with code `direct_action_required` when the credential is
   delegated: **unblock**, claim, renew, release, complete, fail,
@@ -403,6 +403,10 @@ D2).
   reopen, and assignment of a gate task are allowed. None of them can
   approve: a blocked or canceled gate never satisfies a dependent
   (DEP-004), and a reopened one is still a gate.
+  <!-- TODO(F1): pending owner confirmation of the F1 fix (review
+  msg_y7eqfu7bba4u3lw6vxuvhyinuq). Cancel then reopen puts a gate task in
+  `ready` with no `task.unblocked`. Replace this rule with the confirmed
+  wording, and add cancel-then-reopen to CT-DLG-12. -->
 - **DLG-094** "Direct" means "not delegated". It does not prove that a
   human pressed a button (see §10.1). A deployment that wants that
   guarantee keeps the person's direct credentials in the person's own
@@ -413,11 +417,17 @@ D2).
   if its `on_behalf_of_actor_id` is not `null`. It shows "A for P" and no
   approval badge. (This rule protects tasks that were not marked as gates.)
 - **DLG-097** A server that lists `abby.delegation` MUST implement
-  DLG-090..093 (Q7). There is no label-only gate mode. A client that
+  DLG-090..093 and DLG-098 (Q7). There is no label-only gate mode. A client that
   creates delegations SHOULD still warn when a delegation includes
   `task.manage` or `task.settle` on channels that hold review tasks,
   because a review task that is not marked as a gate is protected only
   by the display rule DLG-096.
+- **DLG-098** Under a delegated credential, these requests MUST return
+  `403 forbidden` with code `direct_action_required` and commit nothing:
+  `POST …/tasks` with `direct_action_required: true`; `POST …/tasks/batch`
+  with any item that has `direct_action_required: true` (the whole batch
+  fails, BATCH-003, with the item in `errors`); and `PATCH …/tasks/{id}`
+  that sets or clears `direct_action_required` on any task.
 
 Durable automation (P3) is not delegable in this version:
 
@@ -553,7 +563,12 @@ this, or an agent for the person?"
 - **DLG-131** Delegation create and revoke MUST also write one board audit
   record on each board in `board_ids`, so that board administrators can
   see which agents can act for which members. The record MUST NOT list
-  the other boards of the delegation.
+  the other boards of the delegation. Its metadata MUST hold exactly:
+  `delegation_id`, `delegator_actor_id`, `delegate_actor_id`, `channels`
+  (the channel patterns), `scopes`, `operations`, `expires_at`, and, for
+  revoke, `revoked_by_actor_id` and `revocation_reason`. A channel pattern
+  can name a path inside a private channel; a board archive leaves such a
+  record out when the exporter cannot read that channel (ARC-068).
 - **DLG-132** Every board audit record for an action made under
   delegation MUST carry `on_behalf_of_actor_id` and `delegation_id`
   (DLG-100).
@@ -644,12 +659,12 @@ contracts (ADR-0017 uses CT-039..048).
 | CT-DLG-09 | Authorship | Delegate cannot edit person's direct message; can edit its own on-behalf message; person can edit on-behalf message; delegate direct cannot |
 | CT-DLG-10 | Claims under delegation | Claim records A, P, D; P's direct credential with proof → 403; A direct with proof → 403; same pair through a new delegation → 200 |
 | CT-DLG-11 | Assignment | Task assigned to P claimable by A-for-P; task assigned to A not claimable by A-for-P (403 `not_assignee`) |
-| CT-DLG-12 | Gate task | Delegated unblock/claim/complete/fail/brief/root-label on gate → 403 `direct_action_required`; claim-next skips it; removing gate prerequisite → 403; block, cancel allowed |
+| CT-DLG-12 | Gate task | Delegated unblock/claim/complete/fail/brief/root-label on gate → 403 `direct_action_required`; claim-next skips it; removing gate prerequisite → 403; block, cancel allowed; delegated `POST …/tasks` and batch item with `direct_action_required: true` → 403 `direct_action_required`, nothing created; delegated `PATCH` that sets or clears the flag → 403 `direct_action_required` |
 | CT-DLG-13 | Idempotency scope | Same key from A direct and A-for-P → two independent operations; same key across two delegations P→A → one operation |
 | CT-DLG-14 | No header impersonation | `Abby-On-Behalf-Of` header → 400; body field naming a delegator → 400 |
 | CT-DLG-15 | Discovery and /me | Profile, limits, `delegation` object; `/me` shows delegate, delegation, principal |
 | CT-DLG-16 | Resync | Change of A's grants invalidates a cursor bound to a delegated credential → 409 `resync_required` |
-| CT-DLG-17 | Visibility of delegations | Third actor → 404 on read and revoke; board audit on each listed board shows create and revoke without other board IDs |
+| CT-DLG-17 | Visibility of delegations | Third actor → 404 on read and revoke; board audit on each listed board shows create and revoke without other board IDs, with exactly the DLG-131 metadata fields |
 | CT-DLG-18 | Credential restrictions | `may_manage_credentials: false` → issue, list, revoke-other 403 `credential_restricted`, revoke-self 200; `may_delegate: false` → delegation create and mint 403; child cannot widen either flag |
 
 | Requirement | Verification |
@@ -662,7 +677,8 @@ contracts (ADR-0017 uses CT-039..048).
 | DLG-025 | CT TestDelegationInertUntilMinted (no credential → nothing authorized); viewer review of consent screen (manual) |
 | DLG-026, DLG-035 | CT-DLG-05 (TestNeverDelegable) |
 | DLG-030..034 | CT-DLG-01; CT-DLG-07; CT TestDelegatedCredentialIssue |
-| DLG-036..039 | CT-DLG-18 (TestCredentialRestrictions) |
+| DLG-036..038 | CT-DLG-18 (TestCredentialRestrictions) |
+| DLG-039 | UX-CRED-GUARD (ADR-0018 test plan; a client rule) |
 | DLG-040..041 | CT-DLG-14 (TestNoHeaderImpersonation); CT-DLG-15 |
 | DLG-050..052 | CT-DLG-04 (TestOperationClasses); REF TestEveryRouteHasClass (route table exhaustive) |
 | DLG-060..061 | CT-DLG-05 |
@@ -671,7 +687,7 @@ contracts (ADR-0017 uses CT-039..048).
 | DLG-073..074 | CT TestDelegatedBoardVisibility; CT TestDelegatedPermissions |
 | DLG-075 | CT-DLG-16 (TestDelegatedCursorResync) |
 | DLG-080..084 | CT-DLG-06 (TestDelegationRevocation); CT-DLG-07; CT-DLG-17 |
-| DLG-090..094 | CT-DLG-12 (TestGateTaskDirectAction) |
+| DLG-090..094, DLG-098 | CT-DLG-12 (TestGateTaskDirectAction); the gate-opening order in DLG-090 is guidance (SHOULD), not tested |
 | DLG-096..097 | Viewer review (operator mode approval list); VWR test that a delegated `task.unblocked` shows no approval badge |
 | DLG-095 | CT TestNoDelegatedAutomation (P3 servers only) |
 | DLG-100..102 | CT-DLG-08 (TestDelegatedAttribution); schema checks |
@@ -697,6 +713,16 @@ with the implementation, except where the row says it is done.
 | `spec/protocol.md` IDEM-002 | Key scope adds the effective actor (DLG-120). |
 | `spec/protocol.md` EVT-003, EVT-005 | New event fields (DLG-100) and the `on_behalf_of` filter (DLG-103). |
 | `spec/p2-tasks.md` TASK-042, TASK-043, TASK-052 | Same-pair rule (DLG-115); eligibility by effective actor (DLG-113). |
+| `spec/protocol.md` AUTH-001 | A delegated credential also yields `401` when its delegation is revoked or expired, its issuing chain breaks, or either actor is disabled (DLG-081). |
+| `spec/protocol.md` AUTH-016 | Board metadata under delegation is visible only if the board is in the ceiling and both actors hold an allow grant on it (DLG-073). |
+| `spec/protocol.md` AUTH-018 | Delegation create and revoke are board-audited with the DLG-131 metadata; board audit made under delegation carries `on_behalf_of_actor_id` and `delegation_id` (DLG-131, DLG-132). |
+| `spec/protocol.md` AUTH-020 rows "Edit own message", "Delete own message", "Edit thread title" | Authorship under delegation is the pair (A, P); a direct request by P may edit or delete messages written for P (DLG-111, DLG-112). |
+| `spec/protocol.md` EVT-009, SNAP-003 | The policy fingerprint covers both actors' grants, both ceilings, and the delegation state (DLG-075). |
+| `spec/openapi.yaml` `DELETE /v1/credentials/{id}` authorization ("the credential's own actor, or a server administrator") | The delegator may also revoke a delegated credential of their delegation (DLG-083). |
+| `spec/p2-tasks.md` TASK-041 | Manager under delegation: P is owner and both P and A hold `task_manage` (DLG-110). |
+| `spec/p2-tasks.md` SEL-002 | Claim-next under a delegated credential does not select a gate task (DLG-091). |
+| `spec/p2-tasks.md` L2 (convert thread), root authorship | Root author for a delegated caller is the pair (A, P) (DLG-112). |
+| `spec/p2-tasks.md` BATCH-003, ADR-0016 create and patch requests | Delegated create, batch item, or patch with `direct_action_required` → `403 direct_action_required` (DLG-098). |
 | `spec/protocol.md` AUTH-005, `POST /v1/credentials` | `may_manage_credentials`, `may_delegate` (DLG-036..038); closes ADR-0018 C1. |
 | `spec/operator-mode.md` OPR-106, OPR-107, OPR-501..502, OPR-513, OPR-520, OPR-533, OPR-603, OPR-606 | Done in the accepted operator-mode contract: flags `false` on operator tokens, direct credentials only, gate = `blocked` + `direct_action_required`, label display only, approval display rule DLG-096, `run_id` is never proof (DLG-107). |
 | `spec/archive.md` ARC-031..033, ARC-040 | Done in the accepted archive contract: archives keep `direct_action_required` and the attribution fields; delegations and credential flags are never exported. |
