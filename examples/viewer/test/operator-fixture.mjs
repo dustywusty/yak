@@ -88,6 +88,19 @@ export function operatorFixture() {
     return new Response(status === 204 ? null : fault.startsWith('truncated') ? '{"claim":' : '{broken', { status });
   };
 
+  // OP17-006: hold each initial tools board-list read until the test settles it.
+  T.enableOpenRace = () => {
+    T.enableBoardSwitch();
+    const base = window.fetch;
+    T.openReads = [];
+    window.fetch = async (url, opts = {}) => {
+      if ((opts.method || 'GET') === 'GET' && new URL(url, location.href).pathname === '/v1/boards') {
+        await new Promise((resolve, reject) => T.openReads.push({ resolve, reject }));
+      }
+      return base(url, opts);
+    };
+  };
+
   // OP17-005: two disposable boards with distinct destination IDs and delayed discovery.
   T.enableBoardSwitch = () => {
     const base = window.fetch;

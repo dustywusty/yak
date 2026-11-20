@@ -350,7 +350,50 @@ async function boardSwitchCase() {
  assert('required variants executed nonzero assertions',assertions>=40);
  console.log(`OP17-005 executed ${assertions} assertions across four fresh board transitions and six fresh pending-recovery fixtures`);
 }
-const operatorCases = new Map([['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function openRaceCase() {
+ let assertions = 0;
+ const assert = (name, ok) => { assertions++; check(`OP17-006: ${name}`, ok); };
+ for (const replacement of [true, false]) for (const reject of [false, true]) {
+  const variant = `${replacement ? 'replacement B' : 'closed without replacement'}, old A ${reject ? 'rejects' : 'resolves'}`;
+  await freshIdentityFixture();
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-open-race';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");
+   await ev(`window.__op.enableOpenRace();window.dispatchEvent(new CustomEvent('yak-operator-open',{detail:{board:'brd_test',ch:'ops',t:'th'}}));`);
+   await until('window.__op.openReads.length===1');
+   assert(`${variant}: A really waits for boards`, await ev("!document.querySelector('.op-workspace select')"));
+   await ev("window.__op.oldPanel=document.querySelector('.op-workspace')");
+   await click('Close');
+   if (replacement) {
+    await ev(`window.dispatchEvent(new CustomEvent('yak-operator-open',{detail:{board:'brd_other',ch:'other',t:'th_other'}}));`);
+    await until('window.__op.openReads.length===2');
+    await ev('window.__op.openReads[1].resolve()');
+    await until("document.querySelector('.op-workspace select[aria-label=Thread]')?.value==='th_other' && !!document.querySelector('[aria-label=\"Task actions\"]')");
+   }
+   await ev(`window.__op.beforeReads=window.__op.boardReads.length;
+    window.__op.observedPanel=document.querySelector('.op-workspace') || window.__op.oldPanel;
+    window.__op.beforeDOM=window.__op.observedPanel.outerHTML;
+    window.__op.domChanges=0;
+    window.__op.observer=new MutationObserver(records=>window.__op.domChanges+=records.length);
+    window.__op.observer.observe(window.__op.observedPanel,{subtree:true,childList:true,characterData:true});
+    window.__op.openReads[0].${reject ? "reject(new Error('OP17-006 obsolete read failed'))" : 'resolve()'};`);
+   await sleep(150);
+   assert(`${variant}: no A loadBoard discovery`, await ev('window.__op.boardReads.length===window.__op.beforeReads'));
+   assert(`${variant}: no stale DOM or status updates`, await ev("window.__op.observedPanel.outerHTML===window.__op.beforeDOM && window.__op.domChanges===0"));
+   if (replacement) {
+    assert(`${variant}: exactly one board selector`, await ev("document.querySelectorAll('.op-workspace select[aria-label=Board]').length===1"));
+    assert(`${variant}: B board/channel/thread stays selected`, await ev("document.querySelector('.op-workspace select[aria-label=Board]').value==='brd_other' && document.querySelector('.op-workspace select[aria-label=Channel]').value==='other' && document.querySelector('.op-workspace select[aria-label=Thread]').value==='th_other'"));
+   } else assert(`${variant}: workspace remains closed`, await ev("!document.querySelector('.op-workspace')"));
+   assert(`${variant}: no operator writes`, await count()===0);
+  } finally {
+   await ev("window.__op.observer?.disconnect();for(const read of window.__op.openReads || [])read.resolve();document.querySelector('.op-workspace button')?.click()");
+  }
+ }
+ assert('no browser exceptions', errors.length===0);
+ if (!assertions) throw new Error('OP17-006 executed no assertions');
+ console.log(`OP17-006 executed ${assertions} assertions across four fresh initial-open fixtures`);
+}
+const operatorCases = new Map([['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

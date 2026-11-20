@@ -260,17 +260,18 @@ export function createOperatorUI({ session, read, route }) {
     close(); opener = document.activeElement;
     status = h('p', { role: 'status' }); content = h('div', {});
     panel = h('dialog', { class: 'op-workspace', 'aria-label': 'Operator tools' }, h('h2', {}, 'Operator tools'), button('Close', close), status, h('div', { class: 'op-board' }), h('div', { class: 'op-channel' }), button('Refresh permissions and state', () => current?.channel && loadChannel(current.channel, current.thread?.id)), content, receipts);
+    const openedPanel = panel, version = sequence;
     panel.addEventListener('keydown', (e) => e.stopPropagation());
     panel.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
     document.body.append(panel); panel.show();
     try {
       const boards = await all('/v1/boards', 'boards');
-      if (!panel) return;
+      if (panel !== openedPanel || sequence !== version) return;
       const selected = context.board || boards[0]?.id;
       const sel = h('select', { 'aria-label': 'Board', onchange: () => loadBoard(sel.value) }, boards.map((b) => h('option', { value: b.id, selected: b.id === selected }, b.name)));
       panel.querySelector('.op-board').append(field('Board', sel));
       await loadBoard(selected, context.ch, context.t);
-    } catch (e) { say(e.message); }
+    } catch (e) { if (panel === openedPanel && sequence === version) say(e.message); }
   }
   return { open, close, update: () => { for (const b of document.querySelectorAll('[data-op-write]')) b.disabled = session.pending.size > 0 || session.ending; for (const node of document.querySelectorAll('.op-lease')) { const c = session.claims.get(node.dataset.taskPath); node.textContent = c ? `You hold this claim in this tab; ${Math.max(0, Math.ceil((c.deadline - session.mono()) / 1000))} seconds remaining. Renewing while this tab is open.` : 'Your claim ended. Refresh before acting again.'; } }, clear: () => { close(); drafts.clear(); receipts.replaceChildren(); document.querySelectorAll('.op-confirm').forEach((d) => d.remove()); } };
 }
