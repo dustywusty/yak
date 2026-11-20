@@ -591,7 +591,7 @@ func taskCmd() *cobra.Command {
 		return nil
 	})
 	renew.Flags().String("claim", "", "claim ID (default: the task's current claim)")
-	addLease(renew)
+	renew.Flags().Duration("lease", 0, "new lease length, e.g. 120s (default: keep the claim's current lease)")
 	addProofFlag(renew)
 	addIdem(renew)
 

@@ -259,8 +259,11 @@ any change to `completed` except root redaction.
 ### 7.3 Leases
 
 - **CLAIM-020** `lease_seconds` is optional on claim, claim-next, and
-  renew; the default is `limits.claim_lease_default_seconds`. A value
-  outside `[claim_lease_min_seconds, claim_lease_max_seconds]` MUST return
+  renew. On claim and claim-next the default is
+  `limits.claim_lease_default_seconds`. On renew the default is the
+  claim's current `lease_seconds`, so a renewal without a value keeps the
+  lease that the claimant chose. A value outside
+  `[claim_lease_min_seconds, claim_lease_max_seconds]` MUST return
   `400 validation_failed`. The server MUST NOT clamp silently.
 - **CLAIM-021** The server MUST sample authoritative time after it acquires
   the board lock and MUST compute `expires_at = now + lease_seconds`.
@@ -786,7 +789,7 @@ script. New scenario IDs CT-029..CT-038 extend design §14.1.
 | CLAIM-001..003 | CT TestCT007ClaimRace (N parallel claimers, one winner, epochs strictly increase) |
 | CLAIM-004..005 | CT TestClaimFields; CT TestCT026BriefUpdateVsTerminal (expect_brief_revision) |
 | CLAIM-010..015 | CT TestCT008ExpiredProofRejected; CT TestCT038ProofHygiene |
-| CLAIM-020..023 | CT TestLeaseBounds (14 s and 301 s rejected; default 120 s); CT TestCT010RenewCancelCompleteRace |
+| CLAIM-020..023 | CT TestCT008ExpiredProofRejected (min − 1 and max + 1 rejected; default on claim); CT TestRenewKeepsLease (renew without `lease_seconds` keeps the claim's lease); CT TestCT010RenewCancelCompleteRace |
 | CLAIM-030..033 | CT TestCT010RenewCancelCompleteRace; CT TestCompleteEvidenceRecorded |
 | CLAIM-040..042, CLAIM-044..045 | CT TestCT009LostResponses (lost claim response, lost completion response, replay after lapse) |
 | CLAIM-043 | REF TestClaimReplayMaterialEncrypted (ciphertext only; destroyed on end); OPS discovery shows `claim_proof_replay` matches key config |

@@ -352,13 +352,16 @@ func (s *Service) ReplayClaim(ctx context.Context, p *Principal, boardID, claimI
 	return resp, nil
 }
 
-// RenewClaim is L4 (CLAIM-023).
+// RenewClaim is L4 (CLAIM-023). Without lease_seconds the renewal keeps the
+// claim's current lease length (CLAIM-020), so the fingerprint records the
+// request as sent (null = keep the current lease).
 func (s *Service) RenewClaim(ctx context.Context, p *Principal, boardID, taskID, claimID string, proof *ClaimProof, idem *Idem, req RenewRequest) (*Result, error) {
-	lease, err := s.leaseSeconds(req.LeaseSeconds)
-	if err != nil {
-		return nil, err
+	if req.LeaseSeconds != nil {
+		if _, err := s.leaseSeconds(req.LeaseSeconds); err != nil {
+			return nil, err
+		}
 	}
-	idem.Request = proofRequest{Body: map[string]any{"lease_seconds": lease, "claim_id": claimID}, ClaimID: proof.ClaimID}
+	idem.Request = proofRequest{Body: map[string]any{"lease_seconds": req.LeaseSeconds, "claim_id": claimID}, ClaimID: proof.ClaimID}
 	return s.boardMutation(ctx, p, boardID, idem, func(b *btx) (*Result, error) {
 		t, err := b.lockTask(taskID)
 		if err != nil {
@@ -370,6 +373,10 @@ func (s *Service) RenewClaim(ctx context.Context, p *Principal, boardID, taskID,
 		}
 		if c.ID != claimID {
 			return nil, claimLost(t)
+		}
+		lease := c.LeaseSeconds
+		if req.LeaseSeconds != nil {
+			lease = *req.LeaseSeconds
 		}
 		c.ExpiresAt = b.now.Add(time.Duration(lease) * time.Second)
 		c.Revision++
