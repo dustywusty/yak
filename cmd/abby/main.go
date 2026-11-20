@@ -26,6 +26,11 @@ const (
 	exitUnavailable = 6
 	exitTimeout     = 7
 	exitResync      = 8
+	// P2 (spec/cli.md "Tasks"):
+	exitClaimLost        = 9  // claim_lost or task_claimed: ownership is gone or held by another claim
+	exitLeaseUnconfirmed = 10 // abby run: renewal or settlement not confirmed before the local lease deadline
+	exitCommandFailed    = 11 // abby run: the command exited non-zero; the task was failed
+	exitInterrupted      = 12 // abby run: interrupted by SIGINT/SIGTERM; the claim was released if one was held
 )
 
 type exitErr struct {
@@ -43,6 +48,8 @@ func exitCode(err error) int {
 	var p *abby.Problem
 	if errors.As(err, &p) {
 		switch {
+		case p.Code == "claim_lost" || p.Code == "task_claimed":
+			return exitClaimLost
 		case p.Status == 401 || p.Status == 403:
 			return exitAuth
 		case p.Status == 404:
@@ -76,6 +83,7 @@ func main() {
 	addGlobalFlags(root)
 	root.AddCommand(serverCmds()...)
 	root.AddCommand(clientCmds()...)
+	root.AddCommand(taskCmd(), runCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "abby:", err)
 		code := exitCode(err)
