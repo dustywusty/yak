@@ -1051,7 +1051,48 @@ async function op17012IrcContextCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-012 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17014IrcProvenanceCase() {
+ let assertions=0,fixtures=0;
+ const assert=(name,ok,detail='')=>{assertions++;check(`OP17-014: ${name}`,ok,detail)};
+ for (const type of ['snapshot','task.created','task.claimed','task.completed','task.failed']) {
+  await freshIdentityFixture(); fixtures++;
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-provenance';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");
+   await ev('window.__op.mountIrcProvenance()');
+   const before=await ev("document.querySelector('.i-text').textContent");
+   assert(`${type}: snapshot has no invented task history`,!['opened task','claimed task','completed task','mutable outcome substitute'].some(t=>before.includes(t)),before);
+   const messages=await ev("[...document.querySelectorAll('.i-text .i-line')].filter(e=>e.querySelector('.i-nick')).map(e=>e.textContent)");
+   assert(`${type}: visible delegated message retains both kinds`,messages.some(t=>t.includes('visible delegated message')&&t.includes('bot')&&t.includes('(agent) for alice (human)')));
+   assert(`${type}: deleted delegated message retains both kinds`,messages.some(t=>t.includes('message was deleted')&&t.includes('bot')&&t.includes('(agent) for alice (human)')));
+   assert(`${type}: deleted content stays hidden`,!before.includes('hidden deleted content'));
+   if (type!=='snapshot') {
+    await ev(`{const T=window.__op,C=T.ircContext,e=T.ircTaskEvent(${JSON.stringify(type)});C.view.event(e,C.st);C.view.event(e,C.st);C.view.render(C.st);}`);
+    const rows=await ev("[...document.querySelectorAll('.i-text .i-line')].filter(e=>e.textContent.includes('credential')).map(e=>e.textContent)");
+    assert(`${type}: event appears once with actor, principal kinds and credential`,rows.length===1&&rows[0].includes('bot (agent) for alice (human)')&&rows[0].includes('synthetic-event-credential'),JSON.stringify(rows));
+    const time=await ev("new Date('2026-11-20T17:43:00Z').toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'})");
+    assert(`${type}: uses recorded event time`,rows.length===1&&rows[0].startsWith('['+time+']'));
+    const action={'task.created':'opened task','task.claimed':'claimed task','task.completed':'completed task','task.failed':'failed task'}[type];
+    assert(`${type}: corresponding task action displayed`,rows.length===1&&rows[0].includes(action));
+    assert(`${type}: never substitutes mutable owner/outcome or approval`,rows.length===1&&!rows[0].includes('mutable outcome substitute')&&!rows[0].includes('* alice (human) '+action)&&!rows[0].includes('approved'));
+    await ev("document.querySelector('.i-tab[data-channel=status]').click()");
+    const status=await ev("document.querySelector('.i-text').textContent");
+    assert(`${type}: status preserves provenance once`,status.split('synthetic-event-credential').length===2&&status.includes('bot (agent) for alice (human)'));
+    await ev("document.querySelector('.i-tab[data-channel=ops]').click();{const T=window.__op,C=T.ircContext;C.view.event(T.ircTaskEvent('task.blocked',false),C.st);C.view.render(C.st);}");
+    assert(`${type}: ordinary direct task event remains visible`,await ev("[...document.querySelectorAll('.i-act')].some(e=>e.textContent.includes('alice (human) blocked task: recorded reason')&&!e.textContent.includes(' for '))"));
+   }
+   assert(`${type}: read-only projection sends no writes`,await count()===0);
+  } finally {
+   await ev('window.__op.disposeIrcContext()');
+   await ev("document.querySelector('#forget').click()");
+   await until("!document.querySelector('#login').hidden");
+  }
+ }
+ assert('all variants executed meaningful assertions',fixtures===5&&assertions>=49);
+ assert('no browser exceptions',errors.length===0,JSON.stringify(errors));
+ console.log(`OP17-014 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
+}
+const operatorCases = new Map([['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

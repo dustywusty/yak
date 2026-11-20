@@ -5,8 +5,11 @@ import { h, gateHint, lease, jumpPalette } from './skin-kit.js';
 
 const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
-// Task events that the current task view cannot show later; logged as they arrive.
+// Task history comes only from events received during this view; no snapshot backfill.
 const LOGGED = {
+  'task.created': () => 'opened task', 'task.claimed': () => 'claimed task',
+  'task.completed': (p) => `completed task${p.summary ? `: ${p.summary}` : ''}`,
+  'task.failed': (p) => `failed task${p.reason ? `: ${p.reason}` : ''}`,
   'task.blocked': (p) => `blocked task: ${p.reason ?? ''}`, 'task.unblocked': (p) => `unblocked task: ${p.reason ?? ''}`,
   'task.released': (p) => `released task (${p.reason ?? 'no reason'})`, 'task.claim_expired': () => 'let the claim on task expire',
   'task.reopened': (p) => `reopened task: ${p.reason ?? ''}`, 'task.became_ready': () => 'task is ready (dependencies satisfied)',
@@ -41,16 +44,9 @@ export function irc(root, { threadHref }) {
     for (const t of threads) {
       for (const m of st.messages(t.id)) {
         out.push({ ts: m.created_at, thread: t.id, el: m.deleted
-          ? [h('span', { class: 'i-act' }, `* ${st.handle(m.author_actor_id)}'s message was deleted`)]
+          ? [nick(st, m.author_actor_id, m.on_behalf_of_actor_id), h('span', { class: 'i-act' }, ' message was deleted')]
           : [nick(st, m.author_actor_id, m.on_behalf_of_actor_id), ' ', body(st, m)] });
       }
-    }
-    for (const task of st.tasks().filter((t) => t.channel_path === tab)) {
-      const act = (ts, who, text) => out.push({ ts, thread: task.thread_id, el: [h('span', { class: 'i-act' }, `* ${st.handle(who)} ${text}`)] });
-      act(task.created_at, task.created_by_actor_id, `opened task ${st.num(task.id)}`);
-      const c = task.current_claim;
-      if (c) act(c.acquired_at, c.actor_id, `claimed task ${st.num(task.id)} (lease ${Math.round(c.lease_seconds / 60)}m)`);
-      if (task.outcome) act(task.outcome.at, task.outcome.by_actor_id, `${task.outcome.kind} task ${st.num(task.id)}${task.outcome.summary ? `: ${task.outcome.summary}` : task.outcome.reason ? `: ${task.outcome.reason}` : ''}`);
     }
     for (const x of log) if (x.channel === tab) out.push(x);
     out.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -166,9 +162,16 @@ export function irc(root, { threadHref }) {
     const p = ev.payload || {};
     const channel = p.message?.channel_path || p.thread?.channel_path || p.task?.channel_path;
     if (!channel) return;
-    if (LOGGED[ev.type]) log.push({ ts: ev.recorded_at, thread: ev.thread_id, channel, text: `* ${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})${ev.on_behalf_of_actor_id ? ` for ${st.handle(ev.on_behalf_of_actor_id)}` : ''} ${LOGGED[ev.type](p)} ${st.num(p.task.id)} · credential ${ev.credential_id || 'unknown'}${ev.type === 'task.unblocked' && (ev.on_behalf_of_actor_id || ev.delegation_id || st.actor(ev.actor_id)?.kind !== 'human') ? ", not a person's approval" : ''}`,
-      el: [h('span', { class: 'i-act' }, `* ${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})${ev.on_behalf_of_actor_id ? ` for ${st.handle(ev.on_behalf_of_actor_id)}` : ''} ${LOGGED[ev.type](p)} ${st.num(p.task.id)} · credential ${ev.credential_id || 'unknown'}${ev.type === 'task.unblocked' && (ev.on_behalf_of_actor_id || ev.delegation_id || st.actor(ev.actor_id)?.kind !== 'human') ? ", not a person's approval" : ''}`)] });
-    if (log.length > 300) log.shift();
+    if (LOGGED[ev.type]) {
+      if (ev.id && log.some((x) => x.id === ev.id)) return;
+      const actor = `${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})`;
+      const principal = ev.on_behalf_of_actor_id;
+      const provenance = `${actor}${principal ? ` for ${st.handle(principal)} (${st.actor(principal)?.kind || 'unknown'})` : ''}`;
+      const text = `* ${provenance} ${LOGGED[ev.type](p)} ${st.num(p.task.id)} · credential ${ev.credential_id || 'unknown'}${ev.type === 'task.unblocked' && (principal || ev.delegation_id || st.actor(ev.actor_id)?.kind !== 'human') ? ", not a person's approval" : ''}`;
+      log.push({ id: ev.id, ts: ev.recorded_at, thread: ev.thread_id || p.task.thread_id, channel, text,
+        el: [h('span', { class: 'i-act' }, text)] });
+      if (log.length > 300) log.shift();
+    }
     if ((ev.type === 'message.created' || ev.type === 'thread.created' || LOGGED[ev.type]) && channel !== tab) unread.set(channel, (unread.get(channel) || 0) + 1);
   }
 

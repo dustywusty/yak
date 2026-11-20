@@ -132,6 +132,22 @@ export function operatorFixture() {
     window.addEventListener('yak-operator-open',T.captureIrcOpen);
     view.render(st);
   };
+  // OP17-014: event attribution deliberately differs from mutable task state.
+  T.mountIrcProvenance = async () => {
+    await T.mountIrcContext();
+    const C=T.ircContext;
+    C.S.threads.delete('stale');
+    Object.assign(task,{created_by_actor_id:'a',created_at:'2001-01-01T01:01:00Z',
+      current_claim:{actor_id:'a',acquired_at:'2001-01-01T02:02:00Z',lease_seconds:300,expires_at:'2099-01-01T00:00:00Z'},
+      outcome:{by_actor_id:'a',kind:'completed',at:'2001-01-01T03:03:00Z',summary:'mutable outcome substitute'}});
+    C.st.messages=()=>[{...root,author_actor_id:'bot',on_behalf_of_actor_id:'a',text:'visible delegated message'},
+      {...root,id:'deleted',author_actor_id:'bot',on_behalf_of_actor_id:'a',deleted:true,text:'hidden deleted content'}];
+    T.ircTaskEvent=(type,delegated=true)=>({id:`OP17-014-${type}-${delegated}`,type,thread_id:'th',
+      actor_id:delegated?'bot':'a',on_behalf_of_actor_id:delegated?'a':null,
+      recorded_at:'2026-11-20T17:43:00Z',credential_id:'synthetic-event-credential',
+      payload:{task:{...task},reason:'recorded reason',summary:'recorded summary',claim:{lease_seconds:120}}});
+    C.view.render(C.st);
+  };
   T.disposeIrcContext = () => {
     T.ircContext?.view.dispose();
     window.removeEventListener('yak-operator-open',T.captureIrcOpen);
