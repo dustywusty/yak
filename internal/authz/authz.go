@@ -1,4 +1,4 @@
-// Package authz evaluates Abby channel policy: default deny, deny overrides
+// Package authz evaluates Yak channel policy: default deny, deny overrides
 // allow, private channels as allow-inheritance boundaries, and credential
 // scope ceilings. It is pure so it can be tested exhaustively (ADR-002).
 package authz

@@ -1,4 +1,4 @@
-// Abby viewer: a view-only client of the Abby HTTP API, built only from
+// Yak viewer: a view-only client of the Yak HTTP API, built only from
 // spec/openapi.yaml, spec/schemas, spec/protocol.md and spec/p2-tasks.md.
 // All user content is inserted as text nodes, never as HTML.
 //
@@ -11,7 +11,7 @@ import { createSkins } from './skins.js';
 import { createTerm } from './term.js';
 import { h } from './skin-kit.js';
 
-const TOKEN_KEY = 'abby-viewer-token';
+const TOKEN_KEY = 'yak-viewer-token';
 const UNAUTHORIZED = 'The server rejected the token (401). Paste a valid token.';
 const $ = (id) => document.getElementById(id);
 const S = { token: null, me: null, abort: new AbortController() };

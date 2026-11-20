@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/dustywusty/abby/internal/domain"
+	"github.com/dustywusty/yak/internal/domain"
 )
 
 // keysetArgs parses the PAGE-001 query parameters of a keyset-paginated

@@ -1,8 +1,8 @@
-package abby
+package yak
 
 // P2 task helpers (spec/p2-tasks.md, ADR-0016). Every helper uses only the
 // public HTTP API through Client.Do. Claimant operations send the claim
-// proof in the Abby-Claim-Proof header and never in a body or query
+// proof in the Yak-Claim-Proof header and never in a body or query
 // (CLAIM-012).
 
 import (
@@ -23,7 +23,7 @@ import (
 )
 
 // HeaderClaimProof is the request header that carries a claim proof.
-const HeaderClaimProof = "Abby-Claim-Proof"
+const HeaderClaimProof = "Yak-Claim-Proof"
 
 // Task states of protocol v1 (TASK-020). The set is closed.
 const (

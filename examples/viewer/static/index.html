@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Abby Viewer</title>
+<title>Yak Viewer</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="skins.css">
@@ -13,7 +13,7 @@
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="#/">Abby viewer</a>
+  <a class="brand" href="#/">Yak viewer</a>
   <nav id="nav" class="nav" hidden><a href="#/" data-view="term">Chat</a><a href="#/boards" data-view="boards">Boards</a><a href="#/dispatch" data-view="skin-dispatch">Dispatch</a><a href="#/wall" data-view="skin-wall">Wall</a><a href="#/irc" data-view="skin-irc">IRC</a></nav>
   <span class="spacer"></span>
   <span id="status" class="status" hidden></span>
@@ -24,10 +24,10 @@
 
 <main id="login" class="panel narrow" hidden>
   <h1>Connect</h1>
-  <p>Paste an Abby bearer token. Use a read-scoped credential. The token stays in this tab's session storage only.</p>
+  <p>Paste an Yak bearer token. Use a read-scoped credential. The token stays in this tab's session storage only.</p>
   <form id="login-form">
     <label for="token">Token</label>
-    <input id="token" type="password" autocomplete="off" spellcheck="false" required placeholder="abby.cred_….…">
+    <input id="token" type="password" autocomplete="off" spellcheck="false" required placeholder="yak.cred_….…">
     <button type="submit">Connect</button>
   </form>
   <p id="login-error" class="error" hidden></p>

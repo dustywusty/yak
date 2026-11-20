@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/dustywusty/abby/sdk/go/abby"
+	"github.com/dustywusty/yak/sdk/go/yak"
 )
 
 // Time scale for runner tests: one lease "second" is 10 ms, so a 30 s
@@ -95,8 +95,8 @@ func problem(w http.ResponseWriter, status int, code string) {
 func (f *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	rc := rec{Method: r.Method, Path: r.URL.Path, Key: r.Header.Get("Idempotency-Key"), Proof: r.Header.Get(abby.HeaderClaimProof),
-		RunID: r.Header.Get("Abby-Run-Id"), Body: body, At: time.Now()}
+	rc := rec{Method: r.Method, Path: r.URL.Path, Key: r.Header.Get("Idempotency-Key"), Proof: r.Header.Get(yak.HeaderClaimProof),
+		RunID: r.Header.Get("Yak-Run-Id"), Body: body, At: time.Now()}
 	f.mu.Lock()
 	f.reqs = append(f.reqs, rc)
 	f.mu.Unlock()
@@ -247,7 +247,7 @@ func testRunner(t *testing.T, f *fakeServer, command []string, mod func(*runOpti
 	if mod != nil {
 		mod(&opt)
 	}
-	return newRunner(abby.New(f.srv.URL, "tok"), opt)
+	return newRunner(yak.New(f.srv.URL, "tok"), opt)
 }
 
 func sh(script string) []string { return []string{"/bin/sh", "-c", script} }
@@ -279,12 +279,12 @@ func readPid(t *testing.T, path string) int {
 }
 
 func TestRunSuccessCompletes(t *testing.T) {
-	t.Setenv("ABBY_CLAIM_PROOF", "must-not-leak")
+	t.Setenv("YAK_CLAIM_PROOF", "must-not-leak")
 	f := newFakeServer(t, 30)
 	script := `printf '{"summary":"all good","evidence":[{"kind":"commit","ref":"abc123"}],"data":{"task":"%s","claim":"%s","exec":"%s","epoch":"%s","run":"%s","proof":"%s","brief":"%s"}}' ` +
-		`"$ABBY_TASK_ID" "$ABBY_CLAIM_ID" "$ABBY_EXECUTION_ID" "$ABBY_CLAIM_EPOCH" "$ABBY_RUN_ID" "${ABBY_CLAIM_PROOF:-}" "$(cat "$ABBY_BRIEF_FILE")" > "$ABBY_RESULT_FILE"`
+		`"$YAK_TASK_ID" "$YAK_CLAIM_ID" "$YAK_EXECUTION_ID" "$YAK_CLAIM_EPOCH" "$YAK_RUN_ID" "${YAK_CLAIM_PROOF:-}" "$(cat "$YAK_BRIEF_FILE")" > "$YAK_RESULT_FILE"`
 	r := testRunner(t, f, sh(script), func(o *runOptions) {
-		o.Evidence = []abby.Evidence{{Kind: "url", Ref: "https://example.test/pr/1"}}
+		o.Evidence = []yak.Evidence{{Kind: "url", Ref: "https://example.test/pr/1"}}
 	})
 	rep, err := r.run(context.Background())
 	if err != nil {
@@ -327,7 +327,7 @@ func TestRunSuccessCompletes(t *testing.T) {
 			t.Error("claim request carried a proof header")
 		}
 		if q.RunID != r.runID {
-			t.Errorf("claim Abby-Run-Id = %q, want %q", q.RunID, r.runID)
+			t.Errorf("claim Yak-Run-Id = %q, want %q", q.RunID, r.runID)
 		}
 	}
 }
@@ -597,7 +597,7 @@ func TestRunClaimLostOnSettlement(t *testing.T) {
 // them on the first attempt.
 func TestRunMapsUnknownEvidenceKinds(t *testing.T) {
 	f := newFakeServer(t, 30)
-	script := `cat > "$ABBY_RESULT_FILE" <<'EOF'
+	script := `cat > "$YAK_RESULT_FILE" <<'EOF'
 {"summary":"fixed","evidence":[
  {"kind":"commit","ref":"0123456789abcdef0123456789abcdef01234567"},
  {"kind":"branch","ref":"fix/runner-evidence"},
@@ -646,9 +646,9 @@ func TestRunResultRejectedReleasesWithoutSettling(t *testing.T) {
 				}
 				return 200
 			}
-			script := `printf '{"summary":"s","evidence":[{"kind":"commit","ref":"abc123"},{"kind":"branch","ref":"fix/x"}]}' > "$ABBY_RESULT_FILE"; ` + tc.script
+			script := `printf '{"summary":"s","evidence":[{"kind":"commit","ref":"abc123"},{"kind":"branch","ref":"fix/x"}]}' > "$YAK_RESULT_FILE"; ` + tc.script
 			r := testRunner(t, f, sh(script), func(o *runOptions) {
-				o.Evidence = []abby.Evidence{{Kind: "url", Ref: "https://example.test/pr/1"}}
+				o.Evidence = []yak.Evidence{{Kind: "url", Ref: "https://example.test/pr/1"}}
 			})
 			rep, err := r.run(context.Background())
 			if code(err) != exitResultRejected {
@@ -726,7 +726,7 @@ func TestRunUnusableResultFileReleasesWithoutSettling(t *testing.T) {
 			if err := os.WriteFile(fixture, []byte(tc.file), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			r := testRunner(t, f, sh(`cp `+fixture+` "$ABBY_RESULT_FILE"; exit `+tc.exit), nil)
+			r := testRunner(t, f, sh(`cp `+fixture+` "$YAK_RESULT_FILE"; exit `+tc.exit), nil)
 			rep, err := r.run(context.Background())
 			if code(err) != exitResultRejected {
 				t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
@@ -824,7 +824,7 @@ func TestRunRejectedReleaseFailureStillExits13(t *testing.T) {
 		}
 		return 200
 	}
-	script := `printf '{"evidence":[{"kind":"commit","ref":"abc123"}]}' > "$ABBY_RESULT_FILE"`
+	script := `printf '{"evidence":[{"kind":"commit","ref":"abc123"}]}' > "$YAK_RESULT_FILE"`
 	r := testRunner(t, f, sh(script), nil)
 	rep, err := r.run(context.Background())
 	if code(err) != exitResultRejected {
@@ -879,7 +879,7 @@ func TestRunClaimNextWaitConfirmsBeforeStart(t *testing.T) {
 	r := testRunner(t, f, sh(`date > `+marker), func(o *runOptions) {
 		o.TaskID = ""
 		o.Wait = 2 * time.Second
-		o.Next = abby.ClaimNextRequest{Subtree: "server", Assignee: "eligible"}
+		o.Next = yak.ClaimNextRequest{Subtree: "server", Assignee: "eligible"}
 	})
 	if _, err := r.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -918,7 +918,7 @@ func TestRunProofUnavailable(t *testing.T) {
 		writeJSON(w, 201, v)
 	}))
 	defer srv.Close()
-	r := newRunner(abby.New(srv.URL, "tok"), runOptions{Board: "b", TaskID: "task_1", Command: sh("exit 0"), unit: testUnit, Log: tlog{t}})
+	r := newRunner(yak.New(srv.URL, "tok"), runOptions{Board: "b", TaskID: "task_1", Command: sh("exit 0"), unit: testUnit, Log: tlog{t}})
 	_, err := r.run(context.Background())
 	if code(err) != exitClaimLost {
 		t.Fatalf("exit = %d (%v)", code(err), err)
@@ -927,13 +927,13 @@ func TestRunProofUnavailable(t *testing.T) {
 
 func TestExitCodeMapping(t *testing.T) {
 	for _, tc := range []struct {
-		p    *abby.Problem
+		p    *yak.Problem
 		want int
 	}{
-		{&abby.Problem{Status: 409, Code: "claim_lost"}, exitClaimLost},
-		{&abby.Problem{Status: 409, Code: "task_claimed"}, exitClaimLost},
-		{&abby.Problem{Status: 409, Code: "invalid_transition"}, exitConflict},
-		{&abby.Problem{Status: 428, Code: "precondition_required"}, exitConflict},
+		{&yak.Problem{Status: 409, Code: "claim_lost"}, exitClaimLost},
+		{&yak.Problem{Status: 409, Code: "task_claimed"}, exitClaimLost},
+		{&yak.Problem{Status: 409, Code: "invalid_transition"}, exitConflict},
+		{&yak.Problem{Status: 428, Code: "precondition_required"}, exitConflict},
 	} {
 		if got := exitCode(tc.p); got != tc.want {
 			t.Errorf("%s: %d, want %d", tc.p.Code, got, tc.want)
@@ -949,7 +949,7 @@ func TestParseEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev[0] != (abby.Evidence{Kind: "commit", Ref: "abc", Note: "the fix"}) || ev[1].Ref != "https://x.test/a:b" || ev[2].Ref != "note" {
+	if ev[0] != (yak.Evidence{Kind: "commit", Ref: "abc", Note: "the fix"}) || ev[1].Ref != "https://x.test/a:b" || ev[2].Ref != "note" {
 		t.Fatalf("got %+v", ev)
 	}
 	for _, bad := range []string{"bogus:x", "branch:fix/x", "check:go test", "commit::note", "commit: "} {

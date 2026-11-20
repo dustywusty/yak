@@ -609,7 +609,7 @@
             "string",
             "null"
           ],
-          "description": "P2 (abby.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
+          "description": "P2 (yak.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
         }
       }
     },
@@ -652,7 +652,7 @@
             "string",
             "null"
           ],
-          "description": "P2 (abby.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
+          "description": "P2 (yak.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
         }
       }
     },
@@ -678,7 +678,7 @@
             "string",
             "null"
           ],
-          "description": "P2 (abby.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
+          "description": "P2 (yak.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
         },
         "labels_before": {
           "$ref": "Labels.schema.json"
@@ -689,7 +689,7 @@
       }
     },
     "ThreadViewInvalidatedPayload": {
-      "description": "Root labels changed: consumers refresh or drop the thread's cached messages. P2: reason task_state_changed when the effective task state (abby.task.state) changed (TASK-085).",
+      "description": "Root labels changed: consumers refresh or drop the thread's cached messages. P2: reason task_state_changed when the effective task state (yak.task.state) changed (TASK-085).",
       "type": "object",
       "required": [
         "thread",

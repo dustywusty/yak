@@ -57,3 +57,14 @@ func TestFilterHashNormalized(t *testing.T) {
 		t.Fatal("hash must be order independent")
 	}
 }
+
+func TestRenameReservedLabelNamespaces(t *testing.T) {
+	for _, key := range []string{"yak.task.state", "abby.task.state"} {
+		if err := ValidateLabelKey(key, false); err == nil {
+			t.Errorf("client accepted reserved key %q", key)
+		}
+		if err := ValidateLabelKey(key, true); err != nil {
+			t.Errorf("history filter rejected %q: %v", key, err)
+		}
+	}
+}

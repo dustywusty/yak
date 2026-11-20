@@ -11,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dustywusty/abby/sdk/go/abby"
+	"github.com/dustywusty/yak/sdk/go/yak"
 )
 
 // Profile is one saved endpoint + credential. Tokens are stored in the
-// config file with 0600 permissions; ABBY_TOKEN overrides it.
+// config file with 0600 permissions; YAK_TOKEN overrides it.
 type Profile struct {
 	URL   string `json:"url"`
 	Token string `json:"token,omitempty"`
@@ -38,16 +38,16 @@ var gf struct {
 
 func addGlobalFlags(root *cobra.Command) {
 	pf := root.PersistentFlags()
-	pf.StringVar(&gf.profile, "profile", "", "config profile (env ABBY_PROFILE)")
-	pf.StringVar(&gf.url, "url", "", "server base URL (env ABBY_URL)")
-	pf.StringVar(&gf.board, "board", "", "board ID (env ABBY_BOARD)")
-	pf.StringVar(&gf.tokenFile, "token-file", "", "read the bearer token from this file (env ABBY_TOKEN_FILE; ABBY_TOKEN holds a token)")
+	pf.StringVar(&gf.profile, "profile", "", "config profile (env YAK_PROFILE)")
+	pf.StringVar(&gf.url, "url", "", "server base URL (env YAK_URL)")
+	pf.StringVar(&gf.board, "board", "", "board ID (env YAK_BOARD)")
+	pf.StringVar(&gf.tokenFile, "token-file", "", "read the bearer token from this file (env YAK_TOKEN_FILE; YAK_TOKEN holds a token)")
 	pf.BoolVar(&gf.json, "json", false, "print JSON (NDJSON for streams)")
-	pf.StringVar(&gf.runID, "run-id", "", "attach Abby-Run-Id to requests (env ABBY_RUN_ID); attribution only")
+	pf.StringVar(&gf.runID, "run-id", "", "attach Yak-Run-Id to requests (env YAK_RUN_ID); attribution only")
 }
 
 func configPath() string {
-	if p := os.Getenv("ABBY_CONFIG"); p != "" {
+	if p := yakEnv("YAK_CONFIG"); p != "" {
 		return p
 	}
 	dir, err := os.UserConfigDir()
@@ -59,12 +59,18 @@ func configPath() string {
 	} else if home, err := os.UserHomeDir(); err == nil {
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "abby", "config.json")
+	return filepath.Join(dir, "yak", "config.json")
 }
 
 func loadConfig() (*Config, error) {
 	c := &Config{Profiles: map[string]Profile{}}
-	b, err := os.ReadFile(configPath())
+	path := configPath()
+	b, err := os.ReadFile(path)
+	// Keep existing logins readable; future saves use the new directory.
+	if errors.Is(err, os.ErrNotExist) && yakEnv("YAK_CONFIG") == "" {
+		oldPath := filepath.Join(filepath.Dir(filepath.Dir(path)), "abby", "config.json")
+		b, err = os.ReadFile(oldPath)
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return c, nil
 	}
@@ -93,7 +99,7 @@ func profileName(c *Config) string {
 	if gf.profile != "" {
 		return gf.profile
 	}
-	if p := os.Getenv("ABBY_PROFILE"); p != "" {
+	if p := yakEnv("YAK_PROFILE"); p != "" {
 		return p
 	}
 	if c.Current != "" {
@@ -109,16 +115,21 @@ func resolved() (Profile, error) {
 		return Profile{}, err
 	}
 	p := c.Profiles[profileName(c)]
-	if v := os.Getenv("ABBY_URL"); v != "" {
+	if v := yakEnv("YAK_URL"); v != "" {
 		p.URL = v
 	}
 	if gf.url != "" {
 		p.URL = gf.url
 	}
-	if v := os.Getenv("ABBY_TOKEN"); v != "" {
+	if v := yakEnv("YAK_TOKEN"); v != "" {
 		p.Token = v
 	}
-	tf := os.Getenv("ABBY_TOKEN_FILE")
+	// Select the credential environment as a family: a new token must not
+	// be overridden by a stale legacy token-file setting.
+	tf := yakEnv("YAK_TOKEN_FILE")
+	if os.Getenv("YAK_TOKEN") != "" && os.Getenv("YAK_TOKEN_FILE") == "" {
+		tf = ""
+	}
 	if gf.tokenFile != "" {
 		tf = gf.tokenFile
 	}
@@ -129,7 +140,7 @@ func resolved() (Profile, error) {
 		}
 		p.Token = strings.TrimSpace(string(b))
 	}
-	if v := os.Getenv("ABBY_BOARD"); v != "" {
+	if v := yakEnv("YAK_BOARD"); v != "" {
 		p.Board = v
 	}
 	if gf.board != "" {
@@ -141,23 +152,23 @@ func resolved() (Profile, error) {
 	return p, nil
 }
 
-func client() (*abby.Client, Profile, error) {
+func client() (*yak.Client, Profile, error) {
 	p, err := resolved()
 	if err != nil {
 		return nil, p, err
 	}
-	c := abby.New(p.URL, p.Token)
-	c.UserAgent = "abby-cli/" + version
+	c := yak.New(p.URL, p.Token)
+	c.UserAgent = "yak-cli/" + version
 	c.RunID = gf.runID
 	if c.RunID == "" {
-		c.RunID = os.Getenv("ABBY_RUN_ID")
+		c.RunID = yakEnv("YAK_RUN_ID")
 	}
 	return c, p, nil
 }
 
 func boardID(p Profile) (string, error) {
 	if p.Board == "" {
-		return "", usage("no board selected; pass --board, set ABBY_BOARD, or run `abby board use <id>`")
+		return "", usage("no board selected; pass --board, set YAK_BOARD, or run `yak board use <id>`")
 	}
 	return p.Board, nil
 }

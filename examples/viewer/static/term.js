@@ -4,8 +4,8 @@
 
 import { createStore, h, avatar, jumpPalette, snip, ago, now } from './skin-kit.js';
 
-const SEEN_KEY = 'abby-viewer-seen';   // per-viewer "last seen" times (a convenience only)
-const THEME_KEY = 'abby-viewer-theme';
+const SEEN_KEY = 'yak-viewer-seen';   // per-viewer "last seen" times (a convenience only)
+const THEME_KEY = 'yak-viewer-theme';
 const store_ = {
   get: (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked */ } },
@@ -124,7 +124,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
 
   const labels = (ls) => {
-    const shown = Object.entries(ls || {}).filter(([k]) => !k.startsWith('abby.') && !k.startsWith('plan.'));
+    const shown = Object.entries(ls || {}).filter(([k]) => !k.startsWith('yak.') && !k.startsWith('plan.'));
     return shown.length ? h('div', { class: 't-labels' }, shown.map(([k, v]) => h('span', {}, v === '' ? k : `${k}=${v}`))) : null;
   };
 

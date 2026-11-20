@@ -22,7 +22,7 @@
       ],
       "properties": {
         "name": {
-          "const": "abby"
+          "const": "yak"
         },
         "versions": {
           "type": "array",
@@ -40,7 +40,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Conformance profiles, e.g. abby.p1.core, abby.p2.tasks."
+          "description": "Conformance profiles, e.g. yak.p1.core, yak.p2.tasks."
         }
       }
     },
@@ -70,7 +70,7 @@
         "pattern": "^[a-z0-9_.]+$"
       },
       "uniqueItems": true,
-      "description": "Advertised capability identifiers. P2: abby.tasks.claim_proof_replay is listed exactly when a replayed claim response can return the proof (TASK-003, CLAIM-041, CLAIM-043); its absence means claim_proof_replay is false."
+      "description": "Advertised capability identifiers. P2: yak.tasks.claim_proof_replay is listed exactly when a replayed claim response can return the proof (TASK-003, CLAIM-041, CLAIM-043); its absence means claim_proof_replay is false."
     },
     "limits": {
       "type": "object",
@@ -227,7 +227,7 @@
         "properties": {
           "profiles": {
             "contains": {
-              "const": "abby.p2.tasks"
+              "const": "yak.p2.tasks"
             }
           }
         }

@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:cursor_expired",
+  "type": "urn:yak:problem:cursor_expired",
   "title": "Gone",
   "status": 410,
   "code": "cursor_expired",

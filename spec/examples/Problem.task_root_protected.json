@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:task_root_protected",
+  "type": "urn:yak:problem:task_root_protected",
   "title": "Conflict",
   "status": 409,
   "code": "task_root_protected",

@@ -14,7 +14,7 @@
     },
     "labels": {
       "type": "object",
-      "description": "Root-label filter: key to accepted values ([] = key present). Values for one key are ORed; keys are ANDed. Keys are case-insensitive; abby.task.state may be used.",
+      "description": "Root-label filter: key to accepted values ([] = key present). Values for one key are ORed; keys are ANDed. Keys are case-insensitive; yak.task.state may be used.",
       "propertyNames": {
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
       },

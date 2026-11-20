@@ -9,8 +9,8 @@ Status: Accepted (2026-11-19)
 - Protocol major is selected by URL (`/v1`). While `protocol.status` is
   `draft`, v1 may change; a stable v1 is announced by discovery, not by the
   design document's version.
-- Profiles group capabilities. P1 is `abby.p1.core`. Capabilities are named
-  `abby.<area>[.<feature>]` and listed in discovery.
+- Profiles group capabilities. P1 is `yak.p1.core`. Capabilities are named
+  `yak.<area>[.<feature>]` and listed in discovery.
 - Tooling check: schemas are compiled and examples validated by
   `github.com/santhosh-tekuri/jsonschema/v6` (2020-12 support) in
   `conformance/schema_test.go`, which also validates live server responses.

@@ -14,10 +14,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dustywusty/abby/internal/domain"
-	"github.com/dustywusty/abby/internal/httpapi"
-	"github.com/dustywusty/abby/internal/postgres"
-	"github.com/dustywusty/abby/internal/workers"
+	"github.com/dustywusty/yak/internal/domain"
+	"github.com/dustywusty/yak/internal/httpapi"
+	"github.com/dustywusty/yak/internal/postgres"
+	"github.com/dustywusty/yak/internal/workers"
 )
 
 // Server-side commands. These talk to Postgres directly and are operator
@@ -26,9 +26,9 @@ import (
 var version = "0.1.0-dev"
 
 func databaseURL() (string, error) {
-	u := os.Getenv("ABBY_DATABASE_URL")
+	u := yakEnv("YAK_DATABASE_URL")
 	if u == "" {
-		return "", errors.New("ABBY_DATABASE_URL is required")
+		return "", errors.New("YAK_DATABASE_URL is required")
 	}
 	return u, nil
 }
@@ -36,7 +36,7 @@ func databaseURL() (string, error) {
 func serverCmds() []*cobra.Command {
 	serve := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the Abby reference server (API and/or worker roles)",
+		Short: "Run the Yak reference server (API and/or worker roles)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			listen, _ := cmd.Flags().GetString("listen")
 			role, _ := cmd.Flags().GetString("role")
@@ -60,21 +60,21 @@ func serverCmds() []*cobra.Command {
 			}
 			cfg := domain.DefaultConfig()
 			cfg.Version = version
-			if v := os.Getenv("ABBY_CLAIM_LEASE_MIN_SECONDS"); v != "" {
+			if v := yakEnv("YAK_CLAIM_LEASE_MIN_SECONDS"); v != "" {
 				n, err := strconv.Atoi(v)
 				if err != nil || n < 1 {
-					return fmt.Errorf("ABBY_CLAIM_LEASE_MIN_SECONDS must be a positive integer")
+					return fmt.Errorf("YAK_CLAIM_LEASE_MIN_SECONDS must be a positive integer")
 				}
 				cfg.ClaimLeaseMin = time.Duration(n) * time.Second
 			}
 			svc := domain.New(pool, cfg)
 			// Claim-proof replay keys (ADR-0004 §3): never stored in the
-			// database. ABBY_CLAIM_REPLAY_KEYS is a keyring "id:base64,...";
-			// ABBY_CLAIM_PROOF_KEY is a single base64 key. Without either the
+			// database. YAK_CLAIM_REPLAY_KEYS is a keyring "id:base64,...";
+			// YAK_CLAIM_PROOF_KEY is a single base64 key. Without either the
 			// server advertises no claim-proof replay (CLAIM-043).
-			spec := os.Getenv("ABBY_CLAIM_REPLAY_KEYS")
+			spec := yakEnv("YAK_CLAIM_REPLAY_KEYS")
 			if spec == "" {
-				spec = os.Getenv("ABBY_CLAIM_PROOF_KEY")
+				spec = yakEnv("YAK_CLAIM_PROOF_KEY")
 			}
 			if svc.ClaimKeys, err = domain.ParseClaimKeyring(spec); err != nil {
 				return fmt.Errorf("claim replay key: %w", err)
@@ -97,15 +97,15 @@ func serverCmds() []*cobra.Command {
 				defer cancel()
 				_ = srv.Shutdown(sctx)
 			}()
-			log.Info("abby listening", "addr", listen, "role", role, "version", version)
+			log.Info("yak listening", "addr", listen, "role", role, "version", version)
 			if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 				return err
 			}
 			return nil
 		},
 	}
-	serve.Flags().String("listen", envOr("ABBY_LISTEN", ":8080"), "listen address")
-	serve.Flags().String("role", envOr("ABBY_ROLE", "all"), "all | api | worker")
+	serve.Flags().String("listen", envOr("YAK_LISTEN", ":8080"), "listen address")
+	serve.Flags().String("role", envOr("YAK_ROLE", "all"), "all | api | worker")
 
 	migrate := &cobra.Command{
 		Use:   "migrate",
@@ -155,7 +155,7 @@ func serverCmds() []*cobra.Command {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "created server administrator %s (%s); credential %s expires %s\n", a.Handle, a.ID, ic.Credential.ID, ic.Credential.ExpiresAt.Format(time.RFC3339))
-			fmt.Fprintln(os.Stderr, "the token below is shown once; store it outside Abby (it is a recovery credential)")
+			fmt.Fprintln(os.Stderr, "the token below is shown once; store it outside Yak (it is a recovery credential)")
 			fmt.Println(ic.Token)
 			return nil
 		},
@@ -189,7 +189,7 @@ func serverCmds() []*cobra.Command {
 }
 
 func envOr(k, d string) string {
-	if v := os.Getenv(k); v != "" {
+	if v := yakEnv(k); v != "" {
 		return v
 	}
 	return d

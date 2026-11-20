@@ -12,12 +12,12 @@ and selection design. Builds on ADR-0003, ADR-0004, ADR-0006, ADR-0008.
 | `Authorization: Bearer …` | request | As P1 (AUTH-001). |
 | `Idempotency-Key` | request | Required on every task `POST` (TASK-070, CLAIM-040). Clients SHOULD use ≥ 128-bit random keys, because a replay of a claim can return a proof. |
 | `If-Match: "<revision>"` | request | Required on `PATCH …/tasks/{id}`, `PUT …/assignee`, `PUT …/dependencies`, `POST …/briefs` (task revision), `POST …/root-redaction` (root message revision). Optional on manager lifecycle commands. |
-| `Abby-Claim-Proof: <proof>` | request | Claimant operations: renew, release, complete, fail, and block by the claimant. Never in body or query. Servers strip it from logs. |
-| `Abby-Run-Id` | request | Optional; recorded on the claim and events; no authority (AUTH-002). |
+| `Yak-Claim-Proof: <proof>` | request | Claimant operations: renew, release, complete, fail, and block by the claimant. Never in body or query. Servers strip it from logs. |
+| `Yak-Run-Id` | request | Optional; recorded on the claim and events; no authority (AUTH-002). |
 | `ETag: "<revision>"` | response | Task revision on task responses. |
 | `Idempotent-Replayed: true` | response | As P1 (IDEM-002). |
 
-Block chooses its mode by the header: with `Abby-Claim-Proof` it is a
+Block chooses its mode by the header: with `Yak-Claim-Proof` it is a
 claimant block (proof must verify); without it the caller must be a
 manager.
 
@@ -230,7 +230,7 @@ CREATE TABLE task_batches (
 
 Notes:
 
-- `abby.task.state` is not stored in `message_labels`. Root-label reads,
+- `yak.task.state` is not stored in `message_labels`. Root-label reads,
   thread lists, and event facets join `tasks.state` (with the ADR-0004
   projection) so there is one source of truth and the effective state is
   what filters see.
@@ -280,7 +280,7 @@ Transaction (READ COMMITTED, the P1 default for `boardMutation`):
    assignee_actor_id = $actor)`; `me` → `= $actor`; `unassigned` → `IS
    NULL`. Root label clauses are `EXISTS` on `message_labels` of
    `threads.root_message_id` (AND across keys, OR within a key), plus
-   `tasks.state` for `abby.task.state`.
+   `tasks.state` for `yak.task.state`.
 5. If the row was a lapsed claim, materialize it (ADR-0004). Then insert
    the claim, update the task (`state`, `epoch+1`, `revision+1`,
    `current_claim_id`, `claim_expires_at`), emit `task.claimed` and
@@ -337,7 +337,7 @@ nulls `proof_ciphertext` on materialized claims. Metric: expiry lag
 |---|---|
 | Proof in the request body | Bodies are fingerprinted and more often logged; a header is easy to strip and keeps bodies identical across retries. |
 | Claim ID in every claimant path | The proof already names its claim; the extra segment adds a second source of truth. Kept on renew only because the design lists it. |
-| Store `abby.task.state` in `message_labels` | Two sources of truth, and stored values would be wrong between a lapse and its materialization. |
+| Store `yak.task.state` in `message_labels` | Two sources of truth, and stored values would be wrong between a lapse and its materialization. |
 | Separate `task_state_changes` table for history | The event log already is the history; `last_claim` and `GET …/claims` cover the common reads. |
 | `SELECT … FOR UPDATE SKIP LOCKED` queue without the board lock | Breaks event order = commit order and the oldest-eligible promise. |
 | One `POST /tasks/{id}/transitions` route | Generic command routes are harder to authorize and document; design §11.2 lists explicit commands. |

@@ -13,9 +13,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/dustywusty/abby/internal/authz"
-	"github.com/dustywusty/abby/internal/events"
-	"github.com/dustywusty/abby/internal/ids"
+	"github.com/dustywusty/yak/internal/authz"
+	"github.com/dustywusty/yak/internal/events"
+	"github.com/dustywusty/yak/internal/ids"
 )
 
 type Attribution struct {
@@ -93,10 +93,10 @@ func (m *MessageView) facet(rootLabels map[string]string) events.Facet {
 	return f
 }
 
-// taskStateLabelSQL is the computed root label abby.task.state of thread
+// taskStateLabelSQL is the computed root label yak.task.state of thread
 // alias t: the effective task state (ADR-0004), or {} for a thread without a
 // task. It is never stored in message_labels (ADR-0016 §5, TASK-027..029).
-const taskStateLabelSQL = `COALESCE((SELECT jsonb_build_object('abby.task.state', abby_task_effective_state(tk.state, tk.claim_expires_at, statement_timestamp()))
+const taskStateLabelSQL = `COALESCE((SELECT jsonb_build_object('yak.task.state', abby_task_effective_state(tk.state, tk.claim_expires_at, statement_timestamp()))
 	FROM tasks tk WHERE tk.thread_id=t.id), '{}'::jsonb)`
 
 const msgCols = `m.id, m.board_id, m.thread_id, t.channel_id, m.seq, (t.root_message_id = m.id), m.author_actor_id, m.credential_id, m.run_id,
@@ -361,7 +361,7 @@ func (s *Service) CreateThread(ctx context.Context, p *Principal, boardID string
 
 // insertThread creates a thread and its root message and emits
 // thread.created. For a task thread (taskID set) the views already carry the
-// computed root label abby.task.state and task_id (TASK-085: no separate
+// computed root label yak.task.state and task_id (TASK-085: no separate
 // view invalidation is needed for L1).
 func (b *btx) insertThread(ch channelRow, req CreateThreadRequest, taskID, taskState string) (ThreadWithRoot, error) {
 	mentions, err := b.resolveMentions(ch.Path, req.Text, req.Mentions)
@@ -947,13 +947,13 @@ func (s *Service) MutateLabels(ctx context.Context, p *Principal, boardID, messa
 			out = m
 			return &Result{}, nil
 		}
-		// Clients never write abby.* keys (validated above): server labels
-		// stay as stored, and the computed abby.task.state is never stored.
-		if _, err := b.Exec(ctx, `DELETE FROM message_labels WHERE message_id=$1 AND key NOT LIKE 'abby.%'`, m.ID); err != nil {
+		// Clients never write yak.* keys (validated above): server labels
+		// stay as stored, and the computed yak.task.state is never stored.
+		if _, err := b.Exec(ctx, `DELETE FROM message_labels WHERE message_id=$1 AND key NOT LIKE 'yak.%' AND key NOT LIKE 'abby.%'`, m.ID); err != nil {
 			return nil, err
 		}
 		for k, v := range after {
-			if strings.HasPrefix(k, "abby.") {
+			if strings.HasPrefix(k, "yak.") || strings.HasPrefix(k, "abby.") {
 				continue
 			}
 			if _, err := b.Exec(ctx, `INSERT INTO message_labels(message_id, key, value) VALUES ($1,$2,$3)`, m.ID, k, v); err != nil {

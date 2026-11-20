@@ -112,7 +112,7 @@ const proofPrefix = "acp1."
 
 var proofRE = regexp.MustCompile(`^acp1\.([A-Za-z0-9_]{1,64})\.([A-Za-z0-9_-]{43})$`)
 
-// ClaimProof is a parsed Abby-Claim-Proof header: acp1.<claim_id>.<secret>.
+// ClaimProof is a parsed Yak-Claim-Proof header: acp1.<claim_id>.<secret>.
 type ClaimProof struct {
 	ClaimID string
 	secret  string
@@ -122,8 +122,8 @@ type ClaimProof struct {
 func ParseClaimProof(s string) (*ClaimProof, error) {
 	m := proofRE.FindStringSubmatch(strings.TrimSpace(s))
 	if m == nil {
-		e := Validation("Abby-Claim-Proof is malformed")
-		e.Extra = map[string]any{"header": "Abby-Claim-Proof"}
+		e := Validation("Yak-Claim-Proof is malformed")
+		e.Extra = map[string]any{"header": "Yak-Claim-Proof"}
 		return nil, e
 	}
 	return &ClaimProof{ClaimID: m[1], secret: m[2]}, nil

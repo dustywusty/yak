@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:precondition_required",
+  "type": "urn:yak:problem:precondition_required",
   "title": "Precondition Required",
   "status": 428,
   "code": "precondition_required",

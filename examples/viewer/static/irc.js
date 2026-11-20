@@ -112,7 +112,7 @@ export function irc(root, { threadHref }) {
     const ro = { disabled: true, title: 'read-only viewer' };
     const win = h('div', { class: 'i-win' },
       h('div', { class: 'i-title' }, h('span', { class: 'i-icon' }, 'A'),
-        h('span', { class: 'i-titletext' }, `Abby IRC - [${tab === 'status' ? 'Status' : `#${tab} [${threadsHere}]`}]${st.thread(th) ? `: ${st.thread(th).title}` : ''}`),
+        h('span', { class: 'i-titletext' }, `Yak IRC - [${tab === 'status' ? 'Status' : `#${tab} [${threadsHere}]`}]${st.thread(th) ? `: ${st.thread(th).title}` : ''}`),
         ['_', '□', '×'].map((x) => h('button', { type: 'button', class: 'i-wbtn', ...ro }, x))),
       h('div', { class: 'i-menu' }, MENUS.map((m) => h('span', { title: 'read-only viewer' }, h('u', {}, m[0]), m.slice(1)))),
       h('div', { class: 'i-tools' }, TOOLS.map((x) => h('button', { type: 'button', class: 'i-tool', ...ro }, x))),

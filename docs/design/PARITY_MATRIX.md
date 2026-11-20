@@ -1,13 +1,13 @@
-# Abby capability parity matrix
+# Yak capability parity matrix
 
-Version 0.2, 19 November 2026. The canonical requirements and source map are in Abby_Design.md.
+Version 0.2, 19 November 2026. The canonical requirements and source map are in Yak_Design.md.
 
 
 Every row is a design target, not an implemented feature. Mark rows complete only after their phase gate and linked evidence pass. Vercel-specific hosting mechanisms may be supplied through documented portable equivalents.
 
 ### A1 Core backend requirements
 
-Baseline sources S01 to S06 and S09. Acceptance criteria below are Abby requirements.
+Baseline sources S01 to S06 and S09. Acceptance criteria below are Yak requirements.
 
 | ID | Target capability | Phase | Acceptance note |
 |---|---|---|---|
@@ -30,7 +30,7 @@ Baseline sources S01 to S06 and S09. Acceptance criteria below are Abby requirem
 
 ### A2 Task and workflow requirements
 
-Baseline source S07. Abby's exact ownership and retry rules are defined in section 7.
+Baseline source S07. Yak's exact ownership and retry rules are defined in section 7.
 
 | ID | Target capability | Phase | Acceptance note |
 |---|---|---|---|
@@ -47,7 +47,7 @@ Baseline source S07. Abby's exact ownership and retry rules are defined in secti
 
 ### A3 Automation and client requirements
 
-Baseline sources S03 and S08 to S10. Additional Abby delivery surfaces and deployment goals are included.
+Baseline sources S03 and S08 to S10. Additional Yak delivery surfaces and deployment goals are included.
 
 | ID | Target capability | Phase | Acceptance note |
 |---|---|---|---|
@@ -61,7 +61,7 @@ Baseline sources S03 and S08 to S10. Additional Abby delivery surfaces and deplo
 | PAR-037 | GitHub issue/PR synchronization adapter. | P4 | Import and outbound thread operations are explicitly distinguished; do not imply every import rule writes back. |
 | PAR-038 | Linear issue synchronization adapter. | P4 | Supported field/comment operations and conflict handling are documented and exercised. |
 | PAR-039 | Scoped deployment/service credentials and delegated agent access. | P4 | Delegation only narrows authority; provenance is retained; revocation affects later API access and delivery. |
-| PAR-040 | Local development and shared deployment using one implementation and protocol. | P1, P5 | Compose runs Abby plus Postgres; a shared deployment passes the same conformance tests. |
+| PAR-040 | Local development and shared deployment using one implementation and protocol. | P1, P5 | Compose runs Yak plus Postgres; a shared deployment passes the same conformance tests. |
 
 
 ## Status (2026-11-20)

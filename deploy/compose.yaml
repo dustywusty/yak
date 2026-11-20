@@ -1,21 +1,23 @@
-# Local and single-host Abby: the reference server plus Postgres with a
+# Local and single-host Yak: the reference server plus Postgres with a
 # persistent volume. Run separate instances (for example a stable
 # coordination instance and a development instance) with different project
 # names and env files; each gets its own database, volume and credentials:
 #
-#   docker compose -p abby-coord --env-file deploy/coord.env -f deploy/compose.yaml up -d
+#   docker compose -p yak-coord --env-file deploy/coord.env -f deploy/compose.yaml up -d
 #
-# No default secrets: ABBY_DB_PASSWORD must be set. The API binds to
-# 127.0.0.1 unless ABBY_BIND is changed deliberately. Postgres is not
+# No default secrets: YAK_DB_PASSWORD must be set. The API binds to
+# 127.0.0.1 unless YAK_BIND is changed deliberately. Postgres is not
 # published on the host.
-name: abby
+# Keep the physical Postgres role/database and pgdata volume compatible with
+# existing deployments. Use the same Compose project name when upgrading.
+name: yak
 services:
   postgres:
     image: postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
     environment:
       POSTGRES_USER: abby
       POSTGRES_DB: abby
-      POSTGRES_PASSWORD: ${ABBY_DB_PASSWORD:?set ABBY_DB_PASSWORD in the env file}
+      POSTGRES_PASSWORD: ${YAK_DB_PASSWORD:-${ABBY_DB_PASSWORD:?set YAK_DB_PASSWORD or ABBY_DB_PASSWORD in the env file}}
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
@@ -28,24 +30,24 @@ services:
   # Explicit, serialized migration step. The server refuses to start on a
   # schema it does not match; it never migrates on its own.
   migrate:
-    image: ${ABBY_IMAGE:-abby:dev}
-    build: { context: .., args: { VERSION: "${ABBY_VERSION:-0.1.0-dev}" } }
+    image: ${YAK_IMAGE:-${ABBY_IMAGE:-yak:dev}}
+    build: { context: .., args: { VERSION: "${YAK_VERSION:-${ABBY_VERSION:-0.1.0-dev}}" } }
     command: ["migrate"]
     environment:
-      ABBY_DATABASE_URL: postgres://abby:${ABBY_DB_PASSWORD}@postgres:5432/abby?sslmode=disable
+      YAK_DATABASE_URL: postgres://abby:${YAK_DB_PASSWORD:-${ABBY_DB_PASSWORD:?set YAK_DB_PASSWORD or ABBY_DB_PASSWORD}}@postgres:5432/abby?sslmode=disable
     depends_on:
       postgres: { condition: service_healthy }
     restart: "no"
 
-  abby:
-    image: ${ABBY_IMAGE:-abby:dev}
+  yak:
+    image: ${YAK_IMAGE:-${ABBY_IMAGE:-yak:dev}}
     command: ["serve"]
     environment:
-      ABBY_DATABASE_URL: postgres://abby:${ABBY_DB_PASSWORD}@postgres:5432/abby?sslmode=disable
-      ABBY_LISTEN: ":8080"
-      ABBY_ROLE: ${ABBY_ROLE:-all}
+      YAK_DATABASE_URL: postgres://abby:${YAK_DB_PASSWORD:-${ABBY_DB_PASSWORD:?set YAK_DB_PASSWORD or ABBY_DB_PASSWORD}}@postgres:5432/abby?sslmode=disable
+      YAK_LISTEN: ":8080"
+      YAK_ROLE: ${YAK_ROLE:-${ABBY_ROLE:-all}}
     ports:
-      - "${ABBY_BIND:-127.0.0.1}:${ABBY_PORT:-8080}:8080"
+      - "${YAK_BIND:-${ABBY_BIND:-127.0.0.1}}:${YAK_PORT:-${ABBY_PORT:-8080}}:8080"
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }

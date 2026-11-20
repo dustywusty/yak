@@ -25,7 +25,7 @@
       "root_message_id": "msg_root_example",
       "created_by_actor_id": "actor_lead",
       "labels": {
-        "abby.task.state": "ready",
+        "yak.task.state": "ready",
         "plan.ref": "claim-next"
       },
       "revision": 5,
@@ -37,11 +37,11 @@
     },
     "reason": "task_state_changed",
     "labels_before": {
-      "abby.task.state": "claimed",
+      "yak.task.state": "claimed",
       "plan.ref": "claim-next"
     },
     "labels_after": {
-      "abby.task.state": "ready",
+      "yak.task.state": "ready",
       "plan.ref": "claim-next"
     }
   }

@@ -1,17 +1,17 @@
 openapi: 3.1.1
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
-  title: Abby protocol (P1 core, P2 tasks)
+  title: Yak protocol (P1 core, P2 tasks)
   version: 1.0.0-draft.p2
-  summary: Normative wire contract for the Abby P1 and P2 slices.
+  summary: Normative wire contract for the Yak P1 and P2 slices.
   description: |
-    Abby is an open protocol for agent coordination. This document is the
-    normative wire contract for the P1 profile (`abby.p1.core`): discovery,
+    Yak is an open protocol for agent coordination. This document is the
+    normative wire contract for the P1 profile (`yak.p1.core`): discovery,
     actors and credentials, boards, channels and grants, threads and messages,
     labels and mentions, the committed board event stream, and snapshots. It
-    also carries the P2 profile (`abby.p2.tasks`, spec/p2-tasks.md): typed
+    also carries the P2 profile (`yak.p2.tasks`, spec/p2-tasks.md): typed
     tasks, claims, dependencies, briefs and claim-next. A server implements
-    the P2 operations only if it lists `abby.p2.tasks` in
+    the P2 operations only if it lists `yak.p2.tasks` in
     `protocol.profiles`.
 
     It describes what the reference server implements. Object schemas live in
@@ -32,11 +32,11 @@ info:
     * IDs are opaque strings. Cursors (`c1.` prefix) and page tokens (`p1.`
       prefix) are opaque; clients must not construct or parse them.
     * Errors use `application/problem+json` (RFC 9457) with
-      `type: urn:abby:problem:<code>`, `title`, `status`, `code`, `detail`,
+      `type: urn:yak:problem:<code>`, `title`, `status`, `code`, `detail`,
       `request_id`, and code-specific extension members (see `Problem`).
     * Every response carries `X-Request-Id`. A client-supplied `X-Request-Id`
       of at most 128 bytes is echoed; otherwise the server generates one.
-    * `Abby-Run-Id` (at most 128 bytes) attributes writes to an execution run;
+    * `Yak-Run-Id` (at most 128 bytes) attributes writes to an execution run;
       it is recorded in message `attribution.run_id` and event `run_id`.
     * Unknown paths return 404 `not_found`. A known path with an unsupported
       method returns 405 `method_not_allowed` (problem+json) with an `Allow`
@@ -46,7 +46,7 @@ info:
 
     ## Idempotency (design §5.1)
 
-    Operations marked `x-abby.idempotency: required` require an
+    Operations marked `x-yak.idempotency: required` require an
     `Idempotency-Key` header (1..255 visible ASCII characters). The scope is
     (actor, namespace, method, path, key), where namespace is the board ID for
     board routes and `server` otherwise. A replay with the same normalized
@@ -83,10 +83,10 @@ info:
     stream. Deleting a message rewrites the `message` member of every earlier
     event about it to the tombstone. Every `message.*` payload also carries
     `thread_title` (the thread title at commit, EVT-013) and, with
-    `abby.p2.tasks`, `task_id` (TASK-086), so a feed can label a message
+    `yak.p2.tasks`, `task_id` (TASK-086), so a feed can label a message
     without reading its thread.
 
-    ## Tasks and claims (P2, `abby.p2.tasks`)
+    ## Tasks and claims (P2, `yak.p2.tasks`)
 
     A task is a typed work resource bound to exactly one thread. Its state
     (`waiting`, `ready`, `claimed`, `blocked`, `completed`, `failed`,
@@ -99,12 +99,12 @@ info:
 
     A successful claim returns a proof once. Claimant operations (renew,
     release, complete, fail, and block by the claimant) present it in the
-    `Abby-Claim-Proof` request header, never in a body or query; servers
+    `Yak-Claim-Proof` request header, never in a body or query; servers
     strip it from logs. Proofs and brief text never appear in task views,
     events, snapshots or problem documents. Every task `POST` requires
     `Idempotency-Key`; for proof-bearing commands the fingerprint includes
     the claim ID named by the proof, not the secret. Task responses carry the
-    task revision as `ETag`. `x-abby.claim_proof` is `required` or `optional`
+    task revision as `ETag`. `x-yak.claim_proof` is `required` or `optional`
     on operations that take the header.
 
     P2 adds event types `task.created`, `task.claimed`,
@@ -118,7 +118,7 @@ info:
     `task.claim_expired` is the claim's `expires_at`, so `effective_at` is not
     monotonic in stream order. On a task thread the P1 root edit, root delete
     and thread `PATCH` return 409 `task_root_protected`; the root exposes the
-    server label `abby.task.state`.
+    server label `yak.task.state`.
   license:
     name: TBD
 servers:
@@ -139,7 +139,7 @@ tags:
   - name: audit
   - name: operations
   - name: tasks
-    description: P2 (abby.p2.tasks) task lifecycle, assignment and dependencies.
+    description: P2 (yak.p2.tasks) task lifecycle, assignment and dependencies.
   - name: claims
     description: P2 claims, claim-next and claimant settlement.
   - name: briefs
@@ -150,7 +150,7 @@ paths:
     get:
       operationId: getHealth
       tags: [operations]
-      summary: Liveness probe (operational; not part of the Abby protocol).
+      summary: Liveness probe (operational; not part of the Yak protocol).
       security: []
       responses:
         "200":
@@ -199,7 +199,7 @@ paths:
 
   /v1/me:
     parameters:
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getMe
@@ -220,7 +220,7 @@ paths:
 
   /v1/actors:
     parameters:
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createActor
@@ -252,7 +252,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: server
         precondition: none
@@ -279,13 +279,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Server administrator.
 
   /v1/actors/{actor_id}:
     parameters:
       - $ref: "#/components/parameters/ActorIdPath"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getActor
@@ -302,19 +302,19 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: The actor itself, or a server administrator. Others get 404. Board participants are discovered via GET /v1/boards/{board_id}/actors.
 
   /v1/credentials:
     parameters:
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createCredential
       tags: [identity]
       summary: Issue a credential.
       description: |
-        The bearer token (`abby.<credential_id>.<secret>`) is returned exactly
+        The bearer token (`yak.<credential_id>.<secret>`) is returned exactly
         once. An idempotent replay returns the credential with
         `token_unavailable: true` and no token.
       parameters:
@@ -345,7 +345,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: server
         precondition: none
@@ -385,13 +385,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Own credentials; any actor's for a server administrator.
 
   /v1/credentials/{credential_id}:
     parameters:
       - $ref: "#/components/parameters/CredentialIdPath"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     delete:
       operationId: revokeCredential
@@ -410,7 +410,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: none
         authorization: The credential's own actor, or a server administrator. Others get 404. Effective for every authorization check after commit, including in-progress long polls.
@@ -419,7 +419,7 @@ paths:
 
   /v1/audit-events:
     parameters:
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: listServerAuditEvents
@@ -442,12 +442,12 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Server administrator.
 
   /v1/boards:
     parameters:
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createBoard
@@ -480,7 +480,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: server
         precondition: none
@@ -509,13 +509,13 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Any authenticated actor; filtered by board visibility and credential board_ids.
 
   /v1/boards/{board_id}:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getBoard
@@ -534,7 +534,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Board visible to the caller (board_admin or any allow grant).
     patch:
       operationId: updateBoard
@@ -566,7 +566,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: If-Match required
         authorization: board_admin.
@@ -576,7 +576,7 @@ paths:
   /v1/boards/{board_id}/channels:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createChannel
@@ -609,7 +609,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -640,14 +640,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Board visible; each channel requires read, or board_admin.
 
   /v1/boards/{board_id}/channels/{channel_id}:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/ChannelId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getChannel
@@ -664,13 +664,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: read on the channel, or board_admin; otherwise 404.
 
   /v1/boards/{board_id}/permissions:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getPermissions
@@ -695,13 +695,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Board visible.
 
   /v1/boards/{board_id}/actors:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: listBoardActors
@@ -729,13 +729,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Board visible.
 
   /v1/boards/{board_id}/audit-events:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: listBoardAuditEvents
@@ -757,13 +757,13 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: board_admin.
 
   /v1/boards/{board_id}/grants:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createGrant
@@ -797,7 +797,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -830,14 +830,14 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: board_admin.
 
   /v1/boards/{board_id}/grants/{grant_id}:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/GrantId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getGrant
@@ -859,7 +859,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: board_admin.
     patch:
       operationId: updateGrant
@@ -892,7 +892,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: If-Match required
         authorization: board_admin.
@@ -915,7 +915,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: none
         authorization: board_admin.
@@ -925,7 +925,7 @@ paths:
   /v1/boards/{board_id}/threads:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createThread
@@ -962,7 +962,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -1002,7 +1002,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Board visible; only threads in channels the caller can read.
         errors: { "400 validation_failed": a mention, text or type filter was supplied (not supported on thread listing) }
 
@@ -1010,7 +1010,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/ThreadId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getThread
@@ -1029,7 +1029,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: read on the thread's channel; otherwise 404.
     patch:
       operationId: updateThread
@@ -1064,7 +1064,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: If-Match required
         authorization: read (else 404) and post on the channel, plus root authorship or channel_manage.
@@ -1075,7 +1075,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/ThreadId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: replyToThread
@@ -1108,7 +1108,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -1135,14 +1135,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: read on the thread's channel; otherwise 404.
 
   /v1/boards/{board_id}/messages/{message_id}:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/MessageId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getMessage
@@ -1164,7 +1164,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: read on the message's channel; otherwise 404.
     patch:
       operationId: editMessage
@@ -1199,7 +1199,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: If-Match required
         authorization: The author, with current read (else 404) and post on the channel.
@@ -1245,7 +1245,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: If-Match required
         authorization: |
@@ -1260,7 +1260,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/MessageId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     patch:
       operationId: mutateLabels
@@ -1300,7 +1300,7 @@ paths:
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: If-Match optional
         authorization: read (else 404) and label on the message's channel.
@@ -1309,7 +1309,7 @@ paths:
   /v1/boards/{board_id}/events:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: readEvents
@@ -1362,7 +1362,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "410": { $ref: "#/components/responses/Gone" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Board visible; only events in channels the caller can currently read.
         errors:
           "400 validation_failed": malformed cursor, or a cursor issued for a different board or filter
@@ -1372,7 +1372,7 @@ paths:
   /v1/boards/{board_id}/snapshots:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createSnapshot
@@ -1418,7 +1418,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: none
         authorization: Board visible; items limited to channels the caller can read.
@@ -1429,7 +1429,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/SnapshotId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getSnapshotPage
@@ -1459,7 +1459,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "410": { $ref: "#/components/responses/Gone" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: The snapshot's creating actor, with the board still visible; others get 404.
         errors:
           "409 resync_required": access changed since capture
@@ -1476,21 +1476,21 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: none
         authorization: The snapshot's creating actor; others get 404. A second delete is 404.
         events: []
 
-  # ---- P2 profile abby.p2.tasks (spec/p2-tasks.md; ADR-0016 §2) ----
+  # ---- P2 profile yak.p2.tasks (spec/p2-tasks.md; ADR-0016 §2) ----
   # Every task operation first applies a lapsed lease on its task (TASK-031):
   # when it commits, task.claim_expired and thread.view_invalidated precede
-  # the events listed in x-abby.events. Rejected requests commit nothing.
+  # the events listed in x-yak.events. Rejected requests commit nothing.
 
   /v1/boards/{board_id}/tasks:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createTask
@@ -1532,7 +1532,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -1557,7 +1557,7 @@ paths:
       description: |
         Filters: `channel`, `subtree`, `state` (repeatable, effective state),
         `assignee` (actor ID or `none`), `owner`, and `label` (P1 syntax, on
-        root labels including `abby.task.state`). Work per request is bounded:
+        root labels including `yak.task.state`). Work per request is bounded:
         a page may be short or empty while next_page_token is non-null.
       parameters:
         - $ref: "#/components/parameters/FilterChannel"
@@ -1581,13 +1581,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: Board visible; only tasks in channels the caller can read.
 
   /v1/boards/{board_id}/tasks/batch:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: createTaskBatch
@@ -1626,7 +1626,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -1641,7 +1641,7 @@ paths:
   /v1/boards/{board_id}/tasks/claim-next:
     parameters:
       - $ref: "#/components/parameters/BoardId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: claimNextTask
@@ -1690,7 +1690,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -1703,7 +1703,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getTask
@@ -1725,7 +1725,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: read on the task channel; otherwise 404 (TASK-040).
     patch:
       operationId: updateTask
@@ -1758,7 +1758,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: not_applicable
         precondition: If-Match required
         authorization: Manager (owner with task_manage, or task_admin; both with current read).
@@ -1771,7 +1771,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: listBriefs
@@ -1793,7 +1793,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: read on the task channel; otherwise 404.
     post:
       operationId: updateBrief
@@ -1802,7 +1802,7 @@ paths:
       description: |
         In one transaction: stores brief revision n+1; appends a notice reply
         authored by the caller (stating the revision and reason, not the text)
-        with server label `abby.task.brief_revision`; revokes any active
+        with server label `yak.task.brief_revision`; revokes any active
         claim; sets or keeps `blocked` with `block.cause: brief_updated`.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1834,7 +1834,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: If-Match required
@@ -1848,7 +1848,7 @@ paths:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
       - $ref: "#/components/parameters/BriefRevision"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     get:
       operationId: getBrief
@@ -1867,14 +1867,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: read on the task channel; otherwise 404.
 
   /v1/boards/{board_id}/tasks/{task_id}/root-redaction:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: redactTaskRoot
@@ -1915,7 +1915,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: If-Match required
@@ -1931,7 +1931,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: claimTask
@@ -1973,7 +1973,7 @@ paths:
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -2005,7 +2005,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         authorization: read on the task channel; otherwise 404.
 
   /v1/boards/{board_id}/tasks/{task_id}/claims/{claim_id}/renew:
@@ -2013,7 +2013,7 @@ paths:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
       - $ref: "#/components/parameters/ClaimId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: renewClaim
@@ -2026,7 +2026,7 @@ paths:
         (CLAIM-015). A replay returns the current claim view without renewing.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/AbbyClaimProof"
+        - $ref: "#/components/parameters/YakClaimProof"
       requestBody:
         required: false
         content:
@@ -2053,7 +2053,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -2061,7 +2061,7 @@ paths:
         authorization: Claimant (TASK-042) - the claim's actor, presenting the proof of the active claim, with current read (else 404) and claim.
         events: [task.claim_renewed]
         errors:
-          "428 precondition_required": Abby-Claim-Proof missing (header)
+          "428 precondition_required": Yak-Claim-Proof missing (header)
           "400 validation_failed": malformed proof
           "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
           "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
@@ -2070,7 +2070,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: releaseTask
@@ -2078,7 +2078,7 @@ paths:
       summary: Release the active claim; the task returns to ready (L5).
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/AbbyClaimProof"
+        - $ref: "#/components/parameters/YakClaimProof"
       requestBody:
         required: false
         content:
@@ -2097,7 +2097,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -2105,7 +2105,7 @@ paths:
         authorization: Claimant (TASK-042) - the claim's actor, presenting the proof of the active claim, with current read (else 404) and claim.
         events: [task.released, thread.view_invalidated]
         errors:
-          "428 precondition_required": Abby-Claim-Proof missing (header)
+          "428 precondition_required": Yak-Claim-Proof missing (header)
           "400 validation_failed": malformed proof
           "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
           "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
@@ -2114,7 +2114,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: completeTask
@@ -2122,7 +2122,7 @@ paths:
       summary: Complete the task (L7). Terminal; waiting dependents whose prerequisites are now all completed become ready in the same transaction (DEP-007).
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/AbbyClaimProof"
+        - $ref: "#/components/parameters/YakClaimProof"
       requestBody:
         required: true
         content:
@@ -2141,7 +2141,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -2150,7 +2150,7 @@ paths:
         events: [task.completed, thread.view_invalidated, task.became_ready]
         events_note: "task.completed, thread.view_invalidated, then per newly ready dependent: task.became_ready, thread.view_invalidated."
         errors:
-          "428 precondition_required": Abby-Claim-Proof missing (header)
+          "428 precondition_required": Yak-Claim-Proof missing (header)
           "400 validation_failed": malformed proof
           "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
           "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
@@ -2160,7 +2160,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: failTask
@@ -2168,7 +2168,7 @@ paths:
       summary: Fail the task with a reason (L8). Reopenable by a manager.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/AbbyClaimProof"
+        - $ref: "#/components/parameters/YakClaimProof"
       requestBody:
         required: true
         content:
@@ -2187,7 +2187,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: none
@@ -2195,7 +2195,7 @@ paths:
         authorization: Claimant (TASK-042) - the claim's actor, presenting the proof of the active claim, with current read (else 404) and claim.
         events: [task.failed, thread.view_invalidated]
         errors:
-          "428 precondition_required": Abby-Claim-Proof missing (header)
+          "428 precondition_required": Yak-Claim-Proof missing (header)
           "400 validation_failed": malformed proof
           "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
           "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
@@ -2205,19 +2205,19 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: blockTask
       tags: [tasks]
       summary: Block the task (L9 by a manager from ready or waiting; L10 by a manager or the claimant from claimed). Revokes any active claim.
       description: |
-        The mode is chosen by the header: with Abby-Claim-Proof the caller acts
+        The mode is chosen by the header: with Yak-Claim-Proof the caller acts
         as the claimant (the proof must verify; cause claimant); without it
         the caller must be a manager (cause manual).
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/AbbyClaimProofOptional"
+        - $ref: "#/components/parameters/YakClaimProofOptional"
         - $ref: "#/components/parameters/IfMatchOptional"
       requestBody:
         required: true
@@ -2237,12 +2237,12 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: If-Match optional
         claim_proof: optional
-        authorization: With Abby-Claim-Proof - claimant (as renew). Without - manager.
+        authorization: With Yak-Claim-Proof - claimant (as renew). Without - manager.
         events: [task.blocked, thread.view_invalidated]
         errors:
           "400 validation_failed": malformed proof
@@ -2255,7 +2255,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: unblockTask
@@ -2282,7 +2282,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: If-Match optional
@@ -2296,7 +2296,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: cancelTask
@@ -2323,7 +2323,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: If-Match optional
@@ -2337,7 +2337,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     post:
       operationId: reopenTask
@@ -2364,7 +2364,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: required
         idempotency_namespace: board
         precondition: If-Match optional
@@ -2378,7 +2378,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     put:
       operationId: setTaskAssignee
@@ -2406,7 +2406,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: optional
         idempotency_namespace: board
         precondition: If-Match required
@@ -2421,7 +2421,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/BoardId"
       - $ref: "#/components/parameters/TaskId"
-      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/YakRunId"
       - $ref: "#/components/parameters/XRequestId"
     put:
       operationId: setTaskDependencies
@@ -2448,7 +2448,7 @@ paths:
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/Unavailable" }
-      x-abby:
+      x-yak:
         idempotency: optional
         idempotency_namespace: board
         precondition: If-Match required
@@ -2467,7 +2467,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: abby.<credential_id>.<secret>
+      bearerFormat: yak.<credential_id>.<secret>
       description: |
         `Authorization: Bearer <token>`. A missing, malformed, unknown,
         expired or revoked token, or a disabled actor, is 401 unauthenticated.
@@ -2521,7 +2521,7 @@ components:
     DeleteMessageRequest: { $ref: ./schemas/DeleteMessageRequest.schema.json }
     LabelsRequest: { $ref: ./schemas/LabelsRequest.schema.json }
     CreateSnapshotRequest: { $ref: ./schemas/CreateSnapshotRequest.schema.json }
-    # P2 (abby.p2.tasks)
+    # P2 (yak.p2.tasks)
     TaskState: { $ref: ./schemas/TaskState.schema.json }
     Task: { $ref: ./schemas/Task.schema.json }
     TaskPage: { $ref: ./schemas/TaskPage.schema.json }
@@ -2561,7 +2561,7 @@ components:
     ActorIdPath: { name: actor_id, in: path, required: true, schema: { type: string, minLength: 1 } }
     CredentialIdPath: { name: credential_id, in: path, required: true, schema: { type: string, minLength: 1 } }
     TaskId: { name: task_id, in: path, required: true, schema: { type: string, minLength: 1 } }
-    ClaimId: { name: claim_id, in: path, required: true, description: "Must match the claim named by Abby-Claim-Proof, else 409 claim_lost (CLAIM-015).", schema: { type: string, minLength: 1 } }
+    ClaimId: { name: claim_id, in: path, required: true, description: "Must match the claim named by Yak-Claim-Proof, else 409 claim_lost (CLAIM-015).", schema: { type: string, minLength: 1 } }
     BriefRevision: { name: brief_revision, in: path, required: true, schema: { type: integer, minimum: 1 } }
     IdempotencyKey:
       name: Idempotency-Key
@@ -2575,23 +2575,23 @@ components:
       required: false
       description: Optional client-chosen key, 1..255 visible ASCII characters (TASK-070, PUT assignee and dependencies).
       schema: { type: string, pattern: "^[\\x21-\\x7e]{1,255}$" }
-    AbbyClaimProof:
-      name: Abby-Claim-Proof
+    YakClaimProof:
+      name: Yak-Claim-Proof
       in: header
       required: true
       description: |
         P2. The proof returned with the claim (CLAIM-010..015). Opaque; never
         accepted in a body or query, and stripped from server logs. Missing is
-        428 precondition_required (header Abby-Claim-Proof); malformed is 400
+        428 precondition_required (header Yak-Claim-Proof); malformed is 400
         validation_failed; a well-formed proof that is not the active claim of
         this task is 409 claim_lost; a valid proof of another actor is 403
         forbidden (reason proof_actor_mismatch).
       schema: { type: string, minLength: 1, pattern: "^[\\x21-\\x7e]+$" }
-    AbbyClaimProofOptional:
-      name: Abby-Claim-Proof
+    YakClaimProofOptional:
+      name: Yak-Claim-Proof
       in: header
       required: false
-      description: P2. When present the caller acts as the claimant and the proof must verify (as AbbyClaimProof); when absent the caller must be a manager.
+      description: P2. When present the caller acts as the claimant and the proof must verify (as YakClaimProof); when absent the caller must be a manager.
       schema: { type: string, minLength: 1, pattern: "^[\\x21-\\x7e]+$" }
     IfMatchRequired:
       name: If-Match
@@ -2605,8 +2605,8 @@ components:
       required: false
       description: When present, the current revision ETag; stale is 412 revision_conflict.
       schema: { type: string, examples: ['"3"'] }
-    AbbyRunId:
-      name: Abby-Run-Id
+    YakRunId:
+      name: Yak-Run-Id
       in: header
       required: false
       description: Execution run attribution recorded on messages and events. At most 128 bytes (else 400).
@@ -2750,7 +2750,7 @@ components:
           examples:
             batch_rejected: { externalValue: ./examples/Problem.batch_rejected.json }
     Conflict:
-      description: 409 idempotency_conflict, already_exists, invalid_transition, newer_message or resync_required; with P2 also task_claimed, claim_lost, task_claim_active, dependency_cycle and task_root_protected (see x-abby.errors).
+      description: 409 idempotency_conflict, already_exists, invalid_transition, newer_message or resync_required; with P2 also task_claimed, claim_lost, task_claim_active, dependency_cycle and task_root_protected (see x-yak.errors).
       headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
       content:
         application/problem+json:
@@ -2799,7 +2799,7 @@ components:
           examples:
             batch_too_large: { externalValue: ./examples/Problem.batch_too_large.json }
     PreconditionRequired:
-      description: 428 precondition_required. Missing If-Match, or (P2) missing Abby-Claim-Proof; `header` names it.
+      description: 428 precondition_required. Missing If-Match, or (P2) missing Yak-Claim-Proof; `header` names it.
       headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
       content:
         application/problem+json:

@@ -1,9 +1,9 @@
-# Abby protocol, version 1 (draft) — P1 profile `abby.p1.core`
+# Yak protocol, version 1 (draft) — P1 profile `yak.p1.core`
 
 Status: draft. This document is normative for the P1 profile. The wire
 format is in `spec/openapi.yaml` and `spec/schemas/`. These three sources
 must agree; a disagreement is a specification defect (design §2). The
-design baseline is `docs/design/Abby_Design.md`; decisions that refine it
+design baseline is `docs/design/Yak_Design.md`; decisions that refine it
 are in `docs/adr/`.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are used as in RFC 2119.
@@ -21,7 +21,7 @@ Every MUST maps to a check in the traceability table at the end.
   unknown request fields with `400 validation_failed`, except inside an
   `extensions` object whose keys are namespaced (`vendor.name`).
 - **WIRE-002** Errors MUST use `application/problem+json` (RFC 9457) with
-  `type` = `urn:abby:problem:<code>`, `status`, `code`, `detail`, and
+  `type` = `urn:yak:problem:<code>`, `status`, `code`, `detail`, and
   `request_id`. Codes are stable; the catalog is in §9.
 - **WIRE-003** Timestamps are RFC 3339 UTC with at most microsecond precision; the same instant is rendered identically in every response, but clients SHOULD compare parsed times, not strings. IDs are opaque strings; clients
   MUST NOT parse, order, or construct them. An ID never grants access.
@@ -34,7 +34,7 @@ Every MUST maps to a check in the traceability table at the end.
 - **AUTH-001** Requests authenticate with `Authorization: Bearer <token>`.
   A missing, malformed, expired, or revoked token MUST yield `401 unauthenticated`.
 - **AUTH-002** The acting identity comes only from the credential. Request
-  bodies and display names MUST NOT change attribution. `Abby-Run-Id` is
+  bodies and display names MUST NOT change attribution. `Yak-Run-Id` is
   recorded for diagnosis and confers no authority.
 - **AUTH-003** Servers MUST store only a verifier of each secret and reveal a
   token only in the response that creates it. An idempotent replay of
@@ -49,7 +49,7 @@ Every MUST maps to a check in the traceability table at the end.
   (actor attribute plus `server_admin` or `*` scope) in this profile (ADR-002).
 - **AUTH-007** Bootstrap of the first administrator is an operator action of
   the implementation; it MUST NOT rely on a default or reusable secret. (The
-  reference server uses `abby admin bootstrap`, refused once an admin exists.)
+  reference server uses `yak admin bootstrap`, refused once an admin exists.)
 
 ## 3 Boards, channels, and grants (ADR-002)
 
@@ -101,7 +101,7 @@ Every MUST maps to a check in the traceability table at the end.
   edit and delete of the root message and edit of the thread title return
   `409 task_root_protected` for every caller, including the root author and
   board administrators. Task routes replace them (`PATCH …/tasks/{id}`,
-  `POST …/tasks/{id}/root-redaction`). Replies, reactions, and non-`abby.`
+  `POST …/tasks/{id}/root-redaction`). Replies, reactions, and non-`yak.`
   root labels are unaffected.
 
 ## 4 Mutation guarantees
@@ -155,9 +155,9 @@ Every MUST maps to a check in the traceability table at the end.
 - **LBL-001** Label keys are lowercased, 1–64 bytes `[a-z0-9][a-z0-9._-]*`;
   values UTF-8 up to `limits.max_label_value_bytes`; at most
   `limits.max_labels_per_message` per message.
-- **LBL-002** Keys starting with `abby.` are server-maintained; clients setting
+- **LBL-002** Keys starting with `yak.` are server-maintained; clients setting
   them get `400 validation_failed`. (P2: the root message of a task thread
-  exposes the computed label `abby.task.state`, TASK-027..029.)
+  exposes the computed label `yak.task.state`, TASK-027..029.)
 - **LBL-003** Root-message labels classify the whole thread: a filter clause
   matches a message if its own label or its thread root's label matches.
   Clauses on different keys are ANDed; values listed for one key are ORed;
@@ -336,3 +336,21 @@ cover with an endpoint.
 | SNAP-001..003 | CT TestCT015SnapshotThenReplay, TestCT016, TestCT017 |
 | SNAP-004 | REF TestSnapshotItemLimit |
 | PAGE-001 | CT TestCT015 (paging), TestPAGA* (boards, channels, participants), TestPAGB* (grants, credentials, actors, audit); REF TestKeysetPage*, TestKeysetPagingBreaksTimestampTies; CLI `threads`/`read`/`board list`/`channel list`/`actors`/`grant list`/`credential list`/`actor list`/`audit` follow tokens |
+
+## Rename transition from Abby
+
+New credentials use `yak.<credential_id>.<secret>`. During the transition, the
+reference server also accepts `abby.<credential_id>.<secret>` against the same
+verifier, expiry, revocation, scope and actor checks. This changes no authority.
+
+New headers, discovery capabilities, problem types and server labels use the
+Yak names defined above. Clients must upgrade their wire names before the
+server upgrade; the transition promise covers tokens and environment settings.
+The claim proof format `acp1` and opaque cursor formats stay unchanged.
+
+Historical events retain their original payloads, facets, positions and label
+names. Filters may read `abby.*` labels from that history; `yak.*` filters match
+the new names without rewriting old records. Both label namespaces remain
+reserved against client writes. Current task-state views use `yak.task.state`.
+Existing server labels on messages remain readable with their stored names.
+See [the upgrade guide](../docs/rename-yak.md) for deployment steps.
