@@ -1,3 +1,5 @@
+// OP17-042: JSON-marshalled domain.ClaimView corpus (generator recorded in ledger).
+export const op17042ClaimCorpus = [{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"active","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":null,"end_recorded_at":null},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"released","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"expired","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"completed","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"failed","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"revoked","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"}];
 // Disposable in-page API. No real token, server, board or task is touched.
 export function operatorFixture() {
   const B='brd_test',now=Date.now(),iso=()=>new Date().toISOString();
@@ -6,7 +8,7 @@ export function operatorFixture() {
   const task={id:'t',board_id:B,thread_id:'th',channel_path:'ops',title:thread.title,owner_actor_id:'a',assignee_actor_id:null,current_claim:null,revision:3,brief_revision:1,state:'blocked',direct_action_required:true,block:{reason:'waiting for review'},dependencies:[],created_at:iso(),state_changed_at:iso()};
   const root={id:'root',thread_id:'th',channel_path:'ops',seq:1,is_root:true,author_actor_id:'a',created_at:iso(),revision:1,text:'<script>window.pwned=1</script>',mentions:[],labels:thread.labels,attribution:{credential_id:'cred_test'}};
   const T=window.__op={writes:[],task,thread,root,events:[],expired:false,failLabel:0,conflict:false,dropUnblock:false,seenKeys:[],revoked:false,kind:'human',scope:null,flags:true,resync:false,snapshots:0,authFailures:0};
-  const json=(b,status=200)=>new Response(status===204?null:JSON.stringify(b),{status,headers:{Date:new Date().toUTCString(),'Content-Type':'application/json'}});
+  const json=(b,status=200)=>new Response(status===204?null:JSON.stringify(b),{status,headers:{Date:T.renewDate || new Date().toUTCString(),'Content-Type':'application/json'}});
   window.fetch=async(url,opts={})=>{
     const u=new URL(url,location.href),p=u.pathname,m=opts.method||'GET';
     if(p==='/viewer-config')return json({operator:true});
@@ -42,7 +44,8 @@ export function operatorFixture() {
       if(T.failLabel){T.failLabel--;return json({code:'revision_conflict',current:'changes_requested'},412)}
       for(const op of body.operations) {if(op.op==='remove')delete root.labels[op.key];else root.labels[op.key]=op.value;}return json(root);
     }
-    if(p.endsWith('/claims')){task.state='claimed';task.current_claim={id:'q',actor_id:'a',lease_seconds:300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:'fake-secret-proof',task,brief:{revision:1}})}
+    if(p.endsWith('/claims')){task.state='claimed';task.current_claim={id:T.claimId || 'q',actor_id:'a',lease_seconds:T.testLease || 300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:'fake-secret-proof',task,brief:{revision:1}})}
+    if(p.endsWith('/renew')) { if(T.deferRenew) await new Promise(resolve=>T.resolveRenew=resolve); return json(T.renewReply || {}, 200); }
     if(p.endsWith('/release')){task.state='ready';task.current_claim=null;return json(task)}
     if(p.endsWith('/assignee')){task.assignee_actor_id=body.assignee_actor_id;task.revision++;return json(task)}
     if(m==='PATCH'&&p.endsWith('/tasks/t')){Object.assign(task,body);task.revision++;return json(task)}
@@ -50,6 +53,17 @@ export function operatorFixture() {
     return json({});
   };
   // Fault only the next captured operator write, after its synthetic commit.
+  T.enableRenewTest = () => {
+    T.testLease = 30; T.mono = 0; T.renewTimers = [];
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => T.mono });
+    const schedule = window.setTimeout, cancel = window.clearTimeout;
+    window.setTimeout = (fn, ms, ...args) => {
+      if (String(fn).includes('this.renew(path, c)')) { const timer = { fn, ms }; T.renewTimers.push(timer); return timer; }
+      return schedule(fn, ms, ...args);
+    };
+    window.clearTimeout = id => { if (typeof id === 'object') T.renewTimers = T.renewTimers.filter(t => t !== id); else cancel(id); };
+    T.fireRenew = () => { const t = T.renewTimers.shift(); if (!t) throw new Error('missing renewal timer'); return t.fn(); };
+  };
   const fetch = window.fetch;
   window.fetch = async (url, opts = {}) => {
     const before = T.writes.length;

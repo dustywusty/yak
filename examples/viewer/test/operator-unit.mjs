@@ -1,3 +1,4 @@
+import { op17042ClaimCorpus } from './operator-fixture.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { credentialRefusal, allowedRequest, OperatorSession, approvalRecord, taskIntent } from '../static/operator.js';
@@ -116,13 +117,13 @@ test('OP17-001 other methods and encoded non-key segments remain refused', () =>
 });
 
 // Execute the production transport without booting the DOM or owning a token.
-async function op17029Transport(fetch) {
+async function op17029Transport(fetch, performance = globalThis.performance) {
  const { readFile } = await import('node:fs/promises');
  const { runInNewContext } = await import('node:vm');
  const source = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
  const error = source.slice(source.indexOf('class ApiError'), source.indexOf('\nasync function api('));
  const transport = source.slice(source.indexOf('async function write('), source.indexOf('\nsession = new OperatorSession'));
- return runInNewContext(`${error}\n${transport}\nwrite`, { fetch, S: { operatorEnabled: true, token: 'synthetic' }, session: { active: true, me: me() }, allowedRequest, AbortController, setTimeout, clearTimeout });
+ return runInNewContext(`${error}\n${transport}\nwrite`, { fetch, performance, S: { operatorEnabled: true, token: 'synthetic' }, session: { active: true, me: me() }, allowedRequest, AbortController, setTimeout, clearTimeout });
 }
 for (const [name, status, response] of [
  ['claim headers then rejected body read', 200, () => ({ ok: true, status: 200, json: async () => { throw new TypeError('stream interrupted'); } })],
@@ -176,4 +177,66 @@ test('OP17-029 replay without proof explicitly completes as proof unavailable', 
   const i = s.intent(taskIntent('claim', '/v1/boards/b', { id: 't', brief_revision: 1 })); await s.perform(i);
   assert.equal(i.done, true); assert.equal(s.claims.size, 0); assert.match(s.notice, /proof unavailable/);
  } finally { await s.end({ unauthorized: true }); }
+});
+
+// OP17-042 uses the consumer's Go-marshalled views, not claim-create envelopes.
+const op17042Date = Date.parse('2026-11-20T00:00:00Z');
+const op17042Path = '/v1/boards/b/tasks/t';
+function op17042Response(edits = {}, timing = { serverDate: op17042Date, requestMono: 5000 }) {
+ const view = { ...op17042ClaimCorpus[0], ...edits };
+ if (timing) Object.defineProperty(view, '__responseTiming', { value: timing });
+ return view;
+}
+async function op17042Run(send, run) {
+ let mono = 0; const timers = new Set();
+ const s = new OperatorSession({ mono: () => mono, wall: () => -9e12, send, schedule: fn => { timers.add(fn); return fn; }, unschedule: fn => timers.delete(fn) });
+ s.start(me(), server, now); s.hold(op17042Path, { claim: { id: 'q', lease_seconds: 30 }, proof: 'synthetic' });
+ const c = s.claims.get(op17042Path); timers.clear(); mono = 5000;
+ try { await run(s, c, timers, value => mono = value); } finally { await s.end({ unauthorized: true }); }
+}
+for (const view of op17042ClaimCorpus) test(`OP17-042 Go ClaimView ${view.status}`, async () => {
+ await op17042Run(async () => op17042Response(view), async (s, c, timers) => {
+  await s.renew(op17042Path, c);
+  if (view.status === 'active') { assert.equal(c.proof, 'synthetic'); assert.equal(c.deadline, 34000); assert.equal(timers.size, 1); }
+  else { assert.equal(c.proof, null); assert.equal(s.claims.size, 0); assert.equal(timers.size, 0); assert.match(s.notice, /claim ended.*Refresh/); }
+ });
+});
+for (const [name, edits] of [ ['wrong id', { id: 'other' }], ['missing status', { status: undefined }], ['unknown status', { status: 'unknown' }], ['zero lease', { lease_seconds: 0 }], ['fractional lease', { lease_seconds: 1.5 }], ['oversized lease', { lease_seconds: Number.MAX_SAFE_INTEGER }], ['invalid expiry', { expires_at: 'invalid' }], ['invalid acquisition', { acquired_at: null }], ['inverted timestamps', { acquired_at: '2026-11-20T00:01:00Z' }], ['active ended', { ended_at: '2026-11-20T00:00:01Z' }], ['active end recorded', { end_recorded_at: '2026-11-20T00:00:01Z' }] ]) test(`OP17-042 rejects ${name}`, async () => {
+ await op17042Run(async () => op17042Response(edits), async (s, c, timers) => { await s.renew(op17042Path, c); assert.equal(c.proof, null); assert.equal(timers.size, 0); assert.match(s.notice, /Refresh/); });
+});
+for (const [name, edits, timing, receive, expected] of [
+ ['old replay expiry', { expires_at: '2026-11-20T00:00:10Z' }, { serverDate: op17042Date, requestMono: 5000 }, 7000, 14000],
+ ['delayed response and skewed wall', {}, { serverDate: op17042Date, requestMono: 5000 }, 20000, 34000],
+ ['elapsed started lease', {}, { serverDate: op17042Date, requestMono: 5000 }, 35001, null],
+ ['elapsed server expiry', { expires_at: '2026-11-20T00:00:01Z' }, { serverDate: op17042Date, requestMono: 5000 }, 7000, null],
+ ['missing timing retains old bound', {}, null, 7000, 30000],
+ ['invalid timing retains old bound', {}, { serverDate: NaN, requestMono: 5000 }, 7000, 30000],
+ ['future dispatch retains old bound', {}, { serverDate: op17042Date, requestMono: 9000 }, 7000, 30000],
+ ['unknown timing after old deadline', {}, null, 30001, null],
+]) test(`OP17-042 ${name}`, async () => {
+ let advance; await op17042Run(async () => { advance(receive); return op17042Response(edits, timing); }, async (s, c, timers, setMono) => {
+  advance = setMono; await s.renew(op17042Path, c);
+  if (expected === null) { assert.equal(c.proof, null); assert.equal(timers.size, 0); }
+  else { assert.equal(c.deadline, expected); assert.equal(c.proof, 'synthetic'); assert.equal(timers.size, 1); if (!timing || !Number.isFinite(timing.serverDate) || timing.requestMono > receive) assert.match(s.notice, /Refresh/); }
+ });
+});
+test('OP17-042 accepted lease uses original ambiguous dispatch', async () => {
+ let advance, fail = true; const keys = [];
+ await op17042Run(async (m, p, b, h) => { keys.push(h['Idempotency-Key']); if (fail) { fail = false; throw new Error('network'); } return op17042Response({ lease_seconds: 20 }, { serverDate: op17042Date, requestMono: 10000 }); }, async (s, c, timers, setMono) => {
+  advance = setMono; await s.renew(op17042Path, c); advance(10000); timers.clear(); await s.renew(op17042Path, c);
+  assert.equal(c.deadline, 25000); assert.equal(c.lease, 20); assert.equal(keys[0], keys[1]); assert.equal(c.key, null);
+ });
+});
+test('OP17-042 late successful terminal response cannot drop replacement', async () => {
+ let resolve; await op17042Run(async () => new Promise(r => resolve = r), async (s, c) => {
+  const pending = s.renew(op17042Path, c); s.hold(op17042Path, { claim: { id: 'new', lease_seconds: 30 }, proof: 'new' });
+  resolve(op17042Response({ status: 'revoked' })); await pending; assert.equal(s.claims.get(op17042Path).proof, 'new'); assert.equal(s.notice, null);
+ });
+});
+test('OP17-042 transport samples dispatch before delayed body and hides metadata', async () => {
+ let mono = 5000;
+ const send = await op17029Transport(async () => { mono = 9000; return new Response(JSON.stringify(op17042ClaimCorpus[0]), { headers: { Date: 'Fri, 20 Nov 2026 00:00:00 GMT' } }); }, { now: () => mono });
+ const result = await send('POST', op17042Path + '/claims/q/renew', {});
+ assert.equal(result.__responseTiming.serverDate, op17042Date); assert.equal(result.__responseTiming.requestMono, 5000);
+ assert.equal(Object.keys(result).includes('__responseTiming'), false); assert.deepEqual(JSON.parse(JSON.stringify(result)), op17042ClaimCorpus[0]);
 });

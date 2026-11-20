@@ -14,7 +14,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 if (!CHROME && !process.env.VIEWER_PREVIEW) { console.error('Chrome not found; set CHROME=/path/to/chrome'); process.exit(2); }
 
-import { operatorFixture } from './operator-fixture.mjs';
+import { operatorFixture, op17042ClaimCorpus } from './operator-fixture.mjs';
 // ---------- static server and Chrome ----------
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname.replace(/^\/$/, '/index.html');
@@ -176,7 +176,55 @@ async function responseBodyFailureCase() {
  assert('browser has no exceptions', errors.length === 0);
  console.log(`OP17-029 executed ${assertions} assertions across six fresh body-failure fixtures`);
 }
-const operatorCases = new Map([['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase]]);
+async function renewalClaimViewCase() {
+ let assertions = 0;
+ const assert = (name, ok) => { assertions++; check(`OP17-042: ${name}`, ok); };
+ const date = 'Fri, 20 Nov 2026 00:00:00 GMT';
+ const variants = [
+  ...op17042ClaimCorpus.map(view => [view.status, view, 7000, view.status === 'active' ? 27 : null]),
+  ['wrong id', { ...op17042ClaimCorpus[0], id: 'wrong' }, 7000, null],
+  ['malformed', {}, 7000, null],
+  ['old replay expiry', { ...op17042ClaimCorpus[0], expires_at: '2026-11-20T00:00:10Z' }, 7000, 7],
+  ['delayed skewed clock', op17042ClaimCorpus[0], 20000, 14],
+  ['elapsed started lease', op17042ClaimCorpus[0], 35001, null],
+  ['elapsed expiry', { ...op17042ClaimCorpus[0], expires_at: '2026-11-20T00:00:01Z' }, 7000, null],
+  ['missing Date', op17042ClaimCorpus[0], 7000, 23],
+  ['replacement', { ...op17042ClaimCorpus[0], status: 'revoked' }, 7000, 'replacement'],
+ ];
+ for (const [name, view, receive, remaining] of variants) {
+  await freshIdentityFixture('window.__op.task.state="ready";window.__op.enableRenewTest();');
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-renew-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'"); await open();
+   await click('Work on this now (while this tab is open)'); await confirm('Claim');
+   // The fixture grants 30 seconds for these cases so the original bound is observable.
+   await ev(`window.__op.renewReply=${JSON.stringify(view)};window.__op.renewDate=${JSON.stringify(name === 'missing Date' ? 'unknown' : date)};window.__op.mono=5000;window.__op.deferRenew=true;window.__op.pendingRenew=window.__op.fireRenew();void 0`);
+   await until("typeof window.__op.resolveRenew==='function'");
+   if (remaining === 'replacement') {
+    await click('Release'); await confirm('Release');
+    await ev("window.__op.claimId='replacement'");
+    await click('Work on this now (while this tab is open)'); await confirm('Claim');
+   }
+   // Wall time is deliberately far behind the server; only monotonic bounds count.
+   await ev(`window.__op.mono=${receive};Date.now=()=>-9000000000000;window.__op.resolveRenew();`);
+   await ev('window.__op.pendingRenew'); await sleep(40);
+   assert(`${name} sends exactly one renewal with proof and receipt`, await ev("window.__op.writes.filter(w=>w.path.endsWith('/renew')).length===1 && window.__op.writes.find(w=>w.path.endsWith('/renew')).headers['Yak-Claim-Proof']==='fake-secret-proof' && !!window.__op.writes.find(w=>w.path.endsWith('/renew')).headers['Idempotency-Key']"));
+   if (remaining === null) {
+    assert(`${name} drops held claim and tells person to refresh`, await ev("document.querySelector('#operator-identity').textContent.includes('Your claim ended. Refresh') && document.querySelector('.op-lease').textContent.includes('Your claim ended') && window.__op.renewTimers.length===0"));
+    await ev("document.querySelector('#operator-logout').click()"); await until("!document.body.dataset.operator");
+    assert(`${name} discarded proof is never released`, await ev("!window.__op.writes.some(w=>w.path.endsWith('/release'))"));
+   } else {
+    // changed() runs on the next tick for a retained claim.
+    await sleep(1050);
+    assert(`${name} retains only conservative remaining time`, await ev(`document.querySelector('.op-lease').textContent.includes(${JSON.stringify(remaining === 'replacement' ? '28 seconds remaining' : remaining + ' seconds remaining')}) && window.__op.renewTimers.length===1`));
+    if (name === 'missing Date') assert('unknown Date requests refresh', await ev("document.querySelector('#operator-identity').textContent.includes('Refresh')"));
+   }
+  } finally { await ev("document.querySelector('#operator-logout')?.click()"); }
+ }
+ assert('no browser exceptions', errors.length === 0);
+ console.log(`OP17-042 executed ${assertions} assertions across ${variants.length} fresh renewal fixtures`);
+}
+const operatorCases = new Map([['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

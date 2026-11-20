@@ -141,9 +141,29 @@ export class OperatorSession {
     // Keep this exact receipt across ambiguous network failures.
     if (!c.key) { c.key = randomKey(); c.started = this.mono(); }
     try {
-      await this.send('POST', `${path}/claims/${c.id}/renew`, { lease_seconds: c.lease }, { 'Yak-Claim-Proof': c.proof, 'Idempotency-Key': c.key, 'Yak-Run-Id': this.run });
+      const view = await this.send('POST', `${path}/claims/${c.id}/renew`, { lease_seconds: c.lease }, { 'Yak-Claim-Proof': c.proof, 'Idempotency-Key': c.key, 'Yak-Run-Id': this.run });
       if (!this.active || this.ending || this.claims.get(path) !== c) return;
-      c.deadline = c.started + c.lease * 1000; c.key = null; this.renewLater(path, c);
+      const timestamp = (value) => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : NaN;
+      const acquired = timestamp(view?.acquired_at), expires = timestamp(view?.expires_at);
+      const lease = view?.lease_seconds, maxLease = this.server.limits?.claim_lease_max_seconds;
+      if (view?.id !== c.id || view.status !== 'active' || !Number.isSafeInteger(lease) || lease <= 0 ||
+          !Number.isSafeInteger(lease * 1000) || (Number.isFinite(maxLease) && lease > maxLease) ||
+          !Number.isFinite(acquired) || !Number.isFinite(expires) || acquired >= expires ||
+          view.ended_at !== null || view.end_recorded_at !== null) return this.lose(path);
+      const timing = view.__responseTiming, now = this.mono();
+      let deadline = c.started + lease * 1000;
+      if (Number.isFinite(timing?.serverDate) && Number.isFinite(timing?.requestMono) &&
+          timing.requestMono >= c.started && timing.requestMono <= now) {
+        if (acquired > timing.serverDate + 1000) return this.lose(path);
+        // Date has second precision. Anchor at dispatch, never response receipt
+        // or the browser wall clock, including an idempotent replay's expiry.
+        deadline = Math.min(deadline, timing.requestMono + Math.max(0, expires - timing.serverDate - 1000));
+      } else {
+        deadline = Math.min(deadline, c.deadline);
+        this.notice = 'Claim renewal time unavailable. Refresh the task before acting again.';
+      }
+      if (!Number.isFinite(deadline) || deadline <= now) return this.lose(path);
+      c.deadline = deadline; c.lease = lease; c.key = null; this.renewLater(path, c);
     } catch (e) {
       if (!this.active || this.ending || this.claims.get(path) !== c) return;
       if (e.status === 401) return this.end({ unauthorized: true });
