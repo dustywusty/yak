@@ -66,10 +66,17 @@ export function isGateApprovalEvent(e, actors) {
     actors.find((a) => a.id === e.actor_id)?.kind === 'human';
 }
 export function approvalRecord(events, actors, taskId) {
-  let result = null;
+  let result = null, lastState, lastBlock;
   for (const e of events) {
     if ((e.payload?.task?.id || e.task_id) !== taskId) continue;
-    if (e.type === 'task.blocked' || e.type === 'task.reopened') result = null;
+    const task = e.payload?.task;
+    // Ignore ordinary revisions while blocked; only a new block generation
+    // invalidates approval. Projections are authoritative in recorded order.
+    const block = task && JSON.stringify([task.brief_revision, task.block?.at,
+      task.block?.cause, task.block?.by_actor_id, task.block?.reason]);
+    if (e.type === 'task.blocked' || e.type === 'task.reopened' ||
+        (task?.state === 'blocked' && (lastState !== 'blocked' || block !== lastBlock))) result = null;
+    if (task?.state != null) { lastState = task.state; lastBlock = block; }
     if (isGateApprovalEvent(e, actors)) result = e;
   }
   return result;

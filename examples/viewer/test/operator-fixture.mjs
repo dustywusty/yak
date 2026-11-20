@@ -178,3 +178,38 @@ export function operatorFixture() {
   };
 
 }
+
+// OP17-036: recorded order determines the current blocked generation.
+export function op17036Cases() {
+  let seq = 0;
+  const event = (type, state, extra = {}) => ({
+    id: `generation-${++seq}`, type, actor_id: 'bot', recorded_at: '2026-11-20T00:00:00Z',
+    payload: { task: { id: 't', state, direct_action_required: true,
+      brief_revision: 1, block: state === 'blocked' ? { at: '2026-11-20T00:00:01Z', reason: 'review' } : null } }, ...extra,
+  });
+  const human = event('task.unblocked', 'ready', { actor_id: 'a' });
+  const brief = event('task.brief_updated', 'blocked');
+  const agent = event('task.unblocked', 'ready');
+  const unrelated = event('task.assignee_changed', 'blocked');
+  const other = event('task.brief_updated', 'blocked'); other.payload.task.id = 'other';
+  const sameGeneration = {...human, payload: brief.payload};
+  const cases = [
+    ['human gate remains current', [human], human],
+    ['brief block clears approval', [human, brief], null],
+    ['agent after brief cannot revive approval', [human, brief, agent], null],
+    ['ready brief preserves approval', [human, event('task.brief_updated', 'ready')], human],
+    ['other task block does not interfere', [human, other], human],
+    ['unrelated blocked event cannot revive approval', [human, brief, unrelated, agent], null],
+    ['another projection entering blocked clears approval', [human, event('task.assignee_changed', 'blocked'), agent], null],
+    ['new human after brief approves', [human, brief, agent, human], human],
+    ['unchanged blocked projection preserves current generation', [brief, sameGeneration, unrelated], sameGeneration],
+    ['changed block identity clears approval', [brief, sameGeneration, {...unrelated, payload: {task: {...brief.payload.task, block: {...brief.payload.task.block, at: '2026-11-20T00:00:02Z'}}}}], null],
+  ];
+  // The synthetic blocked unblock probes identity tracking on unchanged projections.
+  for (const type of ['task.blocked', 'task.reopened']) {
+    const reset = event(type, 'blocked');
+    cases.push([`${type} clears approval`, [human, reset, agent], null]);
+    cases.push([`new human after ${type} approves`, [human, reset, agent, human], human]);
+  }
+  return cases.map(([name, events, approval]) => ({name, events, approval}));
+}

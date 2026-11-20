@@ -1,6 +1,7 @@
 import { op17020Cases, op17042ClaimCorpus } from './operator-fixture.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { op17036Cases } from './operator-fixture.mjs';
 import { credentialRefusal, allowedRequest, OperatorSession, approvalRecord, taskIntent } from '../static/operator.js';
 const now=Date.now();
 const me=()=>({actor:{id:'a',handle:'alice',kind:'human'},credential:{id:'c',scopes:['read','post','label','claim','task_manage'],board_ids:['b'],expires_at:new Date(now+28800000).toISOString(),may_manage_credentials:false,may_delegate:false}});
@@ -507,4 +508,10 @@ for (const type of ['task.blocked', 'task.reopened']) test(`OP17-020 latest ${ty
  const reset = {...c.candidate, type};
  assert.equal(approvalRecord([...c.events, reset], actors, 't'), null);
  assert.equal(approvalRecord([...c.events, reset, c.candidate], actors, 't'), c.candidate);
+});
+
+for (const c of op17036Cases()) test(`OP17-036 ${c.name}`, () => {
+ const actors = [{id:'a',kind:'human'}, {id:'bot',kind:'agent'}];
+ assert.equal(approvalRecord(c.events, actors, 't'), c.approval);
+ assert.equal(approvalRecord(c.events, actors, 'unrelated'), null);
 });
