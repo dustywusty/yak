@@ -162,7 +162,7 @@ const sanitize = (value) => String(value)
 const safeCode = (value) => value == null ? null : String(value).replace(/[^A-Z0-9_]/gi, '').slice(0, 80);
 const emit = (marker, fields = {}) => {
   const record = { marker, elapsed_ms: elapsed(), ...fields };
-  const encode = () => STARTUP_PREFIX + JSON.stringify(record).replace(/::/g, '\u003a\u003a');
+  const encode = () => STARTUP_PREFIX + JSON.stringify(record).replace(/::/g, '\\u003a\\u003a').replace(/##\[/g, '\\u0023\\u0023[');
   let line = encode();
   // JSON escaping can expand a byte-bounded tail by up to six times.
   while (Buffer.byteLength(line) + 1 > 32768 && record.sanitized_stderr_tail) {
