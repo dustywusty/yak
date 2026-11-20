@@ -3,6 +3,7 @@
 // inserted as text nodes, never as HTML.
 
 import { createFeed } from './feed.js';
+import { createSkins } from './skins.js';
 
 const TOKEN_KEY = 'abby-viewer-token';
 const WAIT_MS = 25000;     // EVT-011: long-poll budget, below limits.max_wait_ms
@@ -86,6 +87,7 @@ function loadToken() {
 function needToken(message) {
   stopLive();
   feed.stop();
+  skins.unmount();
   S.token = null; S.me = null; S.board = null;
   for (const id of ['board-list', 'channel-list', 'thread-list', 'thread-view']) $(id).replaceChildren();
   try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* storage blocked */ }
@@ -352,6 +354,8 @@ async function refreshView() {
 function parseRoute() {
   const [path, query = ''] = location.hash.slice(1).split('?');
   if (path === '/boards') return { view: 'boards' };
+  const skin = /^\/(dispatch|wall|irc)$/.exec(path);
+  if (skin) return { view: 'skin', skin: skin[1], board: new URLSearchParams(query).get('b') || '' };
   const m = /^\/b\/([^/]+)$/.exec(path);
   if (!m) return { view: 'live' };
   const q = new URLSearchParams(query);
@@ -377,8 +381,10 @@ async function onRoute() {
     feed.start();
     const r = parseRoute();
     feed.setVisible(r.view === 'live');
+    if (r.view !== 'skin') skins.unmount();
     if (r.view !== 'board') { stopLive(); S.board = null; show(r.view); renderTop(); }
     if (r.view === 'live') return;
+    if (r.view === 'skin') return skins.mount(r);
     if (r.view === 'boards') {
       const { boards } = await api('GET', '/v1/boards');
       renderBoards(boards);
@@ -433,7 +439,7 @@ const chips = (labels) => h('span', { class: 'chips' },
   Object.entries(labels || {}).map(([k, v]) => h('span', { class: 'chip' }, v === '' ? k : `${k}: ${v}`)));
 
 function show(id) {
-  for (const s of ['login', 'live', 'boards', 'board']) $(s).hidden = s !== id;
+  for (const s of ['login', 'live', 'boards', 'board', 'skin']) $(s).hidden = s !== id;
   $('nav').hidden = id === 'login';
   for (const a of $('nav').children) a.classList.toggle('sel', a.dataset.view === id);
 }
@@ -586,6 +592,11 @@ $('label-filter').addEventListener('input', (ev) => {
 const feed = createFeed({
   api, h, time, href,
   onTask: noteTask,
+  onUnauthorized: () => needToken('The server rejected the token (401). Paste a valid token.'),
+});
+
+const skins = createSkins({
+  api, setStatus,
   onUnauthorized: () => needToken('The server rejected the token (401). Paste a valid token.'),
 });
 

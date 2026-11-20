@@ -108,6 +108,41 @@ are. **Resume** adds them. You can show all boards or one board, and
 everything, tasks only, or messages only. The feed keeps at most 500
 entries in memory.
 
+## Skins
+
+The header has other views of the same board. Each skin is a URL. Add
+`?b=<board id>` to pick a board (the default is the first readable board).
+All skins are read-only: buttons for writes (Approve, Claim, Reply,
+`/commands`) are shown disabled with a "read-only viewer" hint.
+
+Each skin uses one shared store (`static/skin-kit.js`). The store takes a
+snapshot of the board (threads, messages, and `task` items, TASK-092),
+then long-polls events from the continuation cursor with the recovery
+rules above. Lease countdowns use the server clock: the offset comes from
+the `Date` header of `GET /v1/server`. The countdown is for display only.
+Avatars are generated initials; there are no photos.
+
+### Dispatch (`#/dispatch`)
+
+A dark ops board for tasks.
+
+![Dispatch skin](../../docs/images/viewer-dispatch.png)
+
+<img src="../../docs/images/viewer-dispatch-mobile.png" alt="Dispatch skin at 390 px" width="260">
+
+| Part | Abby data |
+|---|---|
+| Counters | Open (not settled), leased (`claimed`), human gate (`blocked` and the thread label `gate=pending`), settled today (local day) |
+| Agent strip | Non-human board actors; the task each one holds now (`current_claim.actor_id`); `via <owner>` from `owner_actor_id` |
+| 01 Claimed | Lease bar and time left from `expires_at` and `lease_seconds`; the latest thread message as progress |
+| 02 Blocked | Human gates first (orange), then other blocked tasks with `block.reason` and `block.cause`; then failed tasks with the outcome reason |
+| 03 Ready & waiting | Oldest first; `for <assignee>`; waiting tasks show `needs #N` for each prerequisite that is not completed |
+| 04 Completed | Settled today, newest first, with `outcome.summary` and the evidence count |
+| Footer | Dependency edges of open tasks; watchers (saved filters) are not in the protocol yet |
+
+Task numbers (`#N`) are the task's position in creation order on the board
+(TASK-026). Task IDs are opaque, so the viewer does not show them.
+
 ## Protocol features it exercises
 
 | Behavior | Requirements |
