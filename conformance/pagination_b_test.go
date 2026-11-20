@@ -196,7 +196,7 @@ func TestPAGBGrantsPaging(t *testing.T) { // PAGE-001
 	first := f.owner.must(200, f.owner.do("GET", f.p("/grants?limit=1"), nil)).Body["grants"].([]any)[0].(J)
 	f.owner.must(200, f.owner.do("DELETE", f.p("/grants/"+first["id"].(string)), nil))
 
-	existing := pagbAll(t, f.owner, f.p("/grants?include_revoked=true"), "grants", "created_at", 200, nil)
+	existing := pagbAll(t, f.owner, f.p("/grants?include_revoked=true"), "grants", "created_at", pagbMaxPageSize(t), nil)
 	if len(existing) != 7 {
 		t.Fatalf("want 7 grants including revoked, got %d", len(existing))
 	}
@@ -225,7 +225,7 @@ func TestPAGBCredentialsPaging(t *testing.T) { // PAGE-001
 		a.must(201, a.do("POST", "/v1/credentials", J{"actor_id": who.id, "scopes": []string{"read"}}, newKey()))
 	}
 	path := "/v1/credentials?actor_id=" + who.id
-	existing := pagbAll(t, a, path, "credentials", "created_at", 200, nil)
+	existing := pagbAll(t, a, path, "credentials", "created_at", pagbMaxPageSize(t), nil)
 	if len(existing) != 7 {
 		t.Fatalf("want 7 credentials, got %d", len(existing))
 	}
@@ -249,10 +249,10 @@ func TestPAGBActorsPaging(t *testing.T) { // PAGE-001
 	for i := 0; i < 3; i++ {
 		mine = append(mine, newActor(t, "pgact").id)
 	}
-	// A shared server may hold many actors: walk with large pages while
+	// A shared server may hold many actors: walk with max_page_size pages while
 	// actors are created concurrently, then check the small-page prefix.
 	var ins pagbInserter
-	got := pagbAll(t, a, "/v1/actors", "actors", "created_at", 200, func(int) {
+	got := pagbAll(t, a, "/v1/actors", "actors", "created_at", pagbMaxPageSize(t), func(int) {
 		ins.kick(func() error {
 			return pagbPost(adminToken, "/v1/actors", J{"kind": "agent", "handle": "pgins" + rnd()})
 		})
@@ -272,7 +272,7 @@ func TestPAGBActorsPaging(t *testing.T) { // PAGE-001
 	}
 	for i := range small {
 		if small[i].ID != got[i].ID {
-			t.Fatalf("limit=1 walk diverges from limit=200 walk at %d: %s vs %s", i, small[i].ID, got[i].ID)
+			t.Fatalf("limit=1 walk diverges from max-page walk at %d: %s vs %s", i, small[i].ID, got[i].ID)
 		}
 	}
 }
@@ -289,7 +289,7 @@ func TestPAGBBoardAuditPaging(t *testing.T) { // PAGE-001, AUTH-018
 	// The newest event is the last grant's revoke.
 	f.owner.must(200, f.owner.do("DELETE", f.p("/grants/"+newest), nil))
 
-	existing := pagbAll(t, f.owner, f.p("/audit-events"), "audit_events", "recorded_at", 200, nil)
+	existing := pagbAll(t, f.owner, f.p("/audit-events"), "audit_events", "recorded_at", pagbMaxPageSize(t), nil)
 	if len(existing) < 7 {
 		t.Fatalf("want at least 7 board audit events, got %d", len(existing))
 	}
