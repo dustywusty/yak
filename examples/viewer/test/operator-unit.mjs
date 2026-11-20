@@ -123,10 +123,10 @@ async function op17029Transport(fetch, performance = globalThis.performance) {
  const source = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
  const error = source.slice(source.indexOf('class ApiError'), source.indexOf('\nasync function api('));
  const transport = source.slice(source.indexOf('async function write('), source.indexOf('\nsession = new OperatorSession'));
- return runInNewContext(`${error}\n${transport}\nwrite`, { fetch, performance, S: { operatorEnabled: true, token: 'synthetic' }, session: { active: true, me: me() }, allowedRequest, AbortController, setTimeout, clearTimeout });
+ return runInNewContext(`${error}\n${transport}\nwrite`, { fetch, performance, S: { operatorEnabled: true, token: 'synthetic' }, session: { active: true, me: me() }, parseWireJSON, stringifyWireJSON, allowedRequest, AbortController, setTimeout, clearTimeout });
 }
 for (const [name, status, response] of [
- ['claim headers then rejected body read', 200, () => ({ ok: true, status: 200, json: async () => { throw new TypeError('stream interrupted'); } })],
+ ['claim headers then rejected body read', 200, () => ({ ok: true, status: 200, text: async () => { throw new TypeError('stream interrupted'); } })],
  ['broken 200 JSON', 200, () => new Response('{broken', { status: 200 })],
  ['truncated 201 body', 201, () => new Response('{"id":', { status: 201 })],
 ]) {
@@ -153,7 +153,7 @@ for (const [name, status, response] of [
 for (const status of [401, 412]) for (const broken of ['json', 'stream', 'null']) {
  test(`OP17-029 malformed ${status} ${broken} retains the known HTTP rejection`, async () => {
   let calls = 0;
-  const send = await op17029Transport(async () => { calls++; return broken === 'stream' ? { ok: false, status, json: async () => { throw new TypeError('stream interrupted'); } } : new Response(broken === 'null' ? 'null' : '{broken', { status }); });
+  const send = await op17029Transport(async () => { calls++; return broken === 'stream' ? { ok: false, status, text: async () => { throw new TypeError('stream interrupted'); } } : new Response(broken === 'null' ? 'null' : '{broken', { status }); });
   const s = new OperatorSession({ send }); s.start(me(), server, now);
   try {
    const i = s.intent(taskIntent('flag', '/v1/boards/b', { id: 't', revision: 2 }, { value: true }));
@@ -167,7 +167,7 @@ for (const status of [401, 412]) for (const broken of ['json', 'stream', 'null']
 }
 test('OP17-029 204 succeeds without reading a body', async () => {
  let reads = 0;
- const send = await op17029Transport(async () => ({ ok: true, status: 204, json: async () => { reads++; throw new Error('must not read'); } }));
+ const send = await op17029Transport(async () => ({ ok: true, status: 204, text: async () => { reads++; throw new Error('must not read'); } }));
  assert.equal(await send('POST', '/v1/boards/b/tasks', {}), null); assert.equal(reads, 0);
 });
 test('OP17-029 replay without proof explicitly completes as proof unavailable', async () => {
@@ -267,7 +267,7 @@ test('OP17-042 transport samples dispatch before delayed body and hides metadata
  const send = await op17029Transport(async () => { mono = 9000; return new Response(JSON.stringify(op17042ClaimCorpus[0]), { headers: { Date: 'Fri, 20 Nov 2026 00:00:00 GMT' } }); }, { now: () => mono });
  const result = await send('POST', op17042Path + '/claims/q/renew', {});
  assert.equal(result.__responseTiming.serverDate, op17042Date); assert.equal(result.__responseTiming.requestMono, 5000);
- assert.equal(Object.keys(result).includes('__responseTiming'), false); assert.deepEqual(JSON.parse(JSON.stringify(result)), op17042ClaimCorpus[0]);
+ assert.equal(Object.keys(result).includes('__responseTiming'), false); assert.deepEqual(JSON.parse(JSON.stringify(result)), { ...op17042ClaimCorpus[0], revision: '2', brief_revision: '1' });
 });
 
 for (const ending of ['logout', 'idle', 'expiry', 'pagehide']) test(`OP17-039 ${ending} shares session provenance across actions, renewals, releases and revoke`, async () => {
@@ -333,4 +333,79 @@ for (const source of ['explicit', 'action', 'renew', 'release']) test(`OP17-039 
   for (const call of calls) assert.equal(call.headers['Yak-Run-Id'], run);
   assert.equal(s.active, false); assert.equal(s.run, null); assert.equal(s.claims.size, 0);
  } finally { await s.end({ unauthorized: true }); }
+});
+
+// Import the standalone tokenizer suite so the existing unit CI runs it too.
+const { parseWireJSON, stringifyWireJSON, compareRevision } = await import('./wire-json.test.mjs');
+
+test('OP17-043 task confirmation snapshot and If-Match keep exact digits', () => {
+ for (const revision of ['5', '9007199254740993', '9223372036854775807']) {
+  const task = parseWireJSON(`{"id":"t","revision":${revision},"brief_revision":${revision}}`);
+  for (const kind of ['flag', 'approve', 'assign']) {
+   const intent = taskIntent(kind, '/v1/boards/b', task, { value: true, assignee: 'a', root: 'm' });
+   assert.equal(intent.task.revision, revision);
+   assert.equal(intent.steps[0].headers['If-Match'], `"${revision}"`);
+  }
+  const claim = taskIntent('claim', '/v1/boards/b', task);
+  assert.equal(stringifyWireJSON(claim.steps[0].body), `{"lease_seconds":300,"expect_brief_revision":${revision}}`);
+ }
+});
+
+test('OP17-043 production read/write transports retain exact nested revisions', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
+ const start = source.indexOf('class ApiError');
+ const apiSource = source.slice(start, source.indexOf('// ---------- token'));
+ const request = runInNewContext(`${apiSource}\napi`, { parseWireJSON, stringifyWireJSON, fetch: async () => new Response('{"thread":{"revision":9007199254740993},"messages":[{"revision":9223372036854775807}]}'), S: { abort: new AbortController() }, session: null, location: { origin: 'http://synthetic.invalid' }, performance, URL, DOMException });
+ const result = await request('GET', '/v1/boards/b/threads/th');
+ assert.equal(result.thread.revision, '9007199254740993');
+ assert.equal(result.messages[0].revision, '9223372036854775807');
+ let sent;
+ const write = await op17029Transport(async (path, options) => { sent = options; return new Response('{"revision":9223372036854775807}'); });
+ const updated = await write('POST', '/v1/boards/b/tasks/t/claims', { lease_seconds: 300, expect_brief_revision: '9007199254740993' });
+ assert.equal(sent.body, '{"lease_seconds":300,"expect_brief_revision":9007199254740993}');
+ assert.equal(updated.revision, '9223372036854775807');
+});
+
+test('OP17-043 production putTask compares revision strings numerically', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/skin-kit.js', import.meta.url), 'utf8');
+ const body = source.slice(source.indexOf('const putTask ='), source.indexOf('\n\n  async function snapshot'));
+ const S = { tasks: new Map(), order: [] };
+ const putTask = runInNewContext(`${body}\nputTask`, { S, compareRevision });
+ for (const revision of ['9', '10', '9007199254740992', '9007199254740993']) {
+  putTask({ id: 't', revision }); assert.equal(S.tasks.get('t').revision, revision);
+ }
+ putTask({ id: 't', revision: '9007199254740992' }); assert.equal(S.tasks.get('t').revision, '9007199254740993');
+ assert.deepEqual(S.order, ['t']);
+});
+
+test('OP17-043 production message edit header interpolates the exact parsed revision', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/operator-ui.js', import.meta.url), 'utf8');
+ const body = source.slice(source.indexOf('function messageControls('), source.indexOf('\n  function composer('));
+ for (const revision of ['5', '9007199254740993', '9223372036854775807']) {
+  let save, intent;
+  const make = runInNewContext(`${body}\nmessageControls`, { h: () => ({ append() {} }), provenance: () => '', session: { me: { actor: { id: 'a' } }, server: {} }, current: { B: '/v1/boards/b', thread: {} }, rights: () => true, draft: () => ({ dataset: {} }), writeButton: (name, click) => { save = click; return {}; }, field: () => ({}), enc: encodeURIComponent, send: (button, spec) => { intent = spec; } });
+  make(parseWireJSON(`{"id":"m","author_actor_id":"a","text":"old","revision":${revision}}`));
+  save(); assert.equal(intent.steps[0].headers['If-Match'], `"${revision}"`);
+ }
+});
+
+test('OP17-043 production confirmation displays exactly the revision sent', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/operator-ui.js', import.meta.url), 'utf8');
+ const body = source.slice(source.indexOf('async function confirmTask('), source.indexOf('\n  function action('));
+ for (const revision of ['5', '9007199254740993', '9223372036854775807']) {
+  const task = parseWireJSON(`{"id":"t","title":"Synthetic","revision":${revision},"brief_revision":${revision},"state":"ready"}`);
+  let confirmed;
+  const confirm = runInNewContext(`${body}\nconfirmTask`, { refreshTask: async () => task, manager: () => true, actor: () => '@synthetic', session: { me: { actor: { id: 'a' } } }, taskIntent, current: { B: '/v1/boards/b', thread: { root_message_id: 'm' } }, structuredClone, confirmation: (name, details, spec) => { confirmed = { details, spec }; }, say: message => assert.fail(message) });
+  await confirm('flag', 'Require my approval', {}, { value: true });
+  assert.ok(confirmed.details.includes(`Revision: ${revision}; brief: ${revision}`));
+  assert.equal(confirmed.spec.steps[0].headers['If-Match'], `"${revision}"`);
+ }
 });

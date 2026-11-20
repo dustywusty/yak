@@ -2,6 +2,8 @@
 // store, server-relative time, lease math, avatars, and a jump palette.
 // All content is inserted as text, never as HTML.
 
+import { parseWireJSON, compareRevision } from './wire-json.js';
+
 const enc = encodeURIComponent;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TERMINAL = ['completed', 'failed', 'canceled'];
@@ -20,7 +22,7 @@ export async function syncClock() {
     const t1 = Date.now();
     const d = Date.parse(res.headers.get('Date'));
     if (!Number.isNaN(d)) clock.offset = d + 500 - (t0 + t1) / 2; // mid-second estimate
-    const doc = await res.json();
+    const doc = await res.text().then(parseWireJSON);
     Object.assign(clock.limits, doc.limits || {});
   } catch { /* keep the last offset */ }
 }
@@ -152,7 +154,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const putTask = (t) => {
     const cur = S.tasks.get(t.id);
     if (!cur) S.order.push(t.id);
-    if (!cur || t.revision >= cur.revision) S.tasks.set(t.id, t);
+    if (!cur || compareRevision(t.revision, cur.revision) >= 0) S.tasks.set(t.id, t);
   };
 
   async function snapshot() {

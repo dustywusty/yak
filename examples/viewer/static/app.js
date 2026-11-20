@@ -6,6 +6,8 @@
 // with Activity = feed.js), #/boards, and the skins #/board (also #/wall),
 // #/irc (skins.js). Board data is kept live by the store in skin-kit.js.
 
+import { parseWireJSON, stringifyWireJSON } from './wire-json.js';
+
 import { createFeed } from './feed.js';
 import { createSkins } from './skins.js';
 import { createTerm } from './term.js';
@@ -57,7 +59,7 @@ async function api(method, path, params = {}, signal = S.abort.signal) {
   if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
   if (path === '/v1/server') { S.serverDate = Date.parse(res.headers.get('Date')); S.serverMono = started; }
   if (res.status === 204) return null;
-  const body = await res.json().catch(() => ({}));
+  const body = await res.text().then(parseWireJSON).catch((e) => { if (res.ok) throw e; return {}; });
   // Cancellation can outlive fetch while the response body is being read.
   // An old 401 must not forget the token for a replacement view.
   if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
@@ -237,15 +239,15 @@ async function write(method, path, body, headers = {}, options = {}) {
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
     const requestMono = performance.now();
-    const res = await fetch(path, { method, headers: { ...headers, Authorization: `Bearer ${S.token}`, Accept: 'application/json', ...(body != null ? { 'Content-Type': 'application/json' } : {}) }, body: body == null ? undefined : JSON.stringify(body), credentials: 'omit', cache: 'no-store', signal: controller.signal, ...options });
+    const res = await fetch(path, { method, headers: { ...headers, Authorization: `Bearer ${S.token}`, Accept: 'application/json', ...(body != null ? { 'Content-Type': 'application/json' } : {}) }, body: body == null ? undefined : stringifyWireJSON(body), credentials: 'omit', cache: 'no-store', signal: controller.signal, ...options });
     if (!res.ok) {
       // A known HTTP rejection stays known even if its problem body is lost.
-      const problem = await res.json().catch(() => null);
+      const problem = await res.text().then(parseWireJSON).catch(() => null);
       throw new ApiError(res.status, problem && typeof problem === 'object' ? problem : { code: 'http_error', detail: `HTTP ${res.status}` });
     }
     // Successful JSON bodies are part of the write result. Losing one leaves
     // the outcome uncertain, so perform() must retain this intent's receipt.
-    const result = res.status === 204 ? null : await res.json();
+    const result = res.status === 204 ? null : await res.text().then(parseWireJSON);
     if (path.endsWith('/renew') && result && typeof result === 'object') {
       Object.defineProperty(result, '__responseTiming', { value: { serverDate: Date.parse(res.headers?.get('Date')), requestMono } });
     }
