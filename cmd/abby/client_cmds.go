@@ -47,43 +47,6 @@ func callPrint(cmd *cobra.Command, r abby.Request) error {
 	return printJSON(out)
 }
 
-// callPrintAll follows next_page_token across a keyset-paginated list and
-// prints {field: [every item]} as one object. r.Query may be nil.
-func callPrintAll(cmd *cobra.Command, r abby.Request, field string) error {
-	c, _, err := client()
-	if err != nil {
-		return err
-	}
-	q := url.Values{}
-	for k, v := range r.Query {
-		q[k] = v
-	}
-	q.Set("limit", "200")
-	all := []any{}
-	for {
-		var page map[string]json.RawMessage
-		r.Query = q
-		if _, err := c.Do(cmd.Context(), r, &page); err != nil {
-			return err
-		}
-		var items []any
-		if err := json.Unmarshal(page[field], &items); err != nil {
-			return fmt.Errorf("decode %s: %w", field, err)
-		}
-		all = append(all, items...)
-		var next *string
-		if raw, ok := page["next_page_token"]; ok {
-			if err := json.Unmarshal(raw, &next); err != nil {
-				return fmt.Errorf("decode next_page_token: %w", err)
-			}
-		}
-		if next == nil || *next == "" {
-			return printJSON(map[string]any{field: all})
-		}
-		q.Set("page_token", *next)
-	}
-}
-
 func idemKey(cmd *cobra.Command) string {
 	if k, _ := cmd.Flags().GetString("idempotency-key"); k != "" {
 		return k
@@ -250,7 +213,7 @@ func clientCmds() []*cobra.Command {
 	actorCreate.Flags().String("display-name", "", "display name")
 	addIdem(actorCreate)
 	actor.AddCommand(actorCreate, &cobra.Command{Use: "list", Short: "List all actors", RunE: func(cmd *cobra.Command, args []string) error {
-		return callPrintAll(cmd, abby.Request{Method: "GET", Path: "/v1/actors"}, "actors")
+		return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/actors"}, "actors")
 	}})
 	cmds = append(cmds, actor)
 
@@ -294,7 +257,7 @@ func clientCmds() []*cobra.Command {
 		if a != "" {
 			q.Set("actor_id", a)
 		}
-		return callPrintAll(cmd, abby.Request{Method: "GET", Path: "/v1/credentials", Query: q}, "credentials")
+		return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/credentials", Query: q}, "credentials")
 	}}
 	credList.Flags().String("actor", "", "actor ID (server administrators)")
 	cred.AddCommand(credCreate, credList, &cobra.Command{Use: "revoke ID", Short: "Revoke a credential", Args: cobra.ExactArgs(1),
@@ -382,7 +345,7 @@ func clientCmds() []*cobra.Command {
 	addIdem(grCreate)
 	grant.AddCommand(grCreate,
 		boardCmd("list", "List grants", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrintAll(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/grants")}, "grants")
+			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/grants")}, "grants")
 		}),
 		boardCmd("revoke ID", "Revoke a grant", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
 			return callPrint(cmd, abby.Request{Method: "DELETE", Path: abby.BoardPath(b, "/grants/"+url.PathEscape(args[0]))})
@@ -397,7 +360,7 @@ func clientCmds() []*cobra.Command {
 			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/actors")}, "actors")
 		}),
 		boardCmd("audit", "Show board audit events (board_admin)", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrintAll(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/audit-events")}, "audit_events")
+			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/audit-events")}, "audit_events")
 		}),
 	)
 
@@ -500,7 +463,10 @@ func clientCmds() []*cobra.Command {
 			return err
 		}
 		var all []map[string]any
-		q := url.Values{"limit": {"200"}}
+		q := url.Values{}
+		if l := pageLimit(cmd.Context(), c); l != "" {
+			q.Set("limit", l)
+		}
 		for {
 			var page struct {
 				Messages []map[string]any `json:"messages"`
@@ -790,7 +756,10 @@ func eventCmds() []*cobra.Command {
 		if _, err := c.Do(cmd.Context(), abby.Request{Method: "POST", Path: abby.BoardPath(b, "/snapshots"), Query: q}, &info); err != nil {
 			return err
 		}
-		pq := url.Values{"limit": {"200"}}
+		pq := url.Values{}
+		if l := pageLimit(cmd.Context(), c); l != "" {
+			pq.Set("limit", l)
+		}
 		var items []json.RawMessage
 		for {
 			var pg struct {

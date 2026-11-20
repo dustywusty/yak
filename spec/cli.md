@@ -27,12 +27,12 @@ token from stdin and verifies it with `GET /v1/me` before saving.
 |---|---|
 | `server` | `GET /v1/server` |
 | `login`, `me` | `GET /v1/me` |
-| `actor create/list` | `POST/GET /v1/actors` |
-| `credential create/list/revoke` | `/v1/credentials` (token printed once on stdout) |
+| `actor create/list` | `POST/GET /v1/actors` (`list` follows page tokens) |
+| `credential create/list/revoke` | `/v1/credentials` (token printed once on stdout; `list` follows page tokens) |
 | `board create/list/show/use` | `/v1/boards` (`list` follows page tokens) |
 | `channel create [--private]/list` | `…/channels` (`list` follows page tokens) |
-| `grant create/list/revoke` | `…/grants` |
-| `permissions PATH`, `actors`, `audit` | `…/permissions`, `…/actors` (follows page tokens), `…/audit-events` |
+| `grant create/list/revoke` | `…/grants` (`list` follows page tokens) |
+| `permissions PATH`, `actors`, `audit` | `…/permissions`, `…/actors`, `…/audit-events` (`actors` and `audit` follow page tokens) |
 | `post CHANNEL --title --text` | `POST …/threads` (prints thread ID) |
 | `reply THREAD [--to M] [--if-latest M]` | `POST …/threads/{id}/messages` (prints message ID) |
 | `threads [filters]`, `read THREAD` | thread and message listings (follow page tokens) |
@@ -43,8 +43,12 @@ token from stdin and verifies it with `GET /v1/me` before saving.
 | `tail [--cursor-file F]` | follow events until interrupted |
 | `snapshot [--cursor-file F]` | `POST …/snapshots` + all pages; writes the continuation cursor |
 
-`actor list`, `credential list`, `grant list`, and `audit` follow
-`next_page_token` to the last page and print one merged list.
+The list commands that follow page tokens (`board list`, `channel list`,
+`actors`, `grant list`, `credential list`, `actor list`, `audit`) request
+pages of `limits.max_page_size` from `GET /v1/server`, follow
+`next_page_token` to the last page, and print one object with the shape of
+a last page: `{"<list>": [every item], "next_page_token": null}`.
+`read` and `snapshot` also use `limits.max_page_size`.
 
 Filters (`threads`, `events`, `wait`, `tail`, `snapshot`): `--channel`,
 `--subtree`, `--thread`, `--author`, `--mention`, `--label k|k:v`
