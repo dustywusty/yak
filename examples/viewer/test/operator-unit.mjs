@@ -204,6 +204,35 @@ for (const view of op17042ClaimCorpus) test(`OP17-042 Go ClaimView ${view.status
 for (const [name, edits] of [ ['wrong id', { id: 'other' }], ['missing status', { status: undefined }], ['unknown status', { status: 'unknown' }], ['zero lease', { lease_seconds: 0 }], ['fractional lease', { lease_seconds: 1.5 }], ['oversized lease', { lease_seconds: Number.MAX_SAFE_INTEGER }], ['invalid expiry', { expires_at: 'invalid' }], ['invalid acquisition', { acquired_at: null }], ['inverted timestamps', { acquired_at: '2026-11-20T00:01:00Z' }], ['active ended', { ended_at: '2026-11-20T00:00:01Z' }], ['active end recorded', { end_recorded_at: '2026-11-20T00:00:01Z' }] ]) test(`OP17-042 rejects ${name}`, async () => {
  await op17042Run(async () => op17042Response(edits), async (s, c, timers) => { await s.renew(op17042Path, c); assert.equal(c.proof, null); assert.equal(timers.size, 0); assert.match(s.notice, /Refresh/); });
 });
+// Keep the other timestamp and server Date sane so normalization alone causes rejection.
+for (const value of [
+ '2026-11-20T24:00:00Z', '2027-02-30T00:00:00Z', '2027-02-29T00:00:00Z',
+ '1900-02-29T00:00:00Z', '2026-04-31T00:00:00Z', '2026-00-20T00:00:00Z',
+ '2026-13-20T00:00:00Z', '2026-11-00T00:00:00Z', '2026-11-32T00:00:00Z',
+ '2026-11-20T25:00:00Z', '2026-11-20T00:60:00Z', '2026-11-20T00:00:60Z',
+ '2026-11-20T00:00:00+24:00', '2026-11-20T00:00:00+00:60',
+]) for (const field of ['acquired_at', 'expires_at']) test(`OP17-042 rejects ${field} calendar/time ${value}`, async () => {
+ const normalized = Date.parse(value), base = Number.isFinite(normalized) ? normalized : op17042Date;
+ const serverDate = field === 'acquired_at' ? base : base - 30000;
+ const edits = { acquired_at: new Date(serverDate).toISOString(), expires_at: new Date(serverDate + 30000).toISOString(), [field]: value };
+ await op17042Run(async () => op17042Response(edits, { serverDate, requestMono: 5000 }), async (s, c, timers) => {
+  await s.renew(op17042Path, c);
+  assert.equal(c.proof, null); assert.equal(s.claims.size, 0); assert.equal(timers.size, 0); assert.match(s.notice, /claim ended.*Refresh/);
+ });
+});
+for (const [acquired_at, expires_at] of [
+ ['2028-02-29T23:59:30Z', '2028-03-01T00:00:00Z'],
+ ['2000-02-29T00:00:00Z', '2000-02-29T00:00:30Z'],
+ ['2026-11-20T23:59:29.123456789+23:59', '2026-11-20T23:59:59.123456789+23:59'],
+ ['2026-11-19T00:01:00.5-23:59', '2026-11-19T00:01:30.5-23:59'],
+]) test(`OP17-042 accepts calendar/time ${acquired_at}`, async () => {
+ const timing = { serverDate: Math.floor(Date.parse(acquired_at) / 1000) * 1000, requestMono: 5000 };
+ await op17042Run(async () => op17042Response({ acquired_at, expires_at }, timing), async (s, c, timers) => {
+  await s.renew(op17042Path, c);
+  assert.equal(c.proof, 'synthetic'); assert.equal(s.claims.size, 1); assert.equal(timers.size, 1); assert.equal(s.notice, null);
+  assert.equal(c.deadline, Math.min(35000, 5000 + Date.parse(expires_at) - timing.serverDate - 1000));
+ });
+});
 for (const [name, edits, timing, receive, expected] of [
  ['old replay expiry', { expires_at: '2026-11-20T00:00:10Z' }, { serverDate: op17042Date, requestMono: 5000 }, 7000, 14000],
  ['delayed response and skewed wall', {}, { serverDate: op17042Date, requestMono: 5000 }, 20000, 34000],

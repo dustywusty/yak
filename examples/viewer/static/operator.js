@@ -143,7 +143,17 @@ export class OperatorSession {
     try {
       const view = await this.send('POST', `${path}/claims/${c.id}/renew`, { lease_seconds: c.lease }, { 'Yak-Claim-Proof': c.proof, 'Idempotency-Key': c.key, 'Yak-Run-Id': this.run });
       if (!this.active || this.ending || this.claims.get(path) !== c) return;
-      const timestamp = (value) => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : NaN;
+      const timestamp = (value) => {
+        const parts = typeof value === 'string' && /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d+)?(?:Z|[+-](\d\d):(\d\d))$/.exec(value);
+        if (!parts) return NaN;
+        const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = parts.slice(1).map(part => Number(part ?? 0));
+        const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+        const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        // Date.parse normalizes impossible dates and 24:00; reject them first.
+        if (month < 1 || month > 12 || day < 1 || day > days[month - 1] ||
+            hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) return NaN;
+        return Date.parse(value);
+      };
       const acquired = timestamp(view?.acquired_at), expires = timestamp(view?.expires_at);
       const lease = view?.lease_seconds, maxLease = this.server.limits?.claim_lease_max_seconds;
       if (view?.id !== c.id || view.status !== 'active' || !Number.isSafeInteger(lease) || lease <= 0 ||
