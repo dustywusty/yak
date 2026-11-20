@@ -84,9 +84,7 @@ the workflow locally.
 - Logout and idle timeout **revoke** the credential with
   `DELETE /v1/credentials/{own id}` (OPR-131), and release held claims
   first (OPR-130). Tab close sends a best-effort `keepalive` revoke
-  (OPR-132). D004 permits optional claim-release dispatch followed by
-  self-revoke on tab close without awaiting responses, with immediate local
-  clearing; ordinary logout keeps the ordered release/revoke sequence.
+  (OPR-132).
 
 ### 4 Ceiling
 

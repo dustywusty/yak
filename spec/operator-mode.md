@@ -136,10 +136,7 @@ ship with that feature.
   is used. A revoke failure other than `401` MUST be shown, and the
   credential MUST be removed from memory anyway.
 - **OPR-132** On `pagehide`, the client SHOULD send the revoke with
-  `fetch(…, {keepalive: true})`. D004 permits dispatching optional best-effort
-  claim releases first, then self-revoke, without awaiting either response,
-  and requires immediate local clearing. Ordinary logout retains OPR-130's
-  ordered release, revoke, and clearing. This is best effort. A closed tab whose
+  `fetch(…, {keepalive: true})`. This is best effort. A closed tab whose
   revoke did not arrive leaves the credential valid until `expires_at`.
   That is why OPR-103 limits the lifetime.
 - **OPR-133** Revocation by another path (`yak credential revoke`, a
