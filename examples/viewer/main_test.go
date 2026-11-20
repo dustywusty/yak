@@ -157,3 +157,74 @@ func TestNoSecretLogsOrHTMLSinks(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOP17001(t *testing.T) {
+	const base = "/v1/boards/b/messages/m/reactions/"
+	keys := []string{"like", "+1", "%2B1", "%F0%9F%91%8D"}
+	rejected := []string{"", "%", "%2", "%GG", "%2f", "%2F", "%5c", "%5C", "%252f", "%252B1", ".", "..", "%2e", "%2E%2e", "a%2e%2eb", "%00", "%1f", "%7f", "%C2%85", "%FF", "%C0%AF", "like/extra", "like?x=y", "like?", "like#fragment", "a\\b"}
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		if r.RequestURI != r.Header.Get("X-Expected-URI") {
+			t.Errorf("escaped path changed: got %q want %q", r.RequestURI, r.Header.Get("X-Expected-URI"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	target, _ := url.Parse(upstream.URL)
+	handler := viewerHandler(target, true)
+	for _, method := range []string{"PUT", "DELETE"} {
+		for _, key := range keys {
+			t.Run(method+"/accept/"+key, func(t *testing.T) {
+				path := base + key
+				if !allowedRoute(method, path, true) {
+					t.Error("guard refused valid key")
+				}
+				if allowedRoute(method, path, false) {
+					t.Error("read-only guard allowed reaction")
+				}
+				r := httptest.NewRequest(method, path, nil)
+				r.Header.Set("X-Expected-URI", path)
+				w := httptest.NewRecorder()
+				before := upstreamCalls
+				handler.ServeHTTP(w, r)
+				if w.Code != 204 || upstreamCalls != before+1 {
+					t.Errorf("valid reaction did not reach upstream: status=%d calls=%d", w.Code, upstreamCalls-before)
+				}
+			})
+		}
+		for _, key := range rejected {
+			t.Run(method+"/refuse/"+key, func(t *testing.T) {
+				path := base + key
+				if allowedRoute(method, path, true) {
+					t.Errorf("guard accepted unsafe key %q", key)
+				}
+				// Malformed escapes are refused by net/http's URL parser before the handler.
+				if _, err := url.ParseRequestURI(path); err != nil {
+					return
+				}
+				r := httptest.NewRequest(method, path, nil)
+				w := httptest.NewRecorder()
+				before := upstreamCalls
+				handler.ServeHTTP(w, r)
+				if w.Code == 204 || upstreamCalls != before {
+					t.Errorf("unsafe key reached upstream: %q", key)
+				}
+			})
+		}
+	}
+	for _, method := range []string{"GET", "POST", "PATCH", "HEAD", "OPTIONS"} {
+		for _, key := range keys {
+			if allowedRoute(method, base+key, true) {
+				t.Errorf("unexpected method allowed: %s %s", method, key)
+			}
+		}
+	}
+	for _, path := range []string{"/v1/boards/b%2fx/messages/m/reactions/like", "/v1/boards/b/messages/m%2Fx/reactions/like", "/v1/boards/b%41/messages/m/reactions/like", "/v1/boards/b/tasks/t%41/assignee", "/v1/boards/b/snapshots/s%41", "/v1/boards/b/messages/m%41"} {
+		for _, method := range []string{"GET", "POST", "PATCH", "PUT", "DELETE"} {
+			if allowedRoute(method, path, true) {
+				t.Errorf("encoded non-key segment allowed: %s %s", method, path)
+			}
+		}
+	}
+}

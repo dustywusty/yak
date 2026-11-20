@@ -92,3 +92,25 @@ test('overview gate warnings never treat a display label as approval',async()=>{
  assert.equal(gateHint({state:'ready',direct_action_required:false},{gate:'pending'}),'label only; not a gate');
  assert.equal(gateHint({state:'ready',direct_action_required:true},{gate:'approved'}),'');
 });
+
+
+for (const method of ['PUT', 'DELETE']) {
+ for (const key of ['like', '+1', '%2B1', '%F0%9F%91%8D']) {
+  test(`OP17-001 ${method} accepts ${key}`, () => {
+   assert.equal(allowedRequest(method, `/v1/boards/b/messages/m/reactions/${key}`, 'c'), true);
+  });
+ }
+ for (const key of ['', '%', '%2', '%GG', '%2f', '%2F', '%5c', '%5C', '%252f', '%252B1', '.', '..', '%2e', '%2E%2e', 'a%2e%2eb', '%00', '%1f', '%7f', '%C2%85', '%FF', '%C0%AF', 'like/extra', 'like?x=y', 'like?', 'like#fragment', 'a\\b']) {
+  test(`OP17-001 ${method} refuses ${JSON.stringify(key)}`, () => {
+   assert.equal(allowedRequest(method, `/v1/boards/b/messages/m/reactions/${key}`, 'c'), false);
+  });
+ }
+}
+test('OP17-001 other methods and encoded non-key segments remain refused', () => {
+ for (const method of ['GET', 'POST', 'PATCH', 'HEAD', 'OPTIONS']) {
+  for (const key of ['like', '+1', '%2B1', '%F0%9F%91%8D']) assert.equal(allowedRequest(method, `/v1/boards/b/messages/m/reactions/${key}`, 'c'), false, `${method} ${key}`);
+ }
+ for (const path of ['/v1/boards/b%2fx/messages/m/reactions/like', '/v1/boards/b/messages/m%2Fx/reactions/like', '/v1/boards/b%41/messages/m/reactions/like', '/v1/boards/b/tasks/t%41/assignee', '/v1/boards/b/snapshots/s%41', '/v1/boards/b/messages/m%41']) {
+  for (const method of ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']) assert.equal(allowedRequest(method, path, 'c'), false, `${method} ${path}`);
+ }
+});

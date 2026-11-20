@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 //go:embed static
@@ -79,6 +81,7 @@ func routeProblem(w http.ResponseWriter, status int, code string) {
 var boardRead = regexp.MustCompile(`^/v1/boards/[^/]+(?:/(?:actors|channels|permissions|events|threads|tasks)|/(?:threads/[^/]+(?:/messages)?|messages/[^/]+|tasks/[^/]+(?:/briefs(?:/[^/]+)?)?|snapshots/[^/]+))?$`)
 var snapshotRoute = regexp.MustCompile(`^/v1/boards/[^/]+/snapshots$`)
 var snapshotItem = regexp.MustCompile(`^/v1/boards/[^/]+/snapshots/[^/]+$`)
+var reactionRoute = regexp.MustCompile(`^/v1/boards/[^/]+/messages/[^/]+/reactions/[^/]+$`)
 var operatorRoutes = map[string]*regexp.Regexp{
 	"POST":   regexp.MustCompile(`^/v1/boards/[^/]+/(?:threads|threads/[^/]+/messages|tasks|tasks/[^/]+/(?:unblock|claims|release)|tasks/[^/]+/claims/[^/]+/renew)$`),
 	"PATCH":  regexp.MustCompile(`^/v1/boards/[^/]+/(?:messages/[^/]+(?:/labels)?|tasks/[^/]+)$`),
@@ -87,7 +90,25 @@ var operatorRoutes = map[string]*regexp.Regexp{
 }
 
 func allowedRoute(method, path string, operator bool) bool {
-	if strings.Contains(path, "%") || strings.Contains(path, "..") || strings.Contains(path, "//") {
+	if strings.ContainsAny(path, "?#") || strings.Contains(path, "..") || strings.Contains(path, "//") {
+		return false
+	}
+	strictPath := path
+	if (method == "PUT" || method == "DELETE") && reactionRoute.MatchString(path) {
+		end := strings.LastIndexByte(path, '/')
+		strictPath = path[:end]
+		// Decode only the terminal key, once. PathUnescape preserves literal '+'.
+		key, err := url.PathUnescape(path[end+1:])
+		if err != nil || !utf8.ValidString(key) || key == "" || key == "." || strings.Contains(key, "..") || strings.ContainsAny(key, "/\\%") {
+			return false
+		}
+		for _, r := range key {
+			if unicode.IsControl(r) {
+				return false
+			}
+		}
+	}
+	if strings.Contains(strictPath, "%") {
 		return false
 	}
 	if method == "GET" {
@@ -134,7 +155,9 @@ func viewerHandler(target *url.URL, operator bool) http.Handler {
 			routeProblem(w, 403, "forbidden")
 			return
 		}
-		if !allowedRoute(r.Method, r.URL.EscapedPath(), operator) {
+		// A reaction key is a path segment, never a query or fragment.
+		reactionSuffix := (r.Method == "PUT" || r.Method == "DELETE") && reactionRoute.MatchString(r.URL.EscapedPath()) && (r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.Fragment != "" || strings.Contains(r.RequestURI, "#"))
+		if reactionSuffix || !allowedRoute(r.Method, r.URL.EscapedPath(), operator) {
 			if !operator {
 				routeProblem(w, 405, "method_not_allowed")
 			} else {

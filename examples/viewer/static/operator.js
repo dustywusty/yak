@@ -17,7 +17,17 @@ export function credentialRefusal(me, server, date) {
 }
 const boardRead = /^\/v1\/boards\/[^/]+(?:\/(?:actors|channels|permissions|events|threads|tasks)|\/(?:threads\/[^/]+(?:\/messages)?|messages\/[^/]+|tasks\/[^/]+(?:\/briefs(?:\/[^/]+)?)?|snapshots\/[^/]+))?$/;
 export function allowedRequest(method, path, ownId) {
-  if (/[?#%]/.test(path) || path.includes('..') || path.includes('//')) return false;
+  if (/[?#]/.test(path) || path.includes('..') || path.includes('//')) return false;
+  let strictPath = path;
+  if ((method === 'PUT' || method === 'DELETE') && /^\/v1\/boards\/[^/]+\/messages\/[^/]+\/reactions\/[^/]+$/.test(path)) {
+    const end = path.lastIndexOf('/');
+    strictPath = path.slice(0, end);
+    // Decode only the terminal key, once; '+' remains a literal plus.
+    let key;
+    try { key = decodeURIComponent(path.slice(end + 1)); } catch { return false; }
+    if (!key || key === '.' || key.includes('..') || /[/\\%\u0000-\u001f\u007f-\u009f\uD800-\uDFFF]/u.test(key)) return false;
+  }
+  if (strictPath.includes('%')) return false;
   if (method === 'GET') return ['/v1/server', '/v1/me', '/v1/boards'].includes(path) || boardRead.test(path);
   if (method === 'POST' && /^\/v1\/boards\/[^/]+\/snapshots$/.test(path)) return true;
   if (method === 'DELETE' && /^\/v1\/boards\/[^/]+\/snapshots\/[^/]+$/.test(path)) return true;
