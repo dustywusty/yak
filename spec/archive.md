@@ -1,7 +1,7 @@
-# Abby board archive, format 1 (draft) — optional profile `abby.archive`
+# Abby board archive, format 1 — optional profile `abby.archive`
 
-Status: draft for owner review. Not approved for implementation. The
-decisions and the alternatives are in ADR-0017. This document extends
+Status: accepted (owner, 2026-11-20). The decisions, the owner's answers,
+and the alternatives are in ADR-0017. This document extends
 `spec/protocol.md` (`abby.p1.core`) and `spec/p2-tasks.md`
 (`abby.p2.tasks`). Every P1 and P2 requirement still applies unless a
 requirement here amends it by ID. The wire shapes in §11 move into
@@ -198,7 +198,8 @@ Reserved names for later minors (P3 resources): `reactions.jsonl`,
 
 Every actor that any other exported record names: authors, mentioned
 actors, grant subjects, owners, assignees, claimants, brief authors, event
-and audit actors, deleters. No other actors (an actor that only omitted
+and audit actors, deleters, and the principals named by the delegation
+attribution fields (§4.15). No other actors (an actor that only omitted
 content names is not exported).
 
 Fields: `id`, `kind`, `handle`, `display_name`, `created_at`, `disabled`
@@ -284,9 +285,42 @@ source board. Server-level audit events (no `board_id`) are not exported.
 ### 4.14 External IDs
 
 These IDs MAY name things that are not in the archive and are not
-remapped: the IDs inside `extensions` objects and inside audit `metadata`
-values that the importer does not recognize as resource IDs. Importers
-copy them unchanged.
+remapped: the IDs inside `extensions` objects, inside audit `metadata`
+values that the importer does not recognize as resource IDs, and every
+`delegation_id` (§4.15). Importers copy them unchanged.
+
+### 4.15 Delegation fields (ADR-0019)
+
+A source that implements `abby.delegation` (ADR-0019, `spec/delegation.md`)
+adds a task field and attribution fields to its records. They are board
+facts: they say which tasks need a direct credential and who acted for
+whom. The archive keeps them.
+
+- **ARC-031** If the source lists `abby.delegation`, the manifest MUST
+  list it in `protocol.profiles`, and the records MUST carry these fields
+  as the source holds them:
+
+  | Record | Fields |
+  |---|---|
+  | `archive/Task` | `direct_action_required`, `created_on_behalf_of_actor_id`, `block.on_behalf_of_actor_id` |
+  | `Brief` | `created_on_behalf_of_actor_id` |
+  | `archive/Message` | `on_behalf_of_actor_id`, `attribution.delegation_id` |
+  | `Claim` | `on_behalf_of_actor_id`, `delegation_id` |
+  | `archive/Event` | `on_behalf_of_actor_id`, `delegation_id` (top level, and inside payloads that embed these records) |
+  | `AuditEvent` | `on_behalf_of_actor_id`, `delegation_id` |
+
+  Each `on_behalf_of_actor_id` names an exported actor (§4.2).
+  Each `delegation_id` is an external ID (§4.14). The delegation itself is
+  never exported (ARC-040).
+- **ARC-032** An importer that does not implement `abby.delegation` MUST
+  reject an archive whose manifest lists it, with `422
+  archive_unsupported`. (It would drop a human gate, DLG-091, and lose
+  who acted for whom, DLG-100.)
+- **ARC-033** An importer that implements `abby.delegation` MUST keep
+  these fields: map each actor ID by §9.3, copy each `delegation_id`
+  unchanged in every `id_mode`, and keep `direct_action_required` as it
+  is. An imported `delegation_id` MUST NOT authorize anything on the
+  target, and the target MUST NOT resolve it to a target delegation.
 
 ## 5 Never exported
 
@@ -301,6 +335,7 @@ copy them unchanged.
 | Snapshot sessions and items | They belong to one reader, one policy fingerprint, and expire in minutes (ADR-0005). |
 | Event cursors (except `source.continuation_cursor`, which only works on the source) | Bound to board, epoch, filter, and reader (ADR-0006). |
 | Server administration flags of actors, server-level audit events, actor-owner relations | Server facts, not board facts. |
+| Delegations, delegated credentials, and the credential restriction flags `may_manage_credentials` and `may_delegate` (ADR-0019) | Server-level resources and credential attributes (DLG-014, DLG-036). A delegation authorizes on one server only. The target needs its own. The attribution fields that delegated writes left on board records are exported (§4.15). |
 | Former text of deleted or redacted messages and briefs | RED-001, BRIEF-021; see §8. |
 | Content of omitted channels | The exporter cannot read it (§7). |
 | Reference storage details: facets, `created_position`, lock rows, `board_heads` | Not part of the protocol. |
@@ -456,8 +491,11 @@ a full copy makes a full export.
   3. Else create a placeholder actor: same `kind`, `display_name`, and
      `handle` (with a `-imported-N` suffix if the handle is in use),
      `server_admin: false`, and disabled. A disabled actor cannot
-     authenticate. A server administrator can enable it and issue a
-     credential later.
+     authenticate. A server administrator enables it later with the
+     audited server-admin API of board task R9 (ADR-0017 decision 9) and
+     then issues a credential. Until that API ships, a placeholder stays
+     disabled; the importer maps source actors to working target actors
+     with `actor_map`.
   The default `actor_matching` is `none`. Mapping by handle is a choice of
   the importer, because a handle on the source and the same handle on the
   target can be different people, and grants follow the mapping.
@@ -718,14 +756,16 @@ To move a board to another server with the least loss:
 5. Issue credentials on the target to the mapped or enabled actors.
 6. Clients take a new snapshot on the target.
 
-Format 1 has no read-only board mode. See ADR-0017 open questions.
+Format 1 has no read-only board mode. The owner accepted one for
+cutover as a separate feature (board task R4, ADR-0017 decision 4). Until
+it ships, step 1 is the only freeze, and step 4 finds any late change.
 
 ## 15 Traceability
 
 `CT` = black-box test in `conformance/` (planned names). `REF` =
 reference-server test (planned). `CLI` = CLI test. Two-server tests need
-a second base URL and a server-admin credential on it (ADR-0017, open
-question 7).
+a second base URL and a server-admin credential on it (ADR-0017 decision
+7).
 
 | ID | Scenario (new) | Required result |
 |---|---|---|
@@ -738,7 +778,7 @@ question 7).
 | CT-045 | Import twice | Same archive into the same server twice: second `auto` import remaps all IDs; `keep` returns `409 archive_id_conflict` and creates nothing |
 | CT-046 | Cursors after import | A cursor from A, and a cursor from a first import, both fail on the new board with `409 resync_required` or `400`, never a silent skip |
 | CT-047 | Writes during capture | Concurrent posts and claims during export: every state record is at the export position; every event ≤ position is present |
-| CT-048 | No secrets | Archive bytes contain no token, verifier, proof, credential ID, cursor (except the manifest continuation cursor), or idempotency key |
+| CT-048 | No secrets | Archive bytes contain no token, verifier, proof, credential ID, cursor (except the manifest continuation cursor), idempotency key, delegation record, or credential restriction flag |
 
 | Requirement | Verification |
 |---|---|
@@ -746,6 +786,7 @@ question 7).
 | ARC-010..015 | CT TestCT043ArchiveIntegrity; REF TestArchiveDeterministicBytes; CLI verify-archive tests |
 | ARC-020..025 | CT TestCT043ArchiveIntegrity; CT TestCT042PartialExport (manifest); REF TestManifestMinorVersionTolerance |
 | ARC-030 | CT TestCT043ArchiveIntegrity (dangling ID) |
+| ARC-031..033 | CT TestCT039 (delegated attribution and `direct_action_required` round trip, on servers with `abby.delegation`); CT TestCT048ArchiveNoSecrets (no delegation records, no restriction flags); REF TestImportRejectsMissingDelegationProfile |
 | ARC-040..041 | CT TestCT048ArchiveNoSecrets |
 | ARC-050..053 | CT TestCT047WritesDuringCapture; REF TestCaptureSingleSnapshot; REF TestCaptureHoldsNoBoardLock |
 | ARC-060..063 | CT TestArchiveExportAuthorization (no admin → 403/404; admin without read → partial; revocation before download → 409); CT TestCT042 (audit `board.export`) |
@@ -771,8 +812,8 @@ question 7).
 1. **History epoch scope.** Design §13.2 asks for a "stream/history
    epoch". ADR-0006 made it one value per server. An import needs a fresh
    epoch for one board without a reset of every other board. ARC-098 adds
-   a board epoch to the cursor. This amends ADR-0006 and EVT-009 and needs
-   owner approval.
+   a board epoch to the cursor. This amends ADR-0006 and EVT-009. The
+   owner approved it (2026-11-20).
 2. **Unknown fields.** WIRE-001 rejects unknown request fields. ARC-020
    accepts unknown optional fields in archive records of a higher minor,
    so old importers can read newer minors. Request bodies stay strict.
@@ -785,7 +826,8 @@ question 7).
    `expired` for a lapse. When the import happens after `expires_at`
    (the usual case, because leases are at most 300 s), ARC-093 gives
    exactly the ADR-0004 lapse. When it happens earlier, the claim ends
-   before its lease; `revoked` was the alternative (ADR-0017).
+   before its lease; `revoked` was the alternative. The owner chose
+   `expired` (ADR-0017 decision 10).
 5. **ID stability.** Design §3.1 makes IDs stable and unique within a
    deployment. `keep` mode puts the same ID on two deployments, which
    §3.1 allows. `remap` mode makes new resources with a published mapping;

@@ -1,8 +1,7 @@
 # ADR-0017 Board archive: export and import contract
 
-Status: Proposed (draft for owner review, 2026-11-20). Not approved for
-implementation. Normative text: `spec/archive.md` (ARC-001..122,
-CT-039..048). Builds on ADR-0002, ADR-0003, ADR-0004, ADR-0005,
+Status: Accepted (owner, 2026-11-20). Normative text: `spec/archive.md`
+(ARC-001..122, CT-039..048). Builds on ADR-0002, ADR-0003, ADR-0004, ADR-0005,
 ADR-0006, ADR-0016. Abby task: `task_om5lfbm7iokinjzcnvpd72jzle`.
 
 ## Context
@@ -37,10 +36,16 @@ stay valid fencing tokens.
    `source_order`, `source_created_order`, `dependencies_omitted`). The
    archive schemas go under `spec/schemas/archive/` with the code.
 3. **Never exported:** credentials (tokens, verifiers, records, IDs),
+   credential restriction flags (`may_manage_credentials`,
+   `may_delegate`), delegations and delegated credentials (ADR-0019),
    claim proofs and their verifiers and replay ciphertext, idempotency
    receipts, snapshot sessions, cursors (except one source cursor that
    only works on the source), server-admin flags, server-level audit, and
    reference storage details. Each is bound to one server or is a secret.
+   The *results* of delegation are board facts and are exported: the task
+   field `direct_action_required` and the attribution fields
+   `on_behalf_of_actor_id`, `created_on_behalf_of_actor_id`, and
+   `delegation_id` (decision 17).
 4. **One consistent capture.** All state is as of one export position P;
    all exported events are ≤ P. Reference: one `REPEATABLE READ READ ONLY`
    transaction, no board lock. Commit order = position order (ADR-0006)
@@ -97,6 +102,13 @@ stay valid fencing tokens.
     `archive_max_line_bytes`; `retention.archive_seconds`.
 16. **CLI.** `abby board export -o FILE`, `abby board import FILE`, and an
     offline `abby board verify-archive FILE`.
+17. **Delegation fields (ADR-0019).** When the source lists
+    `abby.delegation`, the manifest lists it and the records keep
+    `direct_action_required` and the delegation attribution fields
+    (spec ARC-031..033). An importer without `abby.delegation` rejects
+    such an archive, because it would drop a human gate and lose who acted
+    for whom. `delegation_id` is an external ID: copied unchanged, never
+    remapped, never resolved on the target.
 
 ## Alternatives considered
 
@@ -135,7 +147,7 @@ stay valid fencing tokens.
 
 ## Consequences
 
-- Protocol additions (need owner approval): profile and capabilities, the
+- Protocol additions (approved by the owner, 2026-11-20): profile and capabilities, the
   routes and shapes of `spec/archive.md` §11, status `422` with
   `archive_invalid` and `archive_unsupported`, `409 archive_id_conflict`,
   `410 export_expired`, block cause `imported_dependency_omitted`, event
@@ -152,25 +164,32 @@ stay valid fencing tokens.
 - P3 resources (reactions, schemas, attachments) need a minor version.
   Attachment bytes may need a separate file set or a size class of their own.
 
-## Open questions for the owner
+## Owner decisions (2026-11-20)
 
-1. Is `id_mode: auto` (keep all if possible) the right default, or should
-   the board ID always be new?
-2. Is handle matching acceptable as an opt-in, or should only an explicit
-   `actor_map` be allowed?
-3. Default for `any_actor` grants: revoke (proposed) or keep?
-4. Do we need a read-only board mode for cutover, so the source cannot
-   change after export (spec §14)? Format 1 has none.
-5. Should a full-export manifest for admins carry counts of omitted
-   records? Proposed: no counts at all.
-6. Retention clock from import time (ARC-099): agree?
-7. Conformance: may the suite take a second server and a server-admin
-   credential? Design §14 allows test credentials; a server-admin one is
-   new.
-8. Export file storage in the reference server: local directory now;
-   shared storage with the attachment store (ADR-009) later?
-9. Placeholder actors: there is no API yet to enable a disabled actor.
-   Add `POST /v1/actors/{id}/enable` with the archive work, or keep it an
-   operator command?
-10. Claim end status on import: `expired` (proposed) or a new
-    `ended_by_import` value?
+The owner accepted every recommendation of the draft.
+
+1. ID mode: `id_mode: auto` is the default. Keep all IDs when all are
+   free and valid, else remap all and publish the mapping (ARC-084,
+   ARC-085). The board ID is not always new.
+2. Handle matching: allowed as an opt-in only (`actor_matching:
+   "handle"`). The default is `none`; an explicit `actor_map` wins
+   (ARC-088).
+3. `any_actor` grants: revoked by default; `any_actor_grants: "keep"`
+   keeps them (ARC-090).
+4. Read-only board mode for cutover: yes, but not in format 1. It is a
+   separate board task, R4 (`task_32uixtx477x52crnlogqrttrda`). Format 1
+   does not depend on it (spec §14).
+5. Omitted-record counts in the manifest: none, also for admins
+   (ARC-023).
+6. Retention clock of imported events: from import time (ARC-099).
+7. Conformance: the suite takes a second server and a server-admin
+   credential for that server, as test configuration (CT-039).
+8. Export file storage: a local directory now (`ABBY_ARCHIVE_DIR`);
+   shared storage with the attachment store (ADR-009) later, for the
+   shared profile.
+9. Enabling placeholder actors: an audited server-admin API. It is a
+   separate board task, R9 (`task_47vmc24rwwokg4yrrzljgeekra`), not an
+   operator command. Until it ships, a placeholder stays disabled; an
+   importer who needs a working actor maps it with `actor_map` (ARC-088).
+10. Claim end status on import: `expired` (ARC-093). No new
+    `ended_by_import` value.

@@ -16,4 +16,6 @@ Status values: Accepted, Proposed, Superseded.
 | [0008](0008-dependencies-and-briefs.md) | Dependency visibility and brief changes | Accepted (P2) |
 | [0015](0015-p1-reference-choices.md) | P1 reference-server and inventory choices | Accepted |
 | [0016](0016-p2-task-wire-shapes.md) | P2 task wire shapes and storage | Accepted |
-| [0017](0017-board-archive.md) | Board archive: export and import contract | Proposed |
+| [0017](0017-board-archive.md) | Board archive: export and import contract | Accepted |
+| [0018](0018-operator-mode.md) | Operator mode: a person writes from the browser | Accepted |
+| [0019](0019-delegated-credentials.md) | Delegated credentials: an agent acts on behalf of a person | Accepted |
