@@ -53,9 +53,12 @@ owner decision, not an ADR alone.
   (15), `claim_lease_max_seconds` (300), `max_batch_tasks` (100),
   `max_dependencies_per_task` (100), `max_task_result_bytes` (16384),
   `max_evidence_items` (50), and `max_claim_wait_ms` (30000).
-- **TASK-003** Discovery MUST advertise `capabilities.claim_proof_replay`
-  (boolean). `true` means a replayed claim response can return the proof
-  (CLAIM-041). `false` means a replay always returns `proof_unavailable`.
+- **TASK-003** Discovery `capabilities` stays the P1 array of capability
+  identifiers. A server whose replayed claim responses can return the proof
+  (CLAIM-041) MUST list `abby.tasks.claim_proof_replay` in it; a server
+  that cannot MUST NOT list it, and then a replay always returns
+  `proof_unavailable`. In this document, "`claim_proof_replay` is true"
+  means that the identifier is listed.
 
 ## 3 Creating tasks
 
@@ -293,7 +296,7 @@ any change to `completed` except root redaction.
 - **CLAIM-041** A replay of a claim or claim-next MUST return the original
   claim (same claim ID, execution ID, epoch) and MUST NOT create a claim,
   emit events, or change `expires_at`. The `proof` MUST be returned only if
-  all hold: `capabilities.claim_proof_replay` is true, the claim is active
+  all hold: discovery lists `abby.tasks.claim_proof_replay`, the claim is active
   at replay time, and the caller currently holds `read` and `claim`.
   Otherwise the response MUST have `proof: null` and
   `proof_unavailable: true`.
@@ -303,8 +306,8 @@ any change to `completed` except root redaction.
 - **CLAIM-043** Replay material that can reproduce a proof MUST be
   encrypted at rest with a key not stored in the database, and MUST be
   destroyed in the transaction that ends the claim (or by the sweeper for a
-  lapsed claim). Without such a key the server MUST advertise
-  `claim_proof_replay: false`.
+  lapsed claim). Without such a key the server MUST NOT list
+  `abby.tasks.claim_proof_replay` (TASK-003).
 - **CLAIM-044** A replay of complete, fail, or release MUST return the
   current task view with `Idempotent-Replayed: true`, even if the claim
   has ended since. This is how a client that lost a completion response

@@ -97,6 +97,13 @@ Every MUST maps to a check in the traceability table at the end.
 | Create channel | `channel_manage` at the path |
 | Grants, board edits, audit | `board_admin` |
 
+  P2 amendment (`spec/p2-tasks.md` BRIEF-010): on a thread that has a task,
+  edit and delete of the root message and edit of the thread title return
+  `409 task_root_protected` for every caller, including the root author and
+  board administrators. Task routes replace them (`PATCH …/tasks/{id}`,
+  `POST …/tasks/{id}/root-redaction`). Replies, reactions, and non-`abby.`
+  root labels are unaffected.
+
 ## 4 Mutation guarantees
 
 - **IDEM-001** Creates (`POST` of actors, credentials, boards, channels, grants,
@@ -134,7 +141,7 @@ Every MUST maps to a check in the traceability table at the end.
 ## 5 Messages, labels, mentions
 
 - **MSG-001** Thread creation atomically creates the thread and its root
-  message. Replies get the next sequence number in the thread.
+  message. (P2 adds `task_id`, null if none, to the thread view, TASK-024.) Replies get the next sequence number in the thread.
   `reply_to_message_id` MUST identify a message in the same thread.
 - **MSG-002** Text is UTF-8 up to `limits.max_text_bytes`; titles up to
   `limits.max_title_bytes`. Larger → `413 limit_exceeded`.
@@ -149,7 +156,8 @@ Every MUST maps to a check in the traceability table at the end.
   values UTF-8 up to `limits.max_label_value_bytes`; at most
   `limits.max_labels_per_message` per message.
 - **LBL-002** Keys starting with `abby.` are server-maintained; clients setting
-  them get `400 validation_failed`.
+  them get `400 validation_failed`. (P2: the root message of a task thread
+  exposes the computed label `abby.task.state`, TASK-027..029.)
 - **LBL-003** Root-message labels classify the whole thread: a filter clause
   matches a message if its own label or its thread root's label matches.
   Clauses on different keys are ANDed; values listed for one key are ORed;
