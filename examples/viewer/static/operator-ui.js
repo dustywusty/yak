@@ -10,6 +10,7 @@ export function createOperatorUI({ session, read, route }) {
   let panel, content, status, current, opener, sequence = 0;
   const drafts = new Map();
   const receipts = h('div', { class: 'op-receipts' });
+  function writeButton(text, click) { const b = button(text, click); b.dataset.opWrite = 'true'; b.disabled = session.pending.size > 0 || session.ending; return b; }
   function say(text) { if (status) status.textContent = text; }
   function close() { sequence++; panel?.remove(); panel = null; current = null; opener?.focus(); }
   async function all(path, key, params = {}) {
@@ -43,11 +44,11 @@ export function createOperatorUI({ session, read, route }) {
       box.replaceChildren('Sending…');
       try {
         await session.perform(i);
-        if (!session.active) return;
+        if (!session.active || session.ending || i.generation !== session.generation || !i.done) return;
         box.replaceChildren('Saved.'); source.disabled = false; done?.();
         if (current) await loadChannel(current.channel, current.thread?.id);
       } catch (e) {
-        if (!session.active) return;
+        if (!session.active || i.generation !== session.generation) return;
         const cosmetic = i.index > 0;
         const message = e.status === 404 ? 'Item gone or hidden.' : `${e.problem?.code || 'Request failed'}: ${e.problem?.reason || e.message}${e.problem?.current_state || e.problem?.state ? `; state ${e.problem.current_state || e.problem.state}` : ''}`;
         box.replaceChildren(cosmetic ? `${i.kind === 'approve' ? 'Approved; label not updated' : 'Reply posted; label not updated'}. ${message}` : message);
@@ -69,8 +70,9 @@ export function createOperatorUI({ session, read, route }) {
     };
     execute();
   }
-  function send(source, spec, done) { if (source.disabled || session.pending.size) { say('Resolve the pending intent before starting another write.'); return; } pendingButtons(session.intent(spec), source, done); }
+  function send(source, spec, done) { if (!session.active || session.ending) return; if (source.disabled || session.pending.size) { say('Resolve the pending intent before starting another write.'); return; } pendingButtons(session.intent(spec), source, done); }
   function confirmation(name, details, spec, source, done) {
+    if (!session.active || session.ending) return;
     if (source.disabled || session.pending.size) { say('Resolve the pending intent before starting another write.'); return; }
     const prior = document.activeElement;
     const cancel = button('Cancel', () => dialog.close());
@@ -95,7 +97,7 @@ export function createOperatorUI({ session, read, route }) {
       confirmation(name, details, spec, source);
     } catch (e) { say(e.status === 404 ? 'Item gone or hidden.' : e.message); }
   }
-  function action(name, kind, values) { const b = button(name, () => { const v = typeof values === 'function' ? values() : values; confirmTask(kind, kind === 'claim' ? 'Claim' : kind === 'assign' ? `Assign to @${session.me.actor.handle}` : name, b, v); }); return b; }
+  function action(name, kind, values) { const b = writeButton(name, () => { const v = typeof values === 'function' ? values() : values; confirmTask(kind, kind === 'claim' ? 'Claim' : kind === 'assign' ? `Assign to @${session.me.actor.handle}` : name, b, v); }); return b; }
   function taskControls(t) {
     const out = h('section', { 'aria-label': 'Task actions' }, h('h3', {}, `${t.title} — ${t.state}`));
     const path = `${current.B}/tasks/${enc(t.id)}`;
@@ -108,7 +110,7 @@ export function createOperatorUI({ session, read, route }) {
       if (!t.current_claim) {
         out.append(action('Assign to myself', 'assign', { assignee: session.me.actor.id }));
         const select = h('select', { 'aria-label': 'New assignee' }, h('option', { value: '' }, 'Unassigned'), current.actors.map((a) => h('option', { value: a.id, selected: a.id === t.assignee_actor_id }, `@${a.handle} (${a.kind})`)));
-        const assign = button('Assign / unassign', () => confirmTask('assign', select.value ? `Assign to ${actor(select.value)}` : 'Unassign', assign, { assignee: select.value || null }));
+        const assign = writeButton('Assign / unassign', () => confirmTask('assign', select.value ? `Assign to ${actor(select.value)}` : 'Unassign', assign, { assignee: select.value || null }));
         out.append(field('New assignee', select), assign, h('p', {}, 'Assignment is suitable for work longer than this tab session.'));
       }
       if (typeof t.direct_action_required === 'boolean') out.append(action(t.direct_action_required ? 'Remove approval requirement' : 'Require my approval', 'flag', { value: !t.direct_action_required }));
@@ -142,9 +144,9 @@ export function createOperatorUI({ session, read, route }) {
   function messageControls(m) {
     const box = h('article', { class: 'op-message' }, h('p', {}, `${provenance(m)} · ${m.created_at}`), h('pre', {}, m.text || '(deleted)'));
     if (m.deleted) return box;
-    if (m.author_actor_id === session.me.actor.id && !m.on_behalf_of_actor_id && rights('post')) {
+    if (m.author_actor_id === session.me.actor.id && !m.on_behalf_of_actor_id && !(m.is_root && current.thread?.task_id) && rights('post')) {
       const edit = draft(`Edit ${m.id}`); if (!edit.dataset.loaded) { edit.value = m.text; edit.dataset.loaded = 'true'; }
-      const save = button('Save edit', () => send(save, { steps: [{ method: 'PATCH', path: `${current.B}/messages/${enc(m.id)}`, body: { text: edit.value }, headers: { 'If-Match': `"${m.revision}"` } }] }));
+      const save = writeButton('Save edit', () => send(save, { steps: [{ method: 'PATCH', path: `${current.B}/messages/${enc(m.id)}`, body: { text: edit.value }, headers: { 'If-Match': `"${m.revision}"` } }] }));
       box.append(field('Edit your message', edit), save);
     }
     if (rights('label') && session.server.capabilities?.includes('yak.labels')) {
@@ -156,12 +158,12 @@ export function createOperatorUI({ session, read, route }) {
         const b = op === 'set' ? set : remove;
         send(b, { steps: [{ method: 'PATCH', path: `${current.B}/messages/${enc(m.id)}/labels`, body: { operations: [{ op, key: k, ...(op === 'set' ? { value: val.value } : {}), expect: old === undefined ? { absent: true } : { value: old } }] } }] });
       };
-      const set = button('Set label', () => label('set')), remove = button('Remove label', () => label('remove'));
+      const set = writeButton('Set label', () => label('set')), remove = writeButton('Remove label', () => label('remove'));
       box.append(field('Label key', key), field('Label value', val), set, remove);
     }
     if (rights('react') && session.server.capabilities?.includes('yak.reactions')) {
       const key = draft(`Reaction ${m.id}`, 'input');
-      for (const method of ['PUT', 'DELETE']) { const b = button(method === 'PUT' ? 'React' : 'Remove reaction', () => { if (key.value.trim()) send(b, { steps: [{ method, path: `${current.B}/messages/${enc(m.id)}/reactions/${enc(key.value.trim())}`, body: method === 'PUT' ? {} : null }] }); }); box.append(b); }
+      for (const method of ['PUT', 'DELETE']) { const b = writeButton(method === 'PUT' ? 'React' : 'Remove reaction', () => { if (key.value.trim()) send(b, { steps: [{ method, path: `${current.B}/messages/${enc(m.id)}/reactions/${enc(key.value.trim())}`, body: method === 'PUT' ? {} : null }] }); }); box.append(b); }
       box.append(field('Reaction key', key));
     }
     return box;
@@ -170,7 +172,7 @@ export function createOperatorUI({ session, read, route }) {
     if (!rights('post')) return h('p', {}, 'Read-only here: post permission is missing.');
     const text = draft(`Message ${current.B} ${current.thread?.id || current.channel}`), title = draft(`Title ${current.B} ${current.channel}`, 'input');
     const isReply = !!current.thread;
-    const sendMessage = button(isReply ? 'Send reply' : 'Start thread', () => {
+    const sendMessage = writeButton(isReply ? 'Send reply' : 'Start thread', () => {
       if (!text.value.trim() || (!isReply && !title.value.trim())) { say('Enter text and a title for a new thread.'); return; }
       const mentions = current.actors.filter((a) => new RegExp(`(?:^|[^A-Za-z0-9_])@${a.handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`).test(text.value)).map((a) => a.id);
       send(sendMessage, { steps: [{ method: 'POST', path: isReply ? `${current.B}/threads/${enc(current.thread.id)}/messages` : `${current.B}/threads`, body: { text: text.value, mentions, ...(!isReply ? { channel: current.channel, title: title.value } : {}) } }] }, () => { text.value = ''; });
@@ -179,7 +181,7 @@ export function createOperatorUI({ session, read, route }) {
     if (rights('task_manage') && session.server.capabilities?.includes('yak.tasks')) {
       const taskTitle = draft(`Task title ${current.B} ${current.channel}`, 'input'), gate = draft(`Needs my approval ${current.B} ${current.channel}`, 'input'); gate.type = 'checkbox';
       const assignee = h('select', { 'aria-label': 'Task assignee' }, h('option', { value: '' }, 'Unassigned'), current.actors.map((a) => h('option', { value: a.id }, `@${a.handle}`)));
-      const create = button('Create task', () => {
+      const create = writeButton('Create task', () => {
         if (!taskTitle.value.trim()) { say('Enter a task title.'); return; }
         const values = { title: taskTitle.value, text: text.value, channel: current.channel, gate: gate.checked, assignee: assignee.value || null };
         confirmation('Create task', `Acting as ${actor(session.me.actor.id)}\nChannel: ${values.channel}\nTitle: ${values.title}\nAssignee: ${actor(values.assignee)}\nNeeds my approval: ${values.gate}\nText: ${values.text}`, taskIntent('create', current.B, null, values), create, () => { taskTitle.value = ''; text.value = ''; });
@@ -218,15 +220,18 @@ export function createOperatorUI({ session, read, route }) {
   async function loadBoard(id, channel, thread) {
     const version = ++sequence; current = { B: `/v1/boards/${enc(id)}`, actors: [], permissions: [] };
     try {
-      const channels = await all(`${current.B}/channels`, 'channels');
+      const B = current.B;
+      const [channels, detail] = await Promise.all([all(`${B}/channels`, 'channels'), thread ? read('GET', `${B}/threads/${enc(thread)}`) : null]);
       if (!panel || version !== sequence) return;
+      channel = detail?.thread.channel_path || (channels.some((c) => c.path === channel) ? channel : channels[0]?.path);
+      if (!channel) { say('No readable channel is available.'); return; }
       const sel = h('select', { 'aria-label': 'Channel', onchange: () => loadChannel(sel.value, '') }, channels.map((c) => h('option', { value: c.path, selected: c.path === channel }, c.path)));
       panel.querySelector('.op-channel').replaceChildren(field('Channel', sel));
-      await loadChannel(channel || channels[0]?.path, thread);
+      await loadChannel(channel, thread);
     } catch (e) { say(e.status === 404 ? 'Item gone or hidden.' : e.message); }
   }
   async function open(context = route()) {
-    if (!session.active) return;
+    if (!session.active || session.ending) return;
     close(); opener = document.activeElement;
     status = h('p', { role: 'status' }); content = h('div', {});
     panel = h('dialog', { class: 'op-workspace', 'aria-label': 'Operator tools' }, h('h2', {}, 'Operator tools'), button('Close', close), status, h('div', { class: 'op-board' }), h('div', { class: 'op-channel' }), button('Refresh permissions and state', () => current && loadChannel(current.channel, current.thread?.id)), content, receipts);
@@ -242,5 +247,5 @@ export function createOperatorUI({ session, read, route }) {
       await loadBoard(selected, context.ch, context.t);
     } catch (e) { say(e.message); }
   }
-  return { open, close, update: () => { for (const node of document.querySelectorAll('.op-lease')) { const c = session.claims.get(node.dataset.taskPath); node.textContent = c ? `You hold this claim in this tab; ${Math.max(0, Math.ceil((c.deadline - session.mono()) / 1000))} seconds remaining. Renewing while this tab is open.` : 'Your claim ended. Refresh before acting again.'; } }, clear: () => { close(); drafts.clear(); receipts.replaceChildren(); document.querySelectorAll('.op-confirm').forEach((d) => d.remove()); } };
+  return { open, close, update: () => { for (const b of document.querySelectorAll('[data-op-write]')) b.disabled = session.pending.size > 0 || session.ending; for (const node of document.querySelectorAll('.op-lease')) { const c = session.claims.get(node.dataset.taskPath); node.textContent = c ? `You hold this claim in this tab; ${Math.max(0, Math.ceil((c.deadline - session.mono()) / 1000))} seconds remaining. Renewing while this tab is open.` : 'Your claim ended. Refresh before acting again.'; } }, clear: () => { close(); drafts.clear(); receipts.replaceChildren(); document.querySelectorAll('.op-confirm').forEach((d) => d.remove()); } };
 }

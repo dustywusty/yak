@@ -311,3 +311,10 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
     stop: () => { abort.abort(); refresh.abort.abort(); clearInterval(clockTimer); clearInterval(expiryTimer); },
   };
 }
+
+// The gate label is display data. Never derive approval from it.
+export function gateHint(task, labels = {}) {
+  if (labels.gate != null && task.direct_action_required !== true) return 'label only; not a gate';
+  if (task.state === 'blocked' && task.direct_action_required === true && labels.gate === 'approved') return 'label says approved; task is still blocked';
+  return '';
+}

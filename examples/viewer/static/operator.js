@@ -4,6 +4,7 @@ export function credentialRefusal(me, server, date) {
   const c = me?.credential;
   if (me?.actor?.kind !== 'human') return 'Operator mode requires a human actor.';
   if (me.delegation != null || c?.delegation_id != null) return 'Delegated credentials cannot enter operator mode.';
+  if (!me.actor.id || !c?.id) return 'Missing actor or credential identity.';
   if (!c || !Array.isArray(c.scopes)) return 'Missing credential scopes.';
   for (const s of c.scopes) if (!scopes.has(s)) return `Refused credential scope: ${s}`;
   if (!Array.isArray(c.board_ids) || !c.board_ids.length) return 'Refused credential board_ids: a board restriction is required.';
@@ -14,7 +15,7 @@ export function credentialRefusal(me, server, date) {
   }
   return '';
 }
-const boardRead = /^\/v1\/boards\/[^/]+(?:\/(?:actors|channels|permissions|threads|messages|tasks|events|snapshots)(?:\/[^/]+(?:\/(?:messages|briefs|events))?)?)?$/;
+const boardRead = /^\/v1\/boards\/[^/]+(?:\/(?:actors|channels|permissions|events|threads|tasks)|\/(?:threads\/[^/]+(?:\/messages)?|messages\/[^/]+|tasks\/[^/]+(?:\/briefs(?:\/[^/]+)?)?|snapshots\/[^/]+))?$/;
 export function allowedRequest(method, path, ownId) {
   if (/[?#%]/.test(path) || path.includes('..') || path.includes('//')) return false;
   if (method === 'GET') return ['/v1/server', '/v1/me', '/v1/boards'].includes(path) || boardRead.test(path);
@@ -58,27 +59,33 @@ export function approvalRecord(events, actors, taskId) {
   return result;
 }
 export class OperatorSession {
-  constructor({ send, changed = () => {}, mono = () => performance.now(), schedule = (fn, ms) => setTimeout(fn, ms), unschedule = (id) => clearTimeout(id) }) {
-    Object.assign(this, { send, changed, mono, schedule, unschedule });
+  constructor({ send, changed = () => {}, mono = () => performance.now(), wall = () => Date.now(), schedule = (fn, ms) => setTimeout(fn, ms), unschedule = (id) => clearTimeout(id) }) {
+    Object.assign(this, { send, changed, mono, wall, schedule, unschedule });
     this.claims = new Map(); this.pending = new Set(); this.active = false; this.ending = false;
   }
-  start(me, server, serverDate) {
+  start(me, server, serverDate, serverMono = this.mono()) {
     const why = credentialRefusal(me, server, serverDate); if (why) throw new Error(why);
     this.me = me; this.server = server; this.run = `operator/${randomKey()}`; this.active = true; this.generation = Symbol();
-    this.notice = null; this.lastInput = this.mono(); this.expiry = this.mono() + Date.parse(me.credential.expires_at) - serverDate;
+    this.notice = null; this.lastInput = this.mono(); this.lastInputWall = this.wall();
+    // Anchor to the discovery request start. Date has only second precision;
+    // end conservatively rather than granting a late response extra lifetime.
+    this.expiry = serverMono + Date.parse(me.credential.expires_at) - serverDate - 1000;
+    this.expiryWall = this.wall() + Math.max(0, this.expiry - this.mono());
     this.timer = setInterval(() => this.tick(), 1000); this.timer.unref?.(); this.changed();
   }
-  input() { if (this.active) this.lastInput = this.mono(); }
+  idleLeft() { return Math.min(900000 - this.mono() + this.lastInput, 900000 - this.wall() + this.lastInputWall); }
+  lifeLeft() { return Math.min(this.expiry - this.mono(), this.expiryWall - this.wall()); }
+  input() { if (!this.active || this.ending) return; if (this.idleLeft() <= 0 || this.lifeLeft() <= 0) { this.end(); return; } this.lastInput = this.mono(); this.lastInputWall = this.wall(); }
   async tick() {
     if (!this.active || this.ending) return;
     for (const [path, c] of this.claims) if (this.mono() >= c.deadline) this.lose(path);
-    if (this.mono() >= this.expiry || this.mono() - this.lastInput >= 900000) return this.end();
+    if (this.lifeLeft() <= 0 || this.idleLeft() <= 0) return this.end();
     this.changed();
   }
   intent(spec) {
     if (!this.active || this.ending) throw new Error('Operator session ended.');
     const i = { ...spec, steps: spec.steps.map((s) => ({ ...s, headers: { ...s.headers, 'Idempotency-Key': randomKey(), 'Yak-Run-Id': this.run } })), index: 0, busy: false, generation: this.generation };
-    this.pending.add(i); return i;
+    this.pending.add(i); this.changed(); return i;
   }
   async perform(i) {
     if (i.busy || !this.active || this.ending || i.generation !== this.generation) return;
@@ -96,8 +103,8 @@ export class OperatorSession {
         try { result = await this.send(s.method, s.path, s.body, headers); }
         catch (e) {
           // A label receipt may already exist; a conditional "approved" is done.
-          if (i.kind === 'approve' && i.index === 1 && e.status === 412 && (e.problem?.current_value === 'approved' || e.problem?.current === 'approved')) result = null;
-          else { if (e.problem?.code === 'claim_lost') this.lose(s.path.replace(/\/release$/, '')); if (e.status === 401) await this.end({ unauthorized: true }); throw e; }
+          if (i.kind === 'approve' && i.index === 1 && e.status === 412 && e.problem?.key === 'gate' && (e.problem?.current_value === 'approved' || e.problem?.current === 'approved')) result = null;
+          else { if (!this.active || this.ending || i.generation !== this.generation) throw e; if (e.problem?.code === 'claim_lost') this.lose(s.path.replace(/\/release$/, '')); if (e.status === 401) await this.end({ unauthorized: true }); throw e; }
         }
         if (!this.active || this.ending || i.generation !== this.generation) return;
         if (i.kind === 'claim' && result?.proof) this.hold(s.path.replace(/\/claims$/, ''), result, s.started);
@@ -128,6 +135,7 @@ export class OperatorSession {
       if (!this.active || this.ending || this.claims.get(path) !== c) return;
       c.deadline = c.started + c.lease * 1000; c.key = null; this.renewLater(path, c);
     } catch (e) {
+      if (!this.active || this.ending || this.claims.get(path) !== c) return;
       if (e.status === 401) return this.end({ unauthorized: true });
       if ([403, 404, 409].includes(e.status) || this.mono() >= c.deadline) return this.lose(path);
       c.timer = this.schedule(() => this.renew(path, c), Math.min(1000, Math.max(0, c.deadline - this.mono())));

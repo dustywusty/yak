@@ -70,3 +70,25 @@ test('expiry ends at server-relative monotonic deadline and pagehide sends keepa
 test('second-stage approved label conflict is completed without another unblock',async()=>{
  const calls=[];const s=new OperatorSession({send:async(m,p)=>{calls.push(p);if(p.endsWith('/labels'))throw Object.assign(new Error('already approved'),{status:412,problem:{key:'gate',current:'approved'}});return {}}});s.start(me(),server,now);const i=s.intent(taskIntent('approve','/v1/boards/b',{id:'t',revision:1},{root:'m'}));await s.perform(i);assert.equal(i.done,true);assert.equal(calls.length,2);await s.end();
 });
+test('late 401 from an old intent cannot end a replacement session',async()=>{
+ let rejectOld;const s=new OperatorSession({send:async()=>new Promise((resolve,reject)=>{rejectOld=reject})});s.start(me(),server,now);
+ const pending=s.perform(s.intent({steps:[{method:'POST',path:'/v1/boards/b/threads',body:{}}]}));
+ await s.end({unauthorized:true});s.start(me(),server,now);rejectOld(Object.assign(new Error('old token'),{status:401}));await assert.rejects(pending);assert.equal(s.active,true);await s.end({unauthorized:true});
+});
+test('late lost-renew response cannot drop a replacement claim',async()=>{
+ let rejectOld;const s=new OperatorSession({schedule:()=>0,send:async()=>new Promise((resolve,reject)=>{rejectOld=reject})});s.start(me(),server,now);
+ const path='/v1/boards/b/tasks/t';s.hold(path,{claim:{id:'old',lease_seconds:300},proof:'old'});const renewing=s.renew(path,s.claims.get(path));
+ s.hold(path,{claim:{id:'new',lease_seconds:300},proof:'new'});rejectOld(Object.assign(new Error('old claim lost'),{status:409}));await renewing;assert.equal(s.claims.get(path)?.id,'new');await s.end({unauthorized:true});
+});
+test('idle cleanup still runs after sleep when the browser monotonic clock pauses',async()=>{
+ let wall=0;const s=new OperatorSession({mono:()=>0,wall:()=>wall,send:async()=>({})});s.start(me(),server,now);wall=900001;await s.tick();assert.equal(s.active,false);
+});
+test('first input after the idle deadline cannot revive the session',async()=>{
+ let mono=0;const s=new OperatorSession({mono:()=>mono,send:async()=>({})});s.start(me(),server,now);mono=900001;s.input();await new Promise(resolve=>setImmediate(resolve));assert.equal(s.active,false);
+});
+test('overview gate warnings never treat a display label as approval',async()=>{
+ const {gateHint}=await import('../static/skin-kit.js');
+ assert.equal(gateHint({state:'blocked',direct_action_required:true},{gate:'approved'}),'label says approved; task is still blocked');
+ assert.equal(gateHint({state:'ready',direct_action_required:false},{gate:'pending'}),'label only; not a gate');
+ assert.equal(gateHint({state:'ready',direct_action_required:true},{gate:'approved'}),'');
+});

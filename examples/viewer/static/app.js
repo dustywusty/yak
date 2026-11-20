@@ -16,7 +16,7 @@ import { h } from './skin-kit.js';
 const TOKEN_KEY = 'yak-viewer-token';
 const UNAUTHORIZED = 'The server rejected the token (401). Paste a valid token.';
 const $ = (id) => document.getElementById(id);
-const S = { token: null, me: null, abort: new AbortController(), operatorEnabled: false, serverDate: NaN };
+const S = { token: null, me: null, abort: new AbortController(), operatorEnabled: false, serverDate: NaN, serverMono: 0 };
 let session, operatorUI;
 
 // ---------- HTTP ----------
@@ -41,6 +41,7 @@ async function api(method, path, params = {}, signal = S.abort.signal) {
     for (const x of [].concat(v)) url.searchParams.append(k, x);
   }
   let res;
+  const started = performance.now();
   try {
     res = await fetch(url, {
       method,
@@ -54,7 +55,7 @@ async function api(method, path, params = {}, signal = S.abort.signal) {
     throw new ApiError(0, { code: 'network', detail: 'network error' });
   }
   if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
-  if (path === '/v1/server') S.serverDate = Date.parse(res.headers.get('Date'));
+  if (path === '/v1/server') { S.serverDate = Date.parse(res.headers.get('Date')); S.serverMono = started; }
   if (res.status === 204) return null;
   const body = await res.json().catch(() => ({}));
   // Cancellation can outlive fetch while the response body is being read.
@@ -201,7 +202,7 @@ $('login-form').addEventListener('submit', async (ev) => {
       const why = credentialRefusal(me, server, S.serverDate);
       if (why) throw new Error(why);
       try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* unavailable */ }
-      S.me = me; session.start(me, server, S.serverDate);
+      S.me = me; session.start(me, server, S.serverDate, S.serverMono);
       document.body.dataset.operator = 'true';
       if (!server.capabilities?.includes('yak.credentials.restrictions')) banner("Warning: a stolen token could issue and revoke your credentials. This server has no credential restrictions.");
     } else {
@@ -248,7 +249,7 @@ session = new OperatorSession({ send: write, changed: () => {
   const el = $('operator-session'); el.hidden = !session.active;
   if (session.active) {
     const c = session.me.credential;
-    $('operator-identity').textContent = `@${session.me.actor.handle} (${session.me.actor.kind}) · boards ${c.board_ids.join(', ')} · scopes ${c.scopes.join(', ')} · expires in ${Math.max(0, Math.ceil((session.expiry - session.mono()) / 60000))} min · idle ${Math.max(0, Math.ceil((900000 - session.mono() + session.lastInput) / 1000))} s${session.mono() - session.lastInput >= 840000 ? ' — idle logout in less than 60 seconds' : ''}${session.notice ? ` · ${session.notice}` : ''}`;
+    $('operator-identity').textContent = `@${session.me.actor.handle} (${session.me.actor.kind}) · boards ${c.board_ids.join(', ')} · scopes ${c.scopes.join(', ')} · expires in ${Math.max(0, Math.ceil(session.lifeLeft() / 60000))} min · idle ${Math.max(0, Math.ceil(session.idleLeft() / 1000))} s${session.idleLeft() <= 60000 ? ' — idle logout in less than 60 seconds' : ''}${session.notice ? ` · ${session.notice}` : ''}`;
   } else if (S.me && document.body.dataset.operator) needToken(session.notice || 'Operator session ended.');
 } });
 operatorUI = createOperatorUI({ session, read: api, route: parseRoute });

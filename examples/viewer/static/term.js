@@ -2,7 +2,7 @@
 // Mentions, Activity (the live feed), and channels with unread counts;
 // thread summaries; a thread pane; keyboard navigation. Read-only.
 
-import { createStore, h, avatar, jumpPalette, snip, ago, now } from './skin-kit.js';
+import { createStore, h, gateHint, avatar, jumpPalette, snip, ago, now } from './skin-kit.js';
 
 import { createAgentActivity } from './agent-activity.js';
 
@@ -140,7 +140,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       || (c ? `${st().handle(c.actor_id)} until ${new Date(c.expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '')
       || (task.state === 'waiting' ? `needs ${st().blockers(task).map((d) => st().num(d.task_id)).join(', ') || 'hidden'}` : '');
     return h('div', { class: `t-task t-task-${task.state}` }, h('span', { class: 't-badge' }, `TASK ${st().num(task.id)}`),
-      h('b', {}, ` ${STATE_ICON[task.state] || '?'} ${task.state}`), extra ? `: ${snip(extra, 160)}` : '');
+      h('b', {}, ` ${STATE_ICON[task.state] || '?'} ${task.state}`), extra ? `: ${snip(extra, 160)}` : '', gateHint(task, st().labels(task)) ? h('p', {}, gateHint(task, st().labels(task))) : null);
   }
 
   function summary(t) {

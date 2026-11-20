@@ -16,7 +16,7 @@ export function operatorFixture() {
     if(m==='GET') {
       if(p==='/v1/boards')return json({boards:[{id:B,name:'test'}]});
       if(p.endsWith('/actors'))return json({actors});
-      if(p.endsWith('/permissions'))return json({capabilities:['read','post','label','claim','task_manage','task_admin']});
+      if(p.endsWith('/permissions'))return json({capabilities:T.permissions||['read','post','label','claim','task_manage','task_admin']});
       if(p.endsWith('/channels'))return json({channels:[{path:'ops',caller_capabilities:['read','post'],access_mode:'inherited'}]});
       if(p.endsWith('/threads'))return json({threads:[thread],next_page_token:null});
       if(p.endsWith('/threads/th'))return json({thread});

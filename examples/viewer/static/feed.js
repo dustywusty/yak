@@ -160,7 +160,7 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
       case 'task.completed': return snip(p.outcome?.summary) || 'completed';
       case 'task.failed': return snip(p.outcome?.reason || p.outcome?.summary) || 'failed';
       case 'task.blocked': return `${p.reason ?? ''} (${p.cause})`;
-      case 'task.unblocked': return `${p.reason ?? ''}${ev.on_behalf_of_actor_id || ev.delegation_id || rec.actors.get(ev.actor_id)?.kind !== 'human' ? `; unblocked by ${who(rec, ev.actor_id)}${ev.on_behalf_of_actor_id ? ` for ${who(rec, ev.on_behalf_of_actor_id)}` : ''}, not a person's approval` : ''}`;
+      case 'task.unblocked': return `${p.reason ?? ''} · credential ${ev.credential_id || 'unknown'}${ev.on_behalf_of_actor_id || ev.delegation_id || rec.actors.get(ev.actor_id)?.kind !== 'human' ? `; unblocked by ${who(rec, ev.actor_id)}${ev.on_behalf_of_actor_id ? ` for ${who(rec, ev.on_behalf_of_actor_id)}` : ''}, not a person's approval` : ''}`;
       case 'task.reopened': return p.reason ?? '';
       case 'task.canceled': return `${p.reason ?? ''} (${p.cause})`;
       case 'task.assigned': return `${p.assignee_before ? who(rec, p.assignee_before) : 'none'} → ${p.assignee_after ? who(rec, p.assignee_after) : 'none'}`;

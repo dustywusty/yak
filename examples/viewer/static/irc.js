@@ -1,7 +1,7 @@
 // Retro IRC: board channels as tabs, thread messages as chat lines, task
 // changes as action lines, a nick list, and a read-only input line.
 
-import { h, lease, jumpPalette } from './skin-kit.js';
+import { h, gateHint, lease, jumpPalette } from './skin-kit.js';
 
 const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
@@ -85,7 +85,7 @@ export function irc(root, { threadHref }) {
     const c = task?.current_claim;
     leaseEl = c ? h('span', {}) : null;
     if (c) leaseEl.dataset.exp = c.expires_at;
-    return [`Topic: ${t.title} | ${task ? `state=${task.state}` : `${t.message_count} messages`}`,
+    return [`Topic: ${t.title} | ${task ? `state=${task.state}` : `${t.message_count} messages`}`, task && gateHint(task, st.labels(task)) ? ` | ${gateHint(task, st.labels(task))}` : '',
       c ? [` | ${st.num(task.id)} claimed by ${st.handle(c.actor_id)} (`, leaseEl, ')'] : '',
       ' | ', h('a', { href: threadHref(t.id), 'data-focus': 'topic' }, 'open thread')];
   }
@@ -166,8 +166,8 @@ export function irc(root, { threadHref }) {
     const p = ev.payload || {};
     const channel = p.message?.channel_path || p.thread?.channel_path || p.task?.channel_path;
     if (!channel) return;
-    if (LOGGED[ev.type]) log.push({ ts: ev.recorded_at, thread: ev.thread_id, channel, text: `* ${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})${ev.on_behalf_of_actor_id ? ` for ${st.handle(ev.on_behalf_of_actor_id)}` : ''} ${LOGGED[ev.type](p)} ${st.num(p.task.id)}`,
-      el: [h('span', { class: 'i-act' }, `* ${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})${ev.on_behalf_of_actor_id ? ` for ${st.handle(ev.on_behalf_of_actor_id)}` : ''} ${LOGGED[ev.type](p)} ${st.num(p.task.id)}`)] });
+    if (LOGGED[ev.type]) log.push({ ts: ev.recorded_at, thread: ev.thread_id, channel, text: `* ${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})${ev.on_behalf_of_actor_id ? ` for ${st.handle(ev.on_behalf_of_actor_id)}` : ''} ${LOGGED[ev.type](p)} ${st.num(p.task.id)} · credential ${ev.credential_id || 'unknown'}${ev.type === 'task.unblocked' && (ev.on_behalf_of_actor_id || ev.delegation_id || st.actor(ev.actor_id)?.kind !== 'human') ? ", not a person's approval" : ''}`,
+      el: [h('span', { class: 'i-act' }, `* ${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})${ev.on_behalf_of_actor_id ? ` for ${st.handle(ev.on_behalf_of_actor_id)}` : ''} ${LOGGED[ev.type](p)} ${st.num(p.task.id)} · credential ${ev.credential_id || 'unknown'}${ev.type === 'task.unblocked' && (ev.on_behalf_of_actor_id || ev.delegation_id || st.actor(ev.actor_id)?.kind !== 'human') ? ", not a person's approval" : ''}`)] });
     if (log.length > 300) log.shift();
     if ((ev.type === 'message.created' || ev.type === 'thread.created' || LOGGED[ev.type]) && channel !== tab) unread.set(channel, (unread.get(channel) || 0) + 1);
   }

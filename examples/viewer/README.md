@@ -346,7 +346,7 @@ server without credential restrictions, the page shows the contract's warning.
 
 The token and claim proofs stay in memory. A reload needs another paste.
 Logout revokes the token everywhere; it releases this tab's claims first.
-Idle input ends the session after 15 minutes. Polls do not extend that time.
+Fifteen minutes without input ends the session. Polls do not extend that time.
 Closing the tab attempts revocation, but a failed request can leave the token
 valid until expiry. The page reports revocation failure when it remains open.
 

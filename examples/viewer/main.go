@@ -1,4 +1,4 @@
-// Command viewer is a view-only browser for Yak boards. It is a demo
+// Command viewer is a read-only browser with opt-in human operator actions. It is a demo
 // client of the public HTTP API (spec/openapi.yaml): it serves a small
 // static web page and reverse-proxies /v1/* to a Yak server, so the page
 // is same-origin with the API.
@@ -41,8 +41,8 @@ func main() {
 	}
 
 	target, err := url.Parse(*api)
-	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
-		log.Fatalf("viewer: -api must be an http(s) URL, got %q", *api)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.User != nil || target.RawQuery != "" || target.Fragment != "" {
+		log.Fatal("viewer: -api must be an http(s) URL without credentials, query or fragment")
 	}
 
 	if *operator && !validOperatorTarget(target) {
@@ -76,7 +76,7 @@ func routeProblem(w http.ResponseWriter, status int, code string) {
 	w.Write([]byte(`{"type":"about:blank","status":` + fmt.Sprint(status) + `,"code":"` + code + `","reason":"operator_route_not_allowed"}`))
 }
 
-var boardRead = regexp.MustCompile(`^/v1/boards/[^/]+(?:/(?:actors|channels|permissions|threads|messages|tasks|events|snapshots)(?:/[^/]+(?:/(?:messages|briefs|events))?)?)?$`)
+var boardRead = regexp.MustCompile(`^/v1/boards/[^/]+(?:/(?:actors|channels|permissions|events|threads|tasks)|/(?:threads/[^/]+(?:/messages)?|messages/[^/]+|tasks/[^/]+(?:/briefs(?:/[^/]+)?)?|snapshots/[^/]+))?$`)
 var snapshotRoute = regexp.MustCompile(`^/v1/boards/[^/]+/snapshots$`)
 var snapshotItem = regexp.MustCompile(`^/v1/boards/[^/]+/snapshots/[^/]+$`)
 var operatorRoutes = map[string]*regexp.Regexp{
