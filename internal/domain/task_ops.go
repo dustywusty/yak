@@ -70,8 +70,9 @@ type DependenciesRequest struct {
 }
 
 type PatchTaskRequest struct {
-	Title        *string `json:"title,omitempty"`
-	OwnerActorID *string `json:"owner_actor_id,omitempty"`
+	DirectActionRequired *bool   `json:"direct_action_required,omitempty"`
+	Title                *string `json:"title,omitempty"`
+	OwnerActorID         *string `json:"owner_actor_id,omitempty"`
 }
 
 type BriefUpdateRequest struct {
@@ -694,10 +695,26 @@ func (s *Service) ReopenTask(ctx context.Context, p *Principal, boardID, taskID 
 			t.State = StateReady
 		}
 		t.Outcome, t.Block = nil, nil
+		if t.DirectActionRequired {
+			t.State = StateBlocked
+			blockReason := "direct action required"
+			if reason != nil {
+				blockReason = *reason
+			}
+			t.Block = jsonOf(BlockInfo{Reason: blockReason, Cause: "manual", ByActorID: b.p.ActorID, At: b.now})
+		}
 		t.RetryCount++
 		b.touch(t, true)
 		if err := b.saveTask(t); err != nil {
 			return err
+		}
+		if t.DirectActionRequired {
+			var block BlockInfo
+			_ = json.Unmarshal(t.Block, &block)
+			if err := b.emitTask(t, taskEvent{Type: "task.reopened", StateBefore: before, Extra: map[string]any{"reason": reason, "previous_outcome": prev}}); err != nil {
+				return err
+			}
+			return b.emitTask(t, taskEvent{Type: "task.blocked", StateBefore: before, TVI: true, Extra: map[string]any{"reason": block.Reason, "cause": "manual", "revoked_claim": nil}})
 		}
 		return b.emitTask(t, taskEvent{Type: "task.reopened", StateBefore: before, TVI: true, Extra: map[string]any{"reason": reason, "previous_outcome": prev}})
 	})
@@ -934,10 +951,10 @@ func (b *btx) cycleThrough(task string, next map[string]string) ([]string, error
 	return nil, nil
 }
 
-// PatchTask is L19: title (via the thread) and owner.
+// PatchTask is L19: title (via the thread), owner and the direct action flag.
 func (s *Service) PatchTask(ctx context.Context, p *Principal, boardID, taskID string, ifMatch int64, req PatchTaskRequest) (*TaskView, error) {
-	if req.Title == nil && req.OwnerActorID == nil {
-		return nil, Validation("at least one of title or owner_actor_id is required")
+	if req.Title == nil && req.OwnerActorID == nil && req.DirectActionRequired == nil {
+		return nil, Validation("at least one of title, owner_actor_id or direct_action_required is required")
 	}
 	if req.Title != nil {
 		if err := validName(*req.Title, s.Cfg.MaxTitleBytes); err != nil {
@@ -981,6 +998,10 @@ func (s *Service) PatchTask(ctx context.Context, p *Principal, boardID, taskID s
 			}
 			t.Owner = *req.OwnerActorID
 			changed = append(changed, "owner_actor_id")
+		}
+		if req.DirectActionRequired != nil && *req.DirectActionRequired != t.DirectActionRequired {
+			t.DirectActionRequired = *req.DirectActionRequired
+			changed = append(changed, "direct_action_required")
 		}
 		if len(changed) == 0 {
 			return nil

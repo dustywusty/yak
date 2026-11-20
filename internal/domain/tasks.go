@@ -30,10 +30,11 @@ type TaskThreadSpec struct {
 
 // CreateTaskRequest has exactly one of Thread (L1) or ThreadID (L2).
 type CreateTaskRequest struct {
-	Thread          *TaskThreadSpec `json:"thread,omitempty"`
-	ThreadID        string          `json:"thread_id,omitempty"`
-	AssigneeActorID *string         `json:"assignee_actor_id"`
-	DependsOn       []string        `json:"depends_on"`
+	DirectActionRequired bool            `json:"direct_action_required,omitempty"`
+	Thread               *TaskThreadSpec `json:"thread,omitempty"`
+	ThreadID             string          `json:"thread_id,omitempty"`
+	AssigneeActorID      *string         `json:"assignee_actor_id"`
+	DependsOn            []string        `json:"depends_on"`
 }
 
 type BatchDependency struct {
@@ -42,10 +43,11 @@ type BatchDependency struct {
 }
 
 type BatchTaskItem struct {
-	Ref             string            `json:"ref"`
-	Thread          *TaskThreadSpec   `json:"thread"`
-	AssigneeActorID *string           `json:"assignee_actor_id"`
-	DependsOn       []BatchDependency `json:"depends_on"`
+	DirectActionRequired bool              `json:"direct_action_required,omitempty"`
+	Ref                  string            `json:"ref"`
+	Thread               *TaskThreadSpec   `json:"thread"`
+	AssigneeActorID      *string           `json:"assignee_actor_id"`
+	DependsOn            []BatchDependency `json:"depends_on"`
 }
 
 type CreateTaskBatchRequest struct {
@@ -130,9 +132,9 @@ func (s *Service) CreateTask(ctx context.Context, p *Principal, boardID string, 
 		var t *taskRow
 		var err error
 		if req.Thread != nil {
-			t, err = b.createWithThread(*req.Thread, req.AssigneeActorID, req.DependsOn, "new_thread", nil)
+			t, err = b.createWithThread(*req.Thread, req.AssigneeActorID, req.DependsOn, "new_thread", nil, req.DirectActionRequired)
 		} else {
-			t, err = b.convertThread(req.ThreadID, req.AssigneeActorID, req.DependsOn)
+			t, err = b.convertThread(req.ThreadID, req.AssigneeActorID, req.DependsOn, req.DirectActionRequired)
 		}
 		if err != nil {
 			return nil, err
@@ -228,13 +230,13 @@ func initialState(deps []DependencyView) string {
 
 // insertTask writes the task row and brief revision 1 (TASK-014). Its
 // created_position is the position of the task.created event emitted next.
-func (b *btx) insertTask(id string, th ThreadView, root MessageView, origin string, batchID *string, assignee *string, state string) (*taskRow, error) {
+func (b *btx) insertTask(id string, th ThreadView, root MessageView, origin string, batchID *string, assignee *string, state string, directActionRequired bool) (*taskRow, error) {
 	t := &taskRow{ID: id, BoardID: b.board.ID, ThreadID: th.ID, ChannelID: th.ChannelID, Owner: b.p.ActorID, Assignee: assignee, CreatedBy: b.p.ActorID,
-		Origin: origin, BatchID: batchID, State: state, Revision: 1, BriefRevision: 1, CreatedPosition: b.head + 1,
+		DirectActionRequired: directActionRequired, Origin: origin, BatchID: batchID, State: state, Revision: 1, BriefRevision: 1, CreatedPosition: b.head + 1,
 		CreatedAt: b.now, UpdatedAt: b.now, StateChangedAt: b.now, Title: th.Title, RootMessageID: th.RootMessageID}
 	if _, err := b.Exec(b.ctx, `INSERT INTO tasks(id, board_id, thread_id, channel_id, owner_actor_id, assignee_actor_id, created_by, origin, batch_id,
-		state, created_position, created_at, updated_at, state_changed_at) VALUES ($1,$2,$3,$4,$5,$6,$5,$7,$8,$9,$10,$11,$11,$11)`,
-		t.ID, t.BoardID, t.ThreadID, t.ChannelID, t.Owner, t.Assignee, t.Origin, t.BatchID, t.State, t.CreatedPosition, b.now); err != nil {
+		state, created_position, created_at, updated_at, state_changed_at, direct_action_required) VALUES ($1,$2,$3,$4,$5,$6,$5,$7,$8,$9,$10,$11,$11,$11,$12)`,
+		t.ID, t.BoardID, t.ThreadID, t.ChannelID, t.Owner, t.Assignee, t.Origin, t.BatchID, t.State, t.CreatedPosition, b.now, t.DirectActionRequired); err != nil {
 		return nil, err
 	}
 	if _, err := b.Exec(b.ctx, `INSERT INTO task_briefs(board_id, task_id, revision, text, source_kind, source_message_id, source_message_revision, created_by, created_at)
@@ -255,7 +257,7 @@ func (b *btx) insertDeps(taskID string, deps []string) error {
 }
 
 // createWithThread is L1: thread.created, then task.created.
-func (b *btx) createWithThread(spec TaskThreadSpec, assignee *string, depIDs []string, origin string, batchID *string) (*taskRow, error) {
+func (b *btx) createWithThread(spec TaskThreadSpec, assignee *string, depIDs []string, origin string, batchID *string, directActionRequired bool) (*taskRow, error) {
 	ch, err := b.taskChannel(spec.Channel)
 	if err != nil {
 		return nil, err
@@ -273,7 +275,7 @@ func (b *btx) createWithThread(spec TaskThreadSpec, assignee *string, depIDs []s
 	if err != nil {
 		return nil, err
 	}
-	t, err := b.insertTask(taskID, tw.Thread, tw.Root, origin, batchID, assignee, state)
+	t, err := b.insertTask(taskID, tw.Thread, tw.Root, origin, batchID, assignee, state, directActionRequired)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +286,7 @@ func (b *btx) createWithThread(spec TaskThreadSpec, assignee *string, depIDs []s
 }
 
 // convertThread is L2 (TASK-011..013).
-func (b *btx) convertThread(threadID string, assignee *string, depIDs []string) (*taskRow, error) {
+func (b *btx) convertThread(threadID string, assignee *string, depIDs []string, directActionRequired bool) (*taskRow, error) {
 	th, err := loadThread(b.ctx, b, b.board.ID, threadID, b.chans, true)
 	if err != nil {
 		return nil, err
@@ -319,7 +321,7 @@ func (b *btx) convertThread(threadID string, assignee *string, depIDs []string) 
 		return nil, err
 	}
 	state := initialState(deps)
-	t, err := b.insertTask(ids.New("task"), th, root, "converted", nil, assignee, state)
+	t, err := b.insertTask(ids.New("task"), th, root, "converted", nil, assignee, state, directActionRequired)
 	if err != nil {
 		return nil, err
 	}
@@ -525,7 +527,7 @@ func (s *Service) CreateTaskBatch(ctx context.Context, p *Principal, boardID str
 			if err != nil {
 				return nil, err
 			}
-			t, err := b.insertTask(taskIDs[i], tw.Thread, tw.Root, "batch", &batchID, it.AssigneeActorID, states[i])
+			t, err := b.insertTask(taskIDs[i], tw.Thread, tw.Root, "batch", &batchID, it.AssigneeActorID, states[i], it.DirectActionRequired)
 			if err != nil {
 				return nil, err
 			}
@@ -738,7 +740,7 @@ func (s *Service) ListTasks(ctx context.Context, p *Principal, boardID string, f
 			var c cand
 			if err := rows.Scan(&c.row.ID, &c.row.BoardID, &c.row.ThreadID, &c.row.ChannelID, &c.row.Owner, &c.row.Assignee, &c.row.CreatedBy, &c.row.Origin, &c.row.BatchID,
 				&c.row.State, &c.row.Revision, &c.row.Epoch, &c.row.RetryCount, &c.row.BriefRevision, &c.row.CurrentClaimID, &c.row.ClaimExpiresAt, &c.row.CreatedPosition,
-				&c.row.Block, &c.row.Outcome, &c.row.RootRedactedAt, &c.row.CreatedAt, &c.row.UpdatedAt, &c.row.StateChangedAt, &c.row.Title, &c.row.RootMessageID, &c.labels); err != nil {
+				&c.row.Block, &c.row.Outcome, &c.row.RootRedactedAt, &c.row.CreatedAt, &c.row.UpdatedAt, &c.row.StateChangedAt, &c.row.Title, &c.row.RootMessageID, &c.row.DirectActionRequired, &c.labels); err != nil {
 				rows.Close()
 				return nil, err
 			}

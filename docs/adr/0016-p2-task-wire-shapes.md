@@ -69,18 +69,20 @@ CreateTaskRequest = exactly one of:
   { thread: { channel: ChannelPath, title: string, text: string,
               labels?: {key: value} },
     assignee_actor_id?: string|null,
-    depends_on?: [task_id] }
+    depends_on?: [task_id], direct_action_required?: boolean }
   { thread_id: string,
     assignee_actor_id?: string|null,
-    depends_on?: [task_id] }
+    depends_on?: [task_id], direct_action_required?: boolean }
 
 CreateTaskBatchRequest =
   { tasks: [ { ref: string,
                thread: { channel, title, text, labels? },
                assignee_actor_id?: string|null,
-               depends_on?: [ {ref: string} | {task_id: string} ] } ] }   // 1..100
+               depends_on?: [ {ref: string} | {task_id: string} ],
+               direct_action_required?: boolean } ] }   // 1..100
 
-PatchTaskRequest  = { title?: string, owner_actor_id?: string }        // ≥1 field
+PatchTaskRequest  = { title?: string, owner_actor_id?: string,
+                      direct_action_required?: boolean }        // ≥1 field
 ClaimRequest      = { lease_seconds?: int, expect_brief_revision?: int }
 ClaimNextRequest  = { channel?: ChannelPath, subtree?: ChannelPath,
                       labels?: { key: [value] },      // [] = key present
@@ -341,3 +343,24 @@ nulls `proof_ciphertext` on materialized claims. Metric: expiry lag
 | Separate `task_state_changes` table for history | The event log already is the history; `last_claim` and `GET …/claims` cover the common reads. |
 | `SELECT … FOR UPDATE SKIP LOCKED` queue without the board lock | Breaks event order = commit order and the oldest-eligible promise. |
 | One `POST /tasks/{id}/transitions` route | Generic command routes are harder to authorize and document; design §11.2 lists explicit commands. |
+
+## Accepted gate-field amendment (ADR-0019 §5)
+
+`Task` includes `direct_action_required`, a boolean with default `false`.
+Managers set it on creation (including conversion and batch items) or
+change it with revision-checked PATCH. Setting it does not block a task.
+Unblock keeps it. Reopen keeps it and creates a fresh manual block as
+specified in DLG-099. Creation and update events carry it in `payload.task`;
+flag updates add `direct_action_required` to `changed`. The event envelope
+and other payload members stay unchanged.
+
+Migration 0005 adds the column; migrations 0001–0004 and existing event
+rows stay unchanged. Current task views always emit the boolean. Historical
+event copies may omit it (equivalent to false); projection preserves that
+absence. The shared Task schema permits absence for those old copies.
+Normalized creation and batch fingerprints omit false, so existing
+idempotency receipts still replay after upgrade.
+
+The direct-credential portion ships before delegation. Delegated checks
+from DLG-091, DLG-092 and DLG-098 apply when delegation is implemented;
+this field alone does not advertise `yak.delegation`.

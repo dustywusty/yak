@@ -70,7 +70,7 @@ func TestCredentialRestrictionsUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := Migrate(ctx, dbURL)
-	if err != nil || len(applied) != 1 || applied[0] != "0004_credential_restrictions.sql" {
+	if err != nil || len(applied) != len(ms)-3 || applied[0] != "0004_credential_restrictions.sql" {
 		t.Fatalf("upgrade = %v, %v", applied, err)
 	}
 	var manage, delegate bool

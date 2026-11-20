@@ -159,7 +159,7 @@ func decode(r *http.Request, v any) error {
 	if dec.More() {
 		return domain.Validation("trailing data after JSON body")
 	}
-	return nil
+	return validateGateBoolean(v, body)
 }
 
 var idemKeyRE = regexp.MustCompile(`^[\x21-\x7e]{1,255}$`)

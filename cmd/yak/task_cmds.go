@@ -187,8 +187,11 @@ func printTask(t *yak.Task) error {
 
 func taskLine(t *yak.Task) string {
 	extra := ""
+	if t.DirectActionRequired {
+		extra = "  direct_action_required=true"
+	}
 	if t.CurrentClaim != nil {
-		extra = fmt.Sprintf("  claim=%s by %s until %s", t.CurrentClaim.ID, t.CurrentClaim.ActorID, t.CurrentClaim.ExpiresAt.Format(time.RFC3339))
+		extra += fmt.Sprintf("  claim=%s by %s until %s", t.CurrentClaim.ID, t.CurrentClaim.ActorID, t.CurrentClaim.ExpiresAt.Format(time.RFC3339))
 	}
 	if t.AssigneeActorID != nil {
 		extra += "  assignee=" + *t.AssigneeActorID
@@ -202,6 +205,7 @@ func printTaskDetail(t *yak.Task) error {
 	}
 	fmt.Printf("%s  %s\n", t.ID, t.Title)
 	fmt.Printf("  state %s  revision %d  epoch %d  retries %d  brief %d\n", t.State, t.Revision, t.Epoch, t.RetryCount, t.BriefRevision)
+	fmt.Printf("  direct action required %t\n", t.DirectActionRequired)
 	fmt.Printf("  channel %s  thread %s  origin %s\n", t.ChannelPath, t.ThreadID, t.Origin)
 	a := "none"
 	if t.AssigneeActorID != nil {
@@ -368,7 +372,7 @@ func taskCmd() *cobra.Command {
 	list.Flags().String("owner", "", "me or an owner actor ID")
 	list.Flags().StringArray("label", nil, "root label filter key or key:value (repeatable)")
 
-	edit := boardCmd("edit ID", "Change the title or owner (manager, --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
+	edit := boardCmd("edit ID", "Change title, owner or direct action flag (manager, --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *yak.Client, b string) error {
 		rev, err := ifRevision(cmd, true)
 		if err != nil {
 			return err
@@ -382,8 +386,12 @@ func taskCmd() *cobra.Command {
 			v, _ := cmd.Flags().GetString("owner")
 			req.OwnerActorID = &v
 		}
-		if req.Title == nil && req.OwnerActorID == nil {
-			return usage("pass --title and/or --owner")
+		if cmd.Flags().Changed("direct-action-required") {
+			v, _ := cmd.Flags().GetBool("direct-action-required")
+			req.DirectActionRequired = &v
+		}
+		if req.Title == nil && req.OwnerActorID == nil && req.DirectActionRequired == nil {
+			return usage("pass --title, --owner or --direct-action-required")
 		}
 		t, err := c.Tasks(b).Patch(cmd.Context(), args[0], rev, req)
 		if err != nil {
@@ -391,6 +399,7 @@ func taskCmd() *cobra.Command {
 		}
 		return printTask(t)
 	})
+	edit.Flags().Bool("direct-action-required", false, "require direct action on this task (use =false to clear)")
 	edit.Flags().String("title", "", "new title")
 	edit.Flags().String("owner", "", "new owner actor ID")
 	addIfRevision(edit, true)
@@ -780,11 +789,13 @@ func taskCmd() *cobra.Command {
 }
 
 func assignDepFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("direct-action-required", false, "mark this task as requiring direct action")
 	cmd.Flags().String("assignee", "", "me or an assignee actor ID (the only eligible claimant)")
 	cmd.Flags().StringArray("depends-on", nil, "prerequisite task ID (repeatable or comma-separated)")
 }
 
 func fillAssignDeps(cmd *cobra.Command, c *yak.Client, req *yak.CreateTaskRequest) error {
+	req.DirectActionRequired, _ = cmd.Flags().GetBool("direct-action-required")
 	a, _ := cmd.Flags().GetString("assignee")
 	a, err := actorArg(cmd.Context(), c, "--assignee", a, false)
 	if err != nil {

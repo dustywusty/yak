@@ -3,6 +3,8 @@ package httpapi
 // P2 task routes (ADR-0016 §2). Authorization is in the domain layer.
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -377,4 +379,36 @@ func (a *API) taskRoutes() {
 		}
 		return a.respondTask(w, r, p, bid(r), res)
 	}))
+}
+
+// Go's JSON decoder accepts null for bool and *bool. This field is a
+// non-null boolean on the wire; omission alone requests its default.
+func validateGateBoolean(dst any, body []byte) error {
+	check := func(raw []byte) error {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return err
+		}
+		if value, ok := fields["direct_action_required"]; ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return domain.Validation("direct_action_required must be a boolean")
+		}
+		return nil
+	}
+	switch dst.(type) {
+	case *domain.CreateTaskRequest, *domain.PatchTaskRequest:
+		return check(body)
+	case *domain.CreateTaskBatchRequest:
+		var batch struct {
+			Tasks []json.RawMessage `json:"tasks"`
+		}
+		if err := json.Unmarshal(body, &batch); err != nil {
+			return err
+		}
+		for _, item := range batch.Tasks {
+			if err := check(item); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

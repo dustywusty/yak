@@ -28,5 +28,6 @@
   "root_redacted": false,
   "created_at": "2026-11-19T19:41:00Z",
   "updated_at": "2026-11-19T19:41:00Z",
-  "state_changed_at": "2026-11-19T19:41:00Z"
+  "state_changed_at": "2026-11-19T19:41:00Z",
+  "direct_action_required": false
 }

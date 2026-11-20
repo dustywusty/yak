@@ -1737,7 +1737,7 @@ paths:
     patch:
       operationId: updateTask
       tags: [tasks]
-      summary: Conditionally edit the task title (the thread title) or owner (L19).
+      summary: Conditionally edit task title, owner or direct action flag (L19, DLG-090).
       parameters:
         - $ref: "#/components/parameters/IfMatchRequired"
       requestBody:
@@ -2350,6 +2350,11 @@ paths:
       operationId: reopenTask
       tags: [tasks]
       summary: Reopen a failed or canceled task (L13); retry_count + 1, outcome null, no claim created.
+      description: |
+        With direct_action_required true, the flag stays set and the task lands
+        in blocked with a fresh manual block (DLG-099). The reason defaults to
+        direct action required. Other tasks land in ready or waiting based on
+        their prerequisites. Completed and root-redacted tasks cannot reopen.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatchOptional"
@@ -2377,6 +2382,7 @@ paths:
         precondition: If-Match optional
         authorization: Manager (owner with task_manage, or task_admin; both with current read, else 404).
         events: [task.reopened, thread.view_invalidated]
+        events_note: "Flagged task: [task.reopened, task.blocked, thread.view_invalidated]; never task.unblocked or task.became_ready."
         errors:
           "409 invalid_transition": the task is completed, nonterminal, or its root is redacted (BRIEF-022) (current_state)
           "412 revision_conflict": stale If-Match (revision)
@@ -2530,6 +2536,8 @@ components:
     CreateSnapshotRequest: { $ref: ./schemas/CreateSnapshotRequest.schema.json }
     # P2 (yak.p2.tasks)
     TaskState: { $ref: ./schemas/TaskState.schema.json }
+    # DLG-090: current Task views include direct_action_required (default false).
+    # Historical event copies may omit it; event history is immutable.
     Task: { $ref: ./schemas/Task.schema.json }
     TaskPage: { $ref: ./schemas/TaskPage.schema.json }
     Claim: { $ref: ./schemas/Claim.schema.json }

@@ -100,7 +100,8 @@ owner decision, not an ADR alone.
   `brief_revision`, `epoch`, `retry_count`, `dependencies`,
   `unreadable_dependencies_pending`, `current_claim`, `last_claim`, `block`,
   `outcome`, `root_redacted`, `created_at`, `updated_at`,
-  `state_changed_at`. The `ETag` is `"<revision>"`.
+  `state_changed_at`, `direct_action_required` (boolean, default false;
+  DLG-090). The `ETag` is `"<revision>"`.
 - **TASK-022** Task views, task lists, task events, and snapshots MUST NOT
   contain a claim proof or brief text. Brief text is read only through the
   brief routes (§12) and the claim response.
@@ -167,7 +168,7 @@ of the active claim, and holds current `read` and `claim`. `tvi` =
 | L16 | `waiting`, `ready`, `blocked` | Replace assignee | M, `If-Match` | No active claim | unchanged | `task.assigned` |
 | L17 | nonterminal | Brief update | M + `post`, `If-Match` | — | `blocked`; claim revoked | `message.created`, `task.brief_updated` (+`tvi` if state changed) |
 | L18 | any | Root redaction | M + message deletion rights, `If-Match` on root | — | nonterminal → `canceled`; terminal unchanged | `message.deleted`, then `task.canceled` + `tvi`, or `task.brief_redacted` |
-| L19 | any except `completed` | Edit title / owner | M, `If-Match` | — | unchanged | `thread.updated` (title), `task.updated` |
+| L19 | any except `completed` | Edit title / owner / direct action flag | M, `If-Match` | — | unchanged | `thread.updated` (title), `task.updated` |
 
 Rows not listed are invalid. In particular: claim from `waiting`,
 `blocked`, or terminal; complete or fail without an active claim; unblock
@@ -182,7 +183,13 @@ any change to `completed` except root redaction.
   in the same transaction. A revoked claim's status becomes `revoked`; its
   proof MUST then fail with `409 claim_lost`.
 - **TASK-035** Unblock and reopen MUST evaluate prerequisites at commit
-  time: `ready` if all are `completed`, else `waiting`.
+  time: `ready` if all are `completed`, else `waiting`. Exception: reopening
+  a task with `direct_action_required: true` always lands in `blocked`,
+  keeps the flag, and records a fresh manual block (DLG-099). It emits
+  `task.reopened`, `task.blocked`, then `thread.view_invalidated`; it never
+  emits `task.unblocked` or `task.became_ready`. The block reason is the
+  reopen reason or `direct action required`. Only a later unblock
+  evaluates prerequisites.
 - **TASK-036** Reopen MUST NOT create a claim or an execution. It MUST
   keep the prior `outcome` in history (the event log and `last_claim`), and
   MUST set `outcome` to null on the task view.

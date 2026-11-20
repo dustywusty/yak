@@ -1,0 +1,8 @@
+{
+  "thread": {
+    "channel": "review",
+    "title": "Approve release",
+    "text": "Review the release evidence before unblocking this task."
+  },
+  "direct_action_required": true
+}

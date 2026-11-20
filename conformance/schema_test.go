@@ -170,6 +170,8 @@ func TestSpecSchemasRejectInvalid(t *testing.T) {
 		{"CreateTaskBatchRequest", `{"tasks":[{"ref":"bad ref","thread":{"channel":"eng","title":"x","text":"y"}}]}`},
 		{"CreateTaskBatchRequest", `{"tasks":[{"ref":"a","thread":{"channel":"eng","title":"x","text":"y"},"depends_on":[{"ref":"b","task_id":"t"}]}]}`},
 		{"PatchTaskRequest", `{}`},
+		{"PatchTaskRequest", `{"direct_action_required":null}`},
+		{"CreateTaskRequest", `{"thread_id":"t","direct_action_required":"true"}`},
 		{"PatchTaskRequest", `{"state":"completed"}`},
 		{"CompleteTaskRequest", `{"result":{},"proof":"acp1.c.s"}`},
 		{"CompleteTaskRequest", `{"result":{"evidence":[{"kind":"guess","ref":"x"}]}}`},

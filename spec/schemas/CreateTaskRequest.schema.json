@@ -69,6 +69,11 @@
         "minLength": 1
       },
       "description": "Prerequisite task IDs on the same board. Duplicates are de-duplicated. At most limits.max_dependencies_per_task (413). Unknown, cross-board or unreadable is 404 not_found with task_id."
+    },
+    "direct_action_required": {
+      "type": "boolean",
+      "description": "Human gate marker (DLG-090). Default false. Only a manager with a direct credential may set or clear it.",
+      "default": false
     }
   },
   "additionalProperties": false,

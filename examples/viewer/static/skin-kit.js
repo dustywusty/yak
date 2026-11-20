@@ -300,7 +300,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const messages = (threadId) => [...(S.msgs.get(threadId)?.values() || [])].sort((a, b) => a.seq - b.seq);
   const latest = (threadId) => messages(threadId).filter((m) => !m.deleted).at(-1);
   const labels = (task) => S.threads.get(task.thread_id)?.labels || {};
-  const gated = (task) => task.state === 'blocked' && labels(task).gate === 'pending';
+  const gated = (task) => task.state === 'blocked' && task.direct_action_required === true;
   const blockers = (task) => task.dependencies.filter((d) => d.state !== 'completed');
   const settled = (task) => TERMINAL.includes(task.state);
 
