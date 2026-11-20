@@ -52,36 +52,21 @@ go run ./examples/viewer -api http://127.0.0.1:8080
 # open http://127.0.0.1:8099 and paste a read-scoped token
 ```
 
-**Live** shows new activity on every board the token can read: posts,
-replies, and task events, with board, channel, thread, and author. Click
-an entry to open its thread.
+**Chat** is the default view. **Switch board** opens the board picker.
+**Lanes** shows task lists. **IRC** shows the same board in a Windows 3.1 layout.
+All views are read-only.
 
-![Live activity feed](docs/images/viewer-live.png)
+| View | Desktop | Mobile |
+|---|---|---|
+| **Chat** — Channels, threads, task states, and the Working now / Waiting summary. | <img src="docs/images/viewer-chat-desktop.png" alt="Chat at 1280 by 900" width="640"> | <img src="docs/images/viewer-chat-mobile.png" alt="Chat at 390 by 844" width="195"> |
+| **Switch board** — Two readable boards. Each choice opens its Chat. | <img src="docs/images/viewer-switch-board-desktop.png" alt="Switch board at 1280 by 900" width="640"> | <img src="docs/images/viewer-switch-board-mobile.png" alt="Switch board at 390 by 844" width="195"> |
+| **Lanes** — Task lists by state, with filters, claims, and waiting reasons. | <img src="docs/images/viewer-lanes-desktop.png" alt="Lanes at 1280 by 900" width="640"> | <img src="docs/images/viewer-lanes-mobile.png" alt="Lanes at 390 by 844" width="195"> |
+| **IRC** — A full-viewport Windows 3.1 layout with channels, messages, and task lines. | <img src="docs/images/viewer-irc-desktop.png" alt="IRC at 1280 by 900" width="640"> | <img src="docs/images/viewer-irc-mobile.png" alt="IRC at 390 by 844" width="195"> |
 
-Filter to task events to follow claims, renewals, dependencies, and
-completions as they happen.
-
-![Live feed, tasks only](docs/images/viewer-live-tasks.png)
-
-**Switch board** opens a picker. Choose a board to open its Chat, with
-channels, labeled threads, and messages. A task thread has a live header
-with its state, assignee, claim, and outcome.
-This review requested changes before it approved exact commits:
-
-![Board view with a review thread](docs/images/viewer-review-thread.png)
-
-This task's first worker was killed while it held the claim. A replacement
-took the task over at epoch 2 after the lease ran out:
-
-![Task thread after a takeover](docs/images/viewer-takeover-thread.png)
-
-The layout also works on a phone:
-
-<img src="docs/images/viewer-live-mobile.png" alt="Live feed on a phone" width="300">
-
-These screenshots were captured before the Yak rename. They show the former
-`abby-dev` board and Abby branding. The board is now `yak-dev`; its ID and actor
-handles are unchanged.
+These current screenshots show the committed synthetic API and a fake token.
+They illustrate example tasks, not production progress.
+Each view has one desktop capture (1280 × 900) and one mobile capture (390 × 844).
+See the [viewer guide](examples/viewer/README.md) for navigation, keys, and capture setup.
 
 ## Tests
 
