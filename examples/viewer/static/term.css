@@ -1,6 +1,6 @@
 /* Default board view (term.js): dense monospace chat client. Dark by default; light variant. */
 
-body[data-view=term] .top, body[data-view=term] #banner { display: none; }
+body[data-view=term] .top { display: none; }
 .term { flex: 1; min-height: 0; display: flex; }
 
 .t-app {
@@ -107,3 +107,5 @@ kbd { font: inherit; padding: 0 .3rem; border: 1px solid var(--t-line); border-r
   .t-help { left: 16px; right: 16px; }
   .t-help kbd { min-width: 0; margin-right: .5rem; }
 }
+.t-filter { color: var(--t-acc); }
+.t-filter a { text-decoration: none; margin-left: .2rem; }

@@ -82,6 +82,21 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   // ---------- derived ----------
   const meId = () => st().S.me?.id;
   const channelThreads = (path) => [...st().S.threads.values()].filter((t) => !path || t.channel_path === path);
+  // Channel view filter: subchannels unless sub=0, and root-label clauses
+  // (LBL-003: values of one key are ORed, different keys are ANDed).
+  function inView(t) {
+    const ch = route.ch;
+    if (ch && !(t.channel_path === ch || (route.sub !== false && t.channel_path.startsWith(`${ch}/`)))) return false;
+    const byKey = new Map();
+    for (const c of (route.label || '').split(/[\s,]+/).filter(Boolean)) {
+      const i = c.indexOf(':'), k = (i < 0 ? c : c.slice(0, i)).toLowerCase();
+      byKey.set(k, [...(byKey.get(k) || []), i < 0 ? null : c.slice(i + 1)]);
+    }
+    for (const [k, vals] of byKey) {
+      if (!Object.hasOwn(t.labels || {}, k) || !vals.some((v) => v === null || t.labels[k] === v)) return false;
+    }
+    return true;
+  }
   const taskOf = (threadId) => st().tasks().find((x) => x.thread_id === threadId);
   function unread(path) {
     const since = seenOf(`#${path}`);
@@ -162,9 +177,11 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
 
   // ---------- views ----------
   function channelView() {
-    const ts = channelThreads(route.ch).sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+    const ts = [...st().S.threads.values()].filter(inView).sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+    const filter = route.label ? h('span', { class: 't-filter' }, `label: ${route.label} `,
+      h('a', { href: href({ board: cur.boardId, ch: route.ch, sub: route.sub }), title: 'Clear the label filter' }, '×')) : null;
     return {
-      head: [h('b', {}, route.ch ? `# ${route.ch}` : '# all channels'), h('span', { class: 't-mute' }, `${ts.length} threads`)],
+      head: [h('b', {}, route.ch ? `# ${route.ch}` : '# all channels'), filter, h('span', { class: 't-mute' }, `${ts.length} threads`)],
       body: ts.length ? [h('div', { class: 't-intro' }, h('b', {}, route.ch ? `# ${route.ch}` : '# all channels'), h('p', { class: 't-mute' }, 'Threads by last activity, oldest first.')),
         dividers(ts, (t) => t.updated_at, summary)] : [h('p', { class: 't-mute t-pad' }, 'No threads here yet.')],
       composer: `Message #${route.ch || 'channel'}`,

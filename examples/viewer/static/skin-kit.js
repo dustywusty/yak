@@ -114,7 +114,14 @@ export function jumpPalette(getItems, placeholder = 'Jump to…') {
 // continuation cursor (EVT-008..011) with the viewer's recovery rules:
 // dedupe by id; 409 resync_required / 410 / 400 → new snapshot; 401 → stop;
 // network errors → backoff, keep the cursor.
-export function createStore({ api, boardId, onChange, onEvent, onStatus, onUnauthorized }) {
+export function createStore({ api, boardId, onChange: change, onEvent: event, onStatus: status, onUnauthorized }) {
+  // View callbacks are guarded: a drawing error is reported once and never
+  // reaches the poll loop, where it would look like a network error.
+  let drawFailed = false;
+  const guard = (fn) => (...args) => {
+    try { fn?.(...args); } catch (e) { if (!drawFailed) { drawFailed = true; console.error('viewer: draw failed', e); } }
+  };
+  const onChange = guard(change), onEvent = guard(event), onStatus = guard(status);
   const S = { board: null, actors: new Map(), channels: [], threads: new Map(), msgs: new Map(), tasks: new Map(),
     order: [], me: null, cursor: null, seen: new Set(), events: 0 };
   const abort = new AbortController();
@@ -174,7 +181,8 @@ export function createStore({ api, boardId, onChange, onEvent, onStatus, onUnaut
         S.cursor = page.continuation_cursor;
       } while (token);
     } finally {
-      api('DELETE', `${B}/snapshots/${enc(info.id)}`, {}, abort.signal).catch(() => {});
+      // Not tied to this store's signal: the session is discarded even if the store stops now.
+      api('DELETE', `${B}/snapshots/${enc(info.id)}`).catch(() => {});
     }
     S.seen.clear();
   }
@@ -207,7 +215,7 @@ export function createStore({ api, boardId, onChange, onEvent, onStatus, onUnaut
     if (p.task) putTask(p.task);
     if (ev.type === 'channel.created') get(`${B}/channels`).then((r) => { S.channels = r.channels; onChange(); }).catch(() => {});
     if (ev.type === 'thread.view_invalidated') get(`${B}/threads/${enc(ev.thread_id)}`).then((r) => { S.threads.set(r.thread.id, r.thread); onChange(); }).catch(() => {});
-    onEvent?.(ev);
+    onEvent(ev);
     return true;
   }
 

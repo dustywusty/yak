@@ -12,7 +12,7 @@ const TOASTS = { 'task.claimed': 'claimed', 'task.completed': 'completed', 'task
 
 export function wall(root, { threadHref }) {
   const f = { channel: '', agent: '', label: '' };
-  let bars = [], frame = null;
+  let bars = [], frame = null, filterKey = '';
 
   function controls(st) {
     const sel = (key, first, options) => {
@@ -75,8 +75,10 @@ export function wall(root, { threadHref }) {
     if (!frame) {
       frame = { head: h('header', { class: 'w-head' }), bar: h('div'), cols: h('div', { class: 'w-cols' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
       root.replaceChildren(h('div', { class: 'w-wrap' }, frame.head, frame.bar, frame.cols), frame.toasts);
-      frame.bar.replaceChildren(controls(st));
     }
+    // Rebuild the filter lists when channels or actors change (they can appear later).
+    const key = `${S.channels.map((c) => c.path).join(',')}|${[...S.actors.keys()].join(',')}`;
+    if (key !== filterKey) { filterKey = key; frame.bar.replaceChildren(controls(st)); }
     // Header: N of M working, with an avatar stack.
     const all = st.tasks();
     const working = new Set(all.filter((t) => t.state === 'claimed').map((t) => t.current_claim.actor_id));

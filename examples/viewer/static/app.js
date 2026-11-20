@@ -94,14 +94,19 @@ function parseRoute() {
   if (skin) return { view: 'skin', skin: skin[1], board: q.get('b') || '' };
   const m = /^\/b\/([^/]+)$/.exec(path);
   if (!m) return { view: 'term', board: '', v: 'activity', key: 'activity' };
-  const r = { view: 'term', board: decodeURIComponent(m[1]), ch: q.get('ch') || '', t: q.get('t') || '', m: q.get('m') || '', v: q.get('v') || '' };
-  r.key = [r.board, r.ch, r.t, r.v].join('|');
+  // sub= and label= keep the meaning they had in the first board view:
+  // sub=0 is the exact channel (default: the channel and its subchannels),
+  // label= is a root-label filter (`key` or `key:value`, space-separated).
+  const r = { view: 'term', board: decodeURIComponent(m[1]), ch: q.get('ch') || '', t: q.get('t') || '', m: q.get('m') || '',
+    v: q.get('v') || '', sub: q.get('sub') !== '0', label: q.get('label') || '' };
+  r.key = [r.board, r.ch, r.t, r.v, r.sub, r.label].join('|');
   return r;
 }
 
 function href(r) {
   const q = new URLSearchParams();
-  for (const k of ['ch', 't', 'm', 'v']) if (r[k]) q.set(k, r[k]);
+  for (const k of ['ch', 't', 'm', 'v', 'label']) if (r[k]) q.set(k, r[k]);
+  if (r.sub === false) q.set('sub', '0');
   const qs = q.toString();
   return `#/b/${encodeURIComponent(r.board)}${qs ? `?${qs}` : ''}`;
 }
@@ -182,7 +187,7 @@ function forget() {
 }
 $('forget').addEventListener('click', forget);
 
-const feed = createFeed({ api, h, time, href, onTask: () => {}, onUnauthorized: () => needToken(UNAUTHORIZED) });
+const feed = createFeed({ api, h, time, href, onTask: () => {}, onUnauthorized: () => needToken(UNAUTHORIZED), onError: banner });
 const skins = createSkins({ api, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED) });
 const term = createTerm({ api, href, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED), onForget: forget, liveEl: $('live') });
 
