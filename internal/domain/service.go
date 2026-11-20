@@ -59,6 +59,16 @@ type Config struct {
 	EventScanBatch       int
 	CredentialDefaultTTL time.Duration
 	CredentialMaxTTL     time.Duration
+
+	// P2 tasks (spec/p2-tasks.md TASK-002).
+	ClaimLeaseDefault      time.Duration
+	ClaimLeaseMin          time.Duration
+	ClaimLeaseMax          time.Duration
+	MaxBatchTasks          int
+	MaxDependenciesPerTask int
+	MaxTaskResultBytes     int
+	MaxEvidenceItems       int
+	MaxClaimWait           time.Duration
 }
 
 func DefaultConfig() Config {
@@ -78,6 +88,15 @@ func DefaultConfig() Config {
 		EventScanBatch:       500,
 		CredentialDefaultTTL: 30 * 24 * time.Hour,
 		CredentialMaxTTL:     365 * 24 * time.Hour,
+
+		ClaimLeaseDefault:      120 * time.Second,
+		ClaimLeaseMin:          15 * time.Second,
+		ClaimLeaseMax:          300 * time.Second,
+		MaxBatchTasks:          100,
+		MaxDependenciesPerTask: 100,
+		MaxTaskResultBytes:     16384,
+		MaxEvidenceItems:       50,
+		MaxClaimWait:           30 * time.Second,
 	}
 }
 
@@ -87,6 +106,9 @@ type Service struct {
 	Cfg Config
 	Hub *Hub
 	Now func() time.Time
+	// ClaimKeys encrypts claim-proof replay material (ADR-0004 §3). Nil
+	// means claim_proof_replay is false and no ciphertext is stored.
+	ClaimKeys *ClaimKeyring
 }
 
 func New(db *pgxpool.Pool, cfg Config) *Service {
@@ -106,6 +128,9 @@ type Principal struct {
 	BoardIDs     []string // nil = no board restriction
 	ExpiresAt    time.Time
 	RunID        string
+	// System marks server housekeeping (the claim-expiry sweeper). It holds
+	// no grants; its board transactions skip the visibility check.
+	System bool
 }
 
 func (p *Principal) boardInScope(boardID string) bool {
@@ -170,7 +195,10 @@ func (b *btx) emit(ev PendingEvent) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	var chID, thID, runID *string
+	var chID, thID, runID, credID *string
+	if b.p.CredentialID != "" {
+		credID = &b.p.CredentialID
+	}
 	if ev.ChannelID != "" {
 		chID = &ev.ChannelID
 	}
@@ -183,7 +211,7 @@ func (b *btx) emit(ev PendingEvent) (int64, error) {
 	_, err = b.Exec(b.ctx, `INSERT INTO events(board_id, position, id, type, actor_id, credential_id, run_id,
 		channel_id, thread_id, resource_type, resource_id, resource_revision, payload, facets, recorded_at, effective_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-		b.board.ID, b.head, ids.New("evt"), ev.Type, b.p.ActorID, b.p.CredentialID, runID,
+		b.board.ID, b.head, ids.New("evt"), ev.Type, b.p.ActorID, credID, runID,
 		chID, thID, ev.ResourceType, ev.ResourceID, ev.Revision, payload, facets, b.now, ev.EffectiveAt)
 	return b.head, err
 }
@@ -306,7 +334,7 @@ func (s *Service) boardMutation(ctx context.Context, p *Principal, boardID strin
 		if err != nil {
 			return err
 		}
-		if !pol.IsBoardAdmin() && !pol.HasAnyAllow() {
+		if !p.System && !pol.IsBoardAdmin() && !pol.HasAnyAllow() {
 			return NotFound("board")
 		}
 		b.policy, b.chans = pol, chans

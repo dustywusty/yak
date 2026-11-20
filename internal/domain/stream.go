@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -240,6 +241,10 @@ func (s *Service) readEventsTx(ctx context.Context, q pgx.Tx, p *Principal, boar
 			if !req.Filter.MatchEvent(ev.Type, facets) {
 				continue
 			}
+			if strings.HasPrefix(ev.Type, "task.") {
+				// Dependency IDs are projected per reader (DEP-010).
+				ev.Payload = projectTaskJSON(ev.Payload, v.reader())
+			}
 			ev.BoardID = boardID
 			ev.Cursor = mk(position)
 			page.Events = append(page.Events, ev)
@@ -369,6 +374,21 @@ func (s *Service) CreateSnapshot(ctx context.Context, p *Principal, boardID stri
 			if err := add("thread", t.ID, t); err != nil {
 				return err
 			}
+			if t.TaskID != nil {
+				// TASK-092: the effective task view at capture time, stored
+				// unprojected and projected per reader on every page.
+				row, err := loadTaskRow(ctx, tx, boardID, *t.TaskID, false)
+				if err != nil {
+					return err
+				}
+				tv, err := buildTaskView(ctx, tx, row, v.chans, nil, now, nil)
+				if err != nil {
+					return err
+				}
+				if err := add("task", tv.ID, tv); err != nil {
+					return err
+				}
+			}
 			for _, m := range matched {
 				if err := add("message", m.ID, m); err != nil {
 					return err
@@ -440,6 +460,9 @@ func (s *Service) SnapshotPage(ctx context.Context, p *Principal, boardID, id st
 		if err := rows.Scan(&last, &it.Type, &it.ID, &it.Data); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if it.Type == "task" {
+			it.Data = projectTaskJSON(it.Data, v.reader())
 		}
 		page.Items = append(page.Items, it)
 	}
