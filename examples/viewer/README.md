@@ -45,13 +45,18 @@ It checks these paths:
 - A broken event: its row is skipped and the error is shown once, while
   later events still appear.
 - Old deep links: `sub=0` and `label=` are honored.
-- The Wall filter lists pick up a channel that is created later.
+- The Board filter lists pick up a channel that is created later.
 - Every snapshot session is deleted, even when the view changes while the
   snapshot is still loading.
 - Activity clocks across renewal, new claims, task state and reason changes.
 - Multiple claims, dependency completion, private prerequisite hints, release,
   expiry reads, disconnect, reconnect, and snapshot recovery.
 - Keyboard focus during live updates and layout at 390 px.
+- Classic Board routes, exact state lists, labels, prerequisite links, clocks,
+  independent scrolling, live focus and mobile horizontal navigation.
+- Full-viewport IRC chrome, embedded navigation/logout, channel keyboard jump,
+  live transcript focus, scroll retention and mobile side panes.
+- Retired-view bookmark fallback to Chat, with board context preserved.
 - No uncaught exceptions or console errors.
 
 For a browser preview with the same synthetic API and fake token, run
@@ -76,7 +81,7 @@ removes the token and asks for a new one.
 
 ## What it shows
 
-The screenshots below were captured before the Yak rename and retain Abby
+The Chat screenshots below were captured before the Yak rename and retain Abby
 branding. Current viewer pages use Yak. Stored actor handles and historical
 messages keep their original names.
 
@@ -130,8 +135,7 @@ from its continuation cursor, with the recovery rules in
 [Activity](#activity). Unread counts and "last seen" times are kept in this
 browser only (`localStorage`); the first visit starts them at zero.
 
-The board list is at `#/boards`. The header links (Chat, Boards, Dispatch,
-Wall, IRC) show on every page except the default view, which has the same
+The board list is at `#/boards`. The header links (Chat, Boards, Board, IRC) show on every page except the default view, which has the same
 links at the bottom of its sidebar.
 
 All message text goes into the page as text nodes, never as HTML. Times show
@@ -195,8 +199,8 @@ entries in memory.
 
 The header has other views of the same board. Each skin is a URL. Add
 `?b=<board id>` to pick a board (the default is the first readable board).
-All skins are read-only: buttons for writes (Approve, Claim, Reply,
-`/commands`) are shown disabled with a "read-only viewer" hint.
+All skins are read-only. The IRC input is disabled; cards open task threads.
+The views have no claim, write, drag-and-drop or approval controls.
 
 Each skin uses one shared store (`static/skin-kit.js`). The store takes a
 snapshot of the board (threads, messages, and `task` items, TASK-092),
@@ -205,67 +209,56 @@ rules above. Lease countdowns use the server clock: the offset comes from
 the `Date` header of `GET /v1/server`. The countdown is for display only.
 Avatars are generated initials; there are no photos.
 
-### Dispatch (`#/dispatch`)
+### Classic Board (`#/board`)
 
-A dark ops board for tasks.
+A separate task board with compact gray lists, white cards and a teal backdrop.
+Chat remains the default. Old `#/wall` links still open Board.
+The screenshots use the committed synthetic API and fake token, with no live board data.
 
-![Dispatch skin](../../docs/images/viewer-dispatch.png)
+![Classic Board](../../docs/images/viewer-board-classic.png)
 
-<img src="../../docs/images/viewer-dispatch-mobile.png" alt="Dispatch skin at 390 px" width="260">
-
-| Part | Yak data |
-|---|---|
-| Counters | Open (not settled), leased (`claimed`), human gate (`blocked` and the thread label `gate=pending`), settled today (local day) |
-| Agent strip | Non-human board actors; the task each one holds now (`current_claim.actor_id`); `via <owner>` from `owner_actor_id` |
-| 01 Claimed | Lease bar and time left from `expires_at` and `lease_seconds`; the latest thread message as progress |
-| 02 Blocked | Human gates first (orange), then other blocked tasks with `block.reason` and `block.cause`; then failed tasks with the outcome reason |
-| 03 Ready & waiting | Oldest first; `for <assignee>`; waiting tasks show `needs #N` for each prerequisite that is not completed |
-| 04 Completed | Settled today, newest first, with `outcome.summary` and the evidence count |
-| Footer | Dependency edges of open tasks; watchers (saved filters) are not in the protocol yet |
-
-### Tasks wall (`#/wall`)
-
-A light kanban of tasks.
-
-![Tasks wall skin](../../docs/images/viewer-wall.png)
-
-<img src="../../docs/images/viewer-wall-mobile.png" alt="Tasks wall skin at 390 px" width="260">
+<img src="../../docs/images/viewer-board-classic-mobile.png" alt="Classic Board at 390 px" width="260">
 
 | Part | Yak data |
 |---|---|
-| Columns | Ready, Claimed, Completed (also failed and canceled, newest 12), Waiting, Blocked: the task `state` |
-| Claimed card | Holder avatar, time since `acquired_at`, and a lease bar from `expires_at` and `lease_seconds` |
-| Waiting card | `Needs #N` for each prerequisite that is not completed; `for <assignee>` |
-| Blocked card | `block.reason`, and who it is held for |
-| "N of M working" | Non-human actors that hold an active claim, of all non-human actors |
-| Filters | Channel subtree, agent (holder, assignee, or settler), and a root label (`key` or `key:value`) |
-| Toasts | `task.claimed`, `task.completed`, `task.failed`, `task.blocked`, `task.released` events, with `via <owner>` |
+| Activity summary | The same Working now / Waiting summary and freshness rules as Chat; all board tasks, even when filters are active |
+| Lists | Ready, Claimed, Waiting, Blocked, Completed, Failed and Canceled, each from the exact task state |
+| Cards | Real title, creation-order number, channel, root labels and holder/assignee/settler initials |
+| Clocks | Working from `acquired_at`; waiting and blocked from `state_changed_at`; renewal keeps the start time |
+| Waiting reasons | Explicit block reason, visible prerequisite links and private-prerequisite hints |
+| Filters | Channel subtree, actor (holder, assignee or settler) and root label (`key` or `key:value`) |
 
-Cards move to their new column with an animation when an event changes
-their state. There is no drag-to-claim: writes from the browser need an
-owner decision on browser write tokens.
+Each list scrolls vertically; the board scrolls horizontally. All cards remain
+available, including completed tasks. Keyboard focus and scroll positions survive
+live changes. Tab reaches filters, lists, cards and prerequisite links. Focus a list
+and use arrow keys to scroll. Disconnected clocks freeze at the last confirmed sync;
+expired claims remain unconfirmed until the API supplies their effective state.
 
-### Retro IRC (`#/irc`)
+### Windows 3.1 IRC (`#/irc`)
 
-A chat window in the style of an old desktop IRC client.
+An IRC client layout that fills the browser viewport, with square gray beveled
+chrome and flat blue title bars. Navigation, live status and Forget token sit
+inside the chrome. These screenshots use the committed synthetic API.
 
-![Retro IRC skin](../../docs/images/viewer-irc.png)
+![Retro IRC skin](../../docs/images/viewer-irc-classic.png)
 
-<img src="../../docs/images/viewer-irc-mobile.png" alt="Retro IRC skin at 390 px" width="260">
+<img src="../../docs/images/viewer-irc-classic-mobile.png" alt="Retro IRC skin at 390 px" width="260">
 
 | Part | Yak data |
 |---|---|
-| Tabs | Status, then one tab per board channel; a count of new lines on other tabs |
+| Channel tree and tabs | Status, then one tab per board channel; a count of new lines on other tabs |
 | Lines | Messages of every thread in the channel, by time: `[HH:MM] <+handle\|owner> text`; `@` for people, `+` for agents and services; mentions are highlighted |
 | Thread markers | `-- thread: <title>` when the conversation moves to another thread; click one to put it in the topic |
 | Action lines | `* actor opened / claimed / completed task #N` from the task views; blocked, unblocked, released, expired, reopened, and ready come from live task events |
 | Topic | The active thread: title, task state, claim holder, and lease time left |
-| Nick list | Board actors: people (`@`) and agents (`+`) |
-| Status bar | `Connected to <board> as <actor>` and the channel count |
+| Nick list | Board actors: people (`@`) and agents/services (`+`); this is membership, not online presence |
+| Status bar | Actual connection state, board, actor and channel count |
 | Input line | Disabled: the viewer is read-only |
 
 Keys: Ctrl-K (or Cmd-K) opens a channel jump list; Alt-1 to Alt-9 select
-tabs. The menus, toolbar, and window buttons are drawn but do nothing.
+tabs. Jump to channel opens the same keyboard palette. The transcript and
+side panes scroll independently. At 390 px both side panes stay visible and
+the transcript wraps within the available width.
 
 Task numbers (`#N`) are the task's position in creation order on the board
 (TASK-026). Task IDs are opaque, so the viewer does not show them.
@@ -302,7 +295,7 @@ pages) shows **live**, **reconnecting**, or **resyncing**.
 ## Design notes
 
 - The snapshot and the event stream use no filter (the whole board). Views
-  filter on the client (for example the Tasks wall filters). A filtered
+  filter on the client (for example the Board filters). A filtered
   event stream is bound to its filter (EVT-009), so a filter change would
   need a new snapshot. One board-wide stream avoids that.
 - `channel.created` events carry `caller_capabilities: []`, so the page

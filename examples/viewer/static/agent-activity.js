@@ -34,6 +34,12 @@ export function waitingReasons(store, task) {
   return reasons;
 }
 
+// Shared freshness boundary for summaries and Board card clocks.
+export function activityClock(store, status, at = now()) {
+  const stale = status !== 'live' || !store.S.lastSync || at - store.S.lastSync > 60000 || navigator.onLine === false;
+  return { at, stale, confirmedAt: stale ? Math.min(at, store.S.lastSync || at) : at };
+}
+
 export function createAgentActivity(store, href, status) {
   const tasks = store.tasks();
   const claimed = tasks.filter((t) => t.state === 'claimed' && t.current_claim?.status === 'active');
@@ -73,9 +79,7 @@ export function createAgentActivity(store, href, status) {
         !waiting.length ? h('p', { class: 't-mute' }, 'No waiting or blocked tasks.') : null)));
 
   function update() {
-    const at = now();
-    const stale = status !== 'live' || !store.S.lastSync || at - store.S.lastSync > 60000 || navigator.onLine === false;
-    const confirmedAt = stale ? Math.min(at, store.S.lastSync || at) : at;
+    const { at, stale, confirmedAt } = activityClock(store, status);
     root.classList.toggle('a-stale', stale);
     const freshnessText = stale ? `Last known data · ${status === 'live' ? 'connection not confirmed' : status}. Activity may have changed.`
       : 'Current task claims and waits. Times show time in each task state.';
