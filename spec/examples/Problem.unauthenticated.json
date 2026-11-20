@@ -1,0 +1,8 @@
+{
+  "type": "urn:abby:problem:unauthenticated",
+  "title": "Unauthorized",
+  "status": 401,
+  "code": "unauthenticated",
+  "detail": "missing, invalid, expired, or revoked credential",
+  "request_id": "req_example01"
+}

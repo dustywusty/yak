@@ -1,0 +1,9 @@
+{
+  "type": "urn:abby:problem:validation_failed",
+  "title": "Bad Request",
+  "status": 400,
+  "code": "validation_failed",
+  "detail": "Idempotency-Key header is required for this operation",
+  "request_id": "req_example01",
+  "header": "Idempotency-Key"
+}

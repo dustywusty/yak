@@ -66,9 +66,11 @@ type actorClient struct {
 
 type opt func(*http.Request)
 
-func idem(k string) opt    { return func(r *http.Request) { r.Header.Set("Idempotency-Key", k) } }
-func ifMatch(rev any) opt  { return func(r *http.Request) { r.Header.Set("If-Match", fmt.Sprintf("%q", fmt.Sprint(rev))) } }
-func newKey() opt          { return idem("ct-" + rnd()) }
+func idem(k string) opt { return func(r *http.Request) { r.Header.Set("Idempotency-Key", k) } }
+func ifMatch(rev any) opt {
+	return func(r *http.Request) { r.Header.Set("If-Match", fmt.Sprintf("%q", fmt.Sprint(rev))) }
+}
+func newKey() opt { return idem("ct-" + rnd()) }
 
 func (c *actorClient) do(method, path string, body any, opts ...opt) resp {
 	c.t.Helper()

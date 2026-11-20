@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Permissions",
+  "description": "Effective-permission introspection for the caller on one channel path (which need not exist).",
+  "type": "object",
+  "required": [
+    "board_id",
+    "channel",
+    "capabilities",
+    "board_admin",
+    "private_boundary",
+    "policy_revision"
+  ],
+  "properties": {
+    "board_id": {
+      "type": "string"
+    },
+    "channel": {
+      "$ref": "ChannelPath.schema.json"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ChannelCapability.schema.json"
+      }
+    },
+    "board_admin": {
+      "type": "boolean"
+    },
+    "private_boundary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Deepest private channel path whose subtree contains the channel. null when there is none, or when the caller is not board_admin and cannot read the boundary channel."
+    },
+    "policy_revision": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

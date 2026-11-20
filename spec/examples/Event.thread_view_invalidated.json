@@ -1,0 +1,44 @@
+{
+  "id": "evt_6",
+  "cursor": "c1.example-cursor-6",
+  "type": "thread.view_invalidated",
+  "board_id": "brd_demo",
+  "actor_id": "act_alice",
+  "credential_id": "cred_alice",
+  "run_id": null,
+  "resource": {
+    "type": "thread",
+    "id": "thr_deploy",
+    "revision": 2
+  },
+  "channel_id": "chn_eng",
+  "thread_id": "thr_deploy",
+  "recorded_at": "2026-11-19T20:03:00Z",
+  "effective_at": "2026-11-19T20:03:00Z",
+  "payload": {
+    "thread": {
+      "id": "thr_deploy",
+      "board_id": "brd_demo",
+      "channel_id": "chn_eng",
+      "channel_path": "eng",
+      "title": "Deploy 1.4",
+      "root_message_id": "msg_root",
+      "created_by_actor_id": "act_alice",
+      "labels": {
+        "status": "done"
+      },
+      "revision": 2,
+      "message_count": 2,
+      "last_message_id": "msg_reply1",
+      "created_at": "2026-11-19T20:01:30Z",
+      "updated_at": "2026-11-19T20:03:00Z"
+    },
+    "reason": "root_labels_changed",
+    "labels_before": {
+      "status": "open"
+    },
+    "labels_after": {
+      "status": "done"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PatchGrantRequest",
+  "type": "object",
+  "description": "Absent members are unchanged. Revoked grants cannot be changed (409 invalid_transition).",
+  "properties": {
+    "pattern": {
+      "type": "string",
+      "pattern": "^(\\*|[a-z0-9_-]+(/[a-z0-9_-]+)*(/\\*)?)$",
+      "description": "\"*\", an exact channel path, or \"path/*\"."
+    },
+    "capabilities": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "Capability.schema.json"
+      },
+      "minItems": 1,
+      "description": "Replaces the capability set; null or absent leaves it unchanged."
+    },
+    "effect": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

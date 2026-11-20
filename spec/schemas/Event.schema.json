@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event",
+  "description": "One committed change in a board's event stream. payload shape is selected by type. Consumers deduplicate by id.",
+  "type": "object",
+  "required": [
+    "id",
+    "cursor",
+    "type",
+    "board_id",
+    "actor_id",
+    "credential_id",
+    "run_id",
+    "resource",
+    "channel_id",
+    "thread_id",
+    "recorded_at",
+    "effective_at",
+    "payload"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque read position (\"c1.\" prefix) bound to board, query, history epoch and effective policy."
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z_]+\\.[a-z_]+$"
+    },
+    "board_id": {
+      "type": "string"
+    },
+    "actor_id": {
+      "type": "string"
+    },
+    "credential_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resource": {
+      "type": "object",
+      "required": [
+        "type",
+        "id",
+        "revision"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      }
+    },
+    "channel_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "thread_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "recorded_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "effective_at": {
+      "$ref": "Timestamp.schema.json",
+      "description": "When the change took effect; equals recorded_at in P1."
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "type": {
+          "const": "channel.created"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "channel"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/ChannelCreatedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "thread.created"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "thread"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/ThreadCreatedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "message.created"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "message"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/MessagePayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "message.edited"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "message"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/MessagePayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "message.deleted"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "message"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/MessageDeletedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "message.labels_changed"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "message"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/MessageLabelsChangedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "thread.view_invalidated"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "thread"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/ThreadViewInvalidatedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "thread.updated"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "thread"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/ThreadUpdatedPayload"
+        }
+      }
+    },
+    {
+      "description": "Forward compatibility: event types not defined by this version. Clients ignore types they do not understand.",
+      "properties": {
+        "type": {
+          "not": {
+            "enum": [
+              "channel.created",
+              "thread.created",
+              "message.created",
+              "message.edited",
+              "message.deleted",
+              "message.labels_changed",
+              "thread.view_invalidated",
+              "thread.updated"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "ChannelCreatedPayload": {
+      "type": "object",
+      "required": [
+        "channel"
+      ],
+      "properties": {
+        "channel": {
+          "$ref": "Channel.schema.json"
+        }
+      }
+    },
+    "ThreadCreatedPayload": {
+      "description": "message is the root; replaced by its tombstone if the root is later deleted.",
+      "type": "object",
+      "required": [
+        "thread",
+        "message"
+      ],
+      "properties": {
+        "thread": {
+          "$ref": "Thread.schema.json"
+        },
+        "message": {
+          "$ref": "Message.schema.json"
+        }
+      }
+    },
+    "MessagePayload": {
+      "description": "The message after the change. Deleting a message replaces message in every earlier event about it with the tombstone.",
+      "type": "object",
+      "required": [
+        "message"
+      ],
+      "properties": {
+        "message": {
+          "$ref": "Message.schema.json"
+        }
+      }
+    },
+    "MessageDeletedPayload": {
+      "type": "object",
+      "required": [
+        "message"
+      ],
+      "properties": {
+        "message": {
+          "allOf": [
+            {
+              "$ref": "Message.schema.json"
+            },
+            {
+              "type": "object",
+              "required": [
+                "deleted",
+                "text"
+              ],
+              "properties": {
+                "deleted": {
+                  "type": "object"
+                },
+                "text": {
+                  "type": "null"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "MessageLabelsChangedPayload": {
+      "type": "object",
+      "required": [
+        "message",
+        "labels_before",
+        "labels_after"
+      ],
+      "properties": {
+        "message": {
+          "$ref": "Message.schema.json"
+        },
+        "labels_before": {
+          "$ref": "Labels.schema.json"
+        },
+        "labels_after": {
+          "$ref": "Labels.schema.json"
+        }
+      }
+    },
+    "ThreadViewInvalidatedPayload": {
+      "description": "Root labels changed: consumers refresh or drop the thread's cached messages.",
+      "type": "object",
+      "required": [
+        "thread",
+        "reason",
+        "labels_before",
+        "labels_after"
+      ],
+      "properties": {
+        "thread": {
+          "$ref": "Thread.schema.json"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "root_labels_changed"
+          ]
+        },
+        "labels_before": {
+          "$ref": "Labels.schema.json"
+        },
+        "labels_after": {
+          "$ref": "Labels.schema.json"
+        }
+      }
+    },
+    "ThreadUpdatedPayload": {
+      "type": "object",
+      "required": [
+        "thread"
+      ],
+      "properties": {
+        "thread": {
+          "$ref": "Thread.schema.json"
+        }
+      }
+    }
+  }
+}

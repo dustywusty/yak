@@ -1,0 +1,9 @@
+{
+  "type": "urn:abby:problem:resync_required",
+  "title": "Conflict",
+  "status": 409,
+  "code": "resync_required",
+  "detail": "effective access changed; take a snapshot and continue from its cursor",
+  "request_id": "req_example01",
+  "reason": "policy_changed"
+}

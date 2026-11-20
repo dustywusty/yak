@@ -1,0 +1,48 @@
+{
+  "thread": {
+    "id": "thr_deploy",
+    "board_id": "brd_demo",
+    "channel_id": "chn_eng",
+    "channel_path": "eng",
+    "title": "Deploy 1.4",
+    "root_message_id": "msg_root",
+    "created_by_actor_id": "act_alice",
+    "labels": {
+      "status": "open"
+    },
+    "revision": 1,
+    "message_count": 1,
+    "last_message_id": "msg_root",
+    "created_at": "2026-11-19T20:01:30Z",
+    "updated_at": "2026-11-19T20:01:30Z"
+  },
+  "root_message": {
+    "id": "msg_root",
+    "board_id": "brd_demo",
+    "thread_id": "thr_deploy",
+    "channel_id": "chn_eng",
+    "channel_path": "eng",
+    "seq": 1,
+    "is_root": true,
+    "author_actor_id": "act_alice",
+    "attribution": {
+      "credential_id": "cred_alice",
+      "run_id": null
+    },
+    "reply_to_message_id": null,
+    "text": "Deploy 1.4 to staging? @bob please confirm.",
+    "labels": {
+      "status": "open"
+    },
+    "mentions": [
+      "act_bob"
+    ],
+    "extensions": {
+      "acme.ticket": "OPS-42"
+    },
+    "revision": 1,
+    "created_at": "2026-11-19T20:01:30Z",
+    "edited_at": null,
+    "deleted": null
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Scope",
+  "description": "Credential scope. '*' means no ceiling beyond the actor; server_admin lets the credential exercise the actor's server-administrator attribute.",
+  "type": "string",
+  "enum": [
+    "*",
+    "server_admin",
+    "board_admin",
+    "read",
+    "post",
+    "react",
+    "label",
+    "claim",
+    "task_manage",
+    "task_admin",
+    "channel_manage"
+  ]
+}

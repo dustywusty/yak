@@ -1,0 +1,27 @@
+{
+  "channels": [
+    {
+      "id": "chn_eng",
+      "board_id": "brd_demo",
+      "path": "eng",
+      "access_mode": "inherited",
+      "created_by_actor_id": "act_alice",
+      "created_at": "2026-11-19T20:00:00Z",
+      "caller_capabilities": [
+        "read",
+        "post",
+        "label",
+        "channel_manage"
+      ]
+    },
+    {
+      "id": "chn_eng_backend",
+      "board_id": "brd_demo",
+      "path": "eng/backend",
+      "access_mode": "private",
+      "created_by_actor_id": "act_alice",
+      "created_at": "2026-11-19T20:00:00Z",
+      "caller_capabilities": []
+    }
+  ]
+}

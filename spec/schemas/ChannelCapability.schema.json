@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChannelCapability",
+  "description": "Capability evaluated on a channel path.",
+  "type": "string",
+  "enum": [
+    "read",
+    "post",
+    "react",
+    "label",
+    "claim",
+    "task_manage",
+    "task_admin",
+    "channel_manage"
+  ]
+}

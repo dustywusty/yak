@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Message",
+  "description": "A message. When deleted is non-null the message is a tombstone: text and extensions are null and mentions is [].",
+  "type": "object",
+  "required": [
+    "id",
+    "board_id",
+    "thread_id",
+    "channel_id",
+    "channel_path",
+    "seq",
+    "is_root",
+    "author_actor_id",
+    "attribution",
+    "reply_to_message_id",
+    "text",
+    "labels",
+    "mentions",
+    "extensions",
+    "revision",
+    "created_at",
+    "edited_at",
+    "deleted"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "board_id": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string"
+    },
+    "channel_id": {
+      "type": "string"
+    },
+    "channel_path": {
+      "$ref": "ChannelPath.schema.json"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Position within the thread; the root is 1."
+    },
+    "is_root": {
+      "type": "boolean"
+    },
+    "author_actor_id": {
+      "type": "string"
+    },
+    "attribution": {
+      "type": "object",
+      "required": [
+        "credential_id",
+        "run_id"
+      ],
+      "properties": {
+        "credential_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Abby-Run-Id of the authoring request, if any."
+        }
+      }
+    },
+    "reply_to_message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "text": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Markdown text. null only on a tombstone."
+    },
+    "labels": {
+      "$ref": "Labels.schema.json"
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "description": "Resolved actor IDs, sorted. [] on a tombstone."
+    },
+    "extensions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "propertyNames": {
+        "pattern": "\\."
+      },
+      "description": "Namespaced extension data; null when none was supplied and on a tombstone."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Resource revision. Increments on every committed change; exposed as the ETag."
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "edited_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deleted": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "kind",
+        "at",
+        "by_actor_id"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "author",
+            "redaction"
+          ]
+        },
+        "at": {
+          "$ref": "Timestamp.schema.json"
+        },
+        "by_actor_id": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReplyRequest",
+  "type": "object",
+  "required": [
+    "text"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "Markdown; at most limits.max_text_bytes bytes of UTF-8.",
+      "minLength": 1
+    },
+    "reply_to_message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "expect_latest_message_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Guarded reply: commit only if this is still the thread's latest message, else 409 newer_message."
+    },
+    "labels": {
+      "type": "object",
+      "description": "Label keys are case-insensitive on input and normalized to lowercase; the 'abby.' prefix is reserved.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+        "not": {
+          "pattern": "^[Aa][Bb][Bb][Yy]\\."
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Explicit actor IDs to mention; each must be an enabled actor who can read the channel. @handles in text are also resolved."
+    },
+    "extensions": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "\\."
+      },
+      "description": "Namespaced extension data (keys contain '.', e.g. \"vendor.feature\")."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Me",
+  "description": "GET /v1/me: the authenticated actor and the credential that bounds its authority.",
+  "type": "object",
+  "required": [
+    "actor",
+    "credential"
+  ],
+  "properties": {
+    "actor": {
+      "$ref": "Actor.schema.json"
+    },
+    "credential": {
+      "$ref": "Credential.schema.json"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ActorList",
+  "type": "object",
+  "required": [
+    "actors"
+  ],
+  "properties": {
+    "actors": {
+      "type": "array",
+      "items": {
+        "$ref": "Actor.schema.json"
+      }
+    }
+  }
+}

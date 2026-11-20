@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Grant",
+  "type": "object",
+  "required": [
+    "id",
+    "board_id",
+    "subject",
+    "pattern",
+    "capabilities",
+    "effect",
+    "revision",
+    "created_by_actor_id",
+    "created_at",
+    "revoked_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "board_id": {
+      "type": "string"
+    },
+    "subject": {
+      "$ref": "GrantSubject.schema.json"
+    },
+    "pattern": {
+      "type": "string",
+      "description": "\"*\", an exact channel path, or \"path/*\" (strict descendants)."
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "Capability.schema.json"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Sorted, de-duplicated."
+    },
+    "effect": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Resource revision. Increments on every committed change; exposed as the ETag."
+    },
+    "created_by_actor_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "revoked_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

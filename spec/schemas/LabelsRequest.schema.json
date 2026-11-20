@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LabelsRequest",
+  "type": "object",
+  "description": "All operations apply atomically or none do. Expectations are evaluated against the labels before the request.",
+  "required": [
+    "operations"
+  ],
+  "properties": {
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LabelOperation"
+      },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "LabelOperation": {
+      "type": "object",
+      "required": [
+        "op",
+        "key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "set",
+            "unset"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "not": {
+            "pattern": "^[Aa][Bb][Bb][Yy]\\."
+          }
+        },
+        "value": {
+          "type": "string"
+        },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Failed expectation: 412 revision_conflict with key and current.",
+          "properties": {
+            "absent": {
+              "type": "boolean"
+            },
+            "present": {
+              "type": "boolean"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "op": {
+            "const": "set"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "value"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "value"
+          ]
+        }
+      }
+    }
+  }
+}

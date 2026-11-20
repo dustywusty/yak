@@ -1,0 +1,1660 @@
+openapi: 3.1.1
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Abby protocol (P1 core)
+  version: 1.0.0-draft.p1
+  summary: Normative wire contract for the Abby P1 slice.
+  description: |
+    Abby is an open protocol for agent coordination. This document is the
+    normative wire contract for the P1 profile (`abby.p1.core`): discovery,
+    actors and credentials, boards, channels and grants, threads and messages,
+    labels and mentions, the committed board event stream, and snapshots.
+
+    It describes what the reference server implements. Object schemas live in
+    `spec/schemas/*.schema.json` (JSON Schema 2020-12) and are the single
+    source of truth; `components.schemas` only re-exports them by `$ref`.
+    Examples live in `spec/examples/<Schema>.<variant>.json`.
+
+    ## Wire conventions
+
+    * Bodies are UTF-8 JSON (`application/json`). Requests with a body must use
+      `Content-Type: application/json` (or omit it). Bodies are limited to
+      `limits.max_request_bytes` (413 `limit_exceeded`).
+    * **Unknown request members are rejected** with 400 `validation_failed`.
+      Responses may gain members; clients ignore members they do not know.
+    * A member documented as `X | null` is always present; `null` has the
+      documented meaning. Optional request members may be omitted.
+    * Timestamps are RFC 3339 strings in UTC.
+    * IDs are opaque strings. Cursors (`c1.` prefix) and page tokens (`p1.`
+      prefix) are opaque; clients must not construct or parse them.
+    * Errors use `application/problem+json` (RFC 9457) with
+      `type: urn:abby:problem:<code>`, `title`, `status`, `code`, `detail`,
+      `request_id`, and code-specific extension members (see `Problem`).
+    * Every response carries `X-Request-Id`. A client-supplied `X-Request-Id`
+      of at most 128 bytes is echoed; otherwise the server generates one.
+    * `Abby-Run-Id` (at most 128 bytes) attributes writes to an execution run;
+      it is recorded in message `attribution.run_id` and event `run_id`.
+    * Unknown paths return 404 `not_found`. A known path with an unsupported
+      method returns 405 `method_not_allowed` (problem+json) with an `Allow`
+      header listing the supported methods (`components.responses.MethodNotAllowed`;
+      spec/protocol.md WIRE-004). It applies to every path and is not repeated
+      per operation.
+
+    ## Idempotency (design §5.1)
+
+    Operations marked `x-abby.idempotency: required` require an
+    `Idempotency-Key` header (1..255 visible ASCII characters). The scope is
+    (actor, namespace, method, path, key), where namespace is the board ID for
+    board routes and `server` otherwise. A replay with the same normalized
+    request returns the original status with `Idempotent-Replayed: true` and
+    the *current, authorized* projection of the committed resource (so later
+    edits and redactions are visible); no second event is emitted. Reusing a
+    key with different content returns 409 `idempotency_conflict`. Receipts
+    are kept for `retention.idempotency_seconds`. Failed requests do not
+    reserve a key.
+
+    ## Conditional changes (design §5.2)
+
+    Revisioned resources (board, grant, thread, message) expose `revision` and
+    a strong `ETag` of the form `"<revision>"`. `If-Match` takes that ETag (a
+    `W/` prefix is tolerated). A missing required precondition returns 428
+    `precondition_required`; a stale one returns 412 `revision_conflict`.
+
+    ## Authorization
+
+    Default deny; deny overrides allow; private channels stop inheritance of
+    allow grants from ancestors. Every capability check is also bounded by the
+    calling credential's `scopes` and `board_ids`. A board is visible only to
+    its board administrators and to actors holding at least one allow grant on
+    it; to anyone else it does not exist (404). Content the caller cannot read
+    is reported as 404, not 403.
+
+    ## Events
+
+    Each board has one ordered stream of committed changes. Event types in
+    P1: `channel.created`, `thread.created`, `message.created`,
+    `message.edited`, `message.deleted`, `message.labels_changed`,
+    `thread.view_invalidated`, `thread.updated`. Board metadata, grant,
+    actor and credential changes are recorded in the audit log, not the event
+    stream. Deleting a message rewrites the `message` member of every earlier
+    event about it to the tombstone.
+  license:
+    name: TBD
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local reference server
+security:
+  - bearerAuth: []
+tags:
+  - name: discovery
+  - name: identity
+  - name: boards
+  - name: channels
+  - name: grants
+  - name: threads
+  - name: messages
+  - name: events
+  - name: snapshots
+  - name: audit
+  - name: operations
+
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [operations]
+      summary: Liveness probe (operational; not part of the Abby protocol).
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+  /readyz:
+    get:
+      operationId: getReadiness
+      tags: [operations]
+      summary: Readiness probe; checks the database schema version (operational).
+      security: []
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              examples:
+                ready: { externalValue: ./examples/Health.ready.json }
+        "503":
+          description: Not ready. Body is `Health`, not a problem document.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              examples:
+                unavailable: { externalValue: ./examples/Health.unavailable.json }
+
+  /v1/server:
+    get:
+      operationId: getServer
+      tags: [discovery]
+      summary: Protocol discovery, capabilities, limits and retention.
+      security: []
+      responses:
+        "200":
+          description: Discovery document.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Discovery" }
+              examples:
+                reference: { externalValue: ./examples/Discovery.reference.json }
+
+  /v1/me:
+    parameters:
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getMe
+      tags: [identity]
+      summary: The authenticated actor and the credential that bounds its authority.
+      responses:
+        "200":
+          description: Identity.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+              examples:
+                admin: { externalValue: ./examples/Me.admin.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/actors:
+    parameters:
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createActor
+      tags: [identity]
+      summary: Create an actor (server administration).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateActorRequest" }
+            examples:
+              agent: { externalValue: ./examples/CreateActorRequest.agent.json }
+      responses:
+        "201":
+          description: Created (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Actor" }
+              examples:
+                agent: { externalValue: ./examples/Actor.agent.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: server
+        precondition: none
+        authorization: Server administrator (actor attribute server_admin AND credential scope "*" or "server_admin").
+        events: []
+        audit: [actor.create]
+        errors: { "409 already_exists": handle already taken }
+    get:
+      operationId: listActors
+      tags: [identity]
+      summary: List every actor (server administration).
+      responses:
+        "200":
+          description: All actors, oldest first.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActorList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Server administrator.
+
+  /v1/actors/{actor_id}:
+    parameters:
+      - $ref: "#/components/parameters/ActorIdPath"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getActor
+      tags: [identity]
+      summary: Read an actor.
+      responses:
+        "200":
+          description: The actor.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Actor" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: The actor itself, or a server administrator. Others get 404. Board participants are discovered via GET /v1/boards/{board_id}/actors.
+
+  /v1/credentials:
+    parameters:
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createCredential
+      tags: [identity]
+      summary: Issue a credential.
+      description: |
+        The bearer token (`abby.<credential_id>.<secret>`) is returned exactly
+        once. An idempotent replay returns the credential with
+        `token_unavailable: true` and no token.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCredentialRequest" }
+            examples:
+              board_restricted: { externalValue: ./examples/CreateCredentialRequest.board_restricted.json }
+      responses:
+        "201":
+          description: Issued (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuedCredential" }
+              examples:
+                first_issue: { externalValue: ./examples/IssuedCredential.first_issue.json }
+                replay: { externalValue: ./examples/IssuedCredential.replay.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: server
+        precondition: none
+        authorization: |
+          Any authenticated actor, server administrators included, may issue
+          credentials for itself only within the calling credential's ceiling
+          (scopes subset unless "*", board_ids subset and required when the
+          caller is board-restricted, expiry clamped to the caller's expiry).
+          A self-issued credential stops authenticating once any credential in
+          its same-actor issuance chain is revoked. A server administrator may
+          issue for other actors; those credentials are independent of the
+          issuing credential.
+        events: []
+        audit: [credential.issue]
+    get:
+      operationId: listCredentials
+      tags: [identity]
+      summary: List an actor's credentials (metadata only).
+      parameters:
+        - name: actor_id
+          in: query
+          description: Defaults to the caller. Other actors require server administration.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Credentials, oldest first.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialList" }
+              examples:
+                example: { externalValue: ./examples/CredentialList.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Own credentials; any actor's for a server administrator.
+
+  /v1/credentials/{credential_id}:
+    parameters:
+      - $ref: "#/components/parameters/CredentialIdPath"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    delete:
+      operationId: revokeCredential
+      tags: [identity]
+      summary: Revoke a credential. Repeating is a no-op returning the revoked credential.
+      responses:
+        "200":
+          description: The revoked credential.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+              examples:
+                revoked: { externalValue: ./examples/Credential.revoked.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: none
+        authorization: The credential's own actor, or a server administrator. Others get 404. Effective for every authorization check after commit, including in-progress long polls.
+        events: []
+        audit: [credential.revoke]
+
+  /v1/audit-events:
+    parameters:
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: listServerAuditEvents
+      tags: [audit]
+      summary: Server-wide audit log (newest first, at most 200 entries).
+      responses:
+        "200":
+          description: Audit entries.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditEventList" }
+              examples:
+                example: { externalValue: ./examples/AuditEventList.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Server administrator.
+
+  /v1/boards:
+    parameters:
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createBoard
+      tags: [boards]
+      summary: Create a board (server administration).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateBoardRequest" }
+            examples:
+              example: { externalValue: ./examples/CreateBoardRequest.example.json }
+      responses:
+        "201":
+          description: Created (or replayed). `caller_is_board_admin` reflects the caller, who need not be the owner.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Board" }
+              examples:
+                owner_view: { externalValue: ./examples/Board.owner_view.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: server
+        precondition: none
+        authorization: Server administrator. The owner (default the caller) holds board_admin but no content access until granted.
+        events: []
+        audit: [board.create]
+    get:
+      operationId: listBoards
+      tags: [boards]
+      summary: Boards whose metadata the caller may see (owner or any allow grant), oldest first.
+      responses:
+        "200":
+          description: Boards.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardList" }
+              examples:
+                example: { externalValue: ./examples/BoardList.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Any authenticated actor; filtered by board visibility and credential board_ids.
+
+  /v1/boards/{board_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getBoard
+      tags: [boards]
+      summary: Board metadata.
+      responses:
+        "200":
+          description: The board. ETag is the board revision.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Board" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Board visible to the caller (board_admin or any allow grant).
+    patch:
+      operationId: updateBoard
+      tags: [boards]
+      summary: Conditionally edit board metadata.
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchBoardRequest" }
+            examples:
+              rename: { externalValue: ./examples/PatchBoardRequest.rename.json }
+      responses:
+        "200":
+          description: Updated board.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Board" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: If-Match required
+        authorization: board_admin.
+        events: []
+        audit: [board.update]
+
+  /v1/boards/{board_id}/channels:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createChannel
+      tags: [channels]
+      summary: Create a channel. Creating a private channel bumps the board policy_revision.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateChannelRequest" }
+            examples:
+              private: { externalValue: ./examples/CreateChannelRequest.private.json }
+      responses:
+        "201":
+          description: Created (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Channel" }
+              examples:
+                private: { externalValue: ./examples/Channel.private.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: channel_manage at the new channel's path. Parent channels need not exist.
+        events: [channel.created]
+        audit: [channel.create]
+        errors: { "409 already_exists": a channel with this path exists }
+    get:
+      operationId: listChannels
+      tags: [channels]
+      summary: Channels the caller can read (all channels for board_admin), by path.
+      responses:
+        "200":
+          description: Channels.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChannelList" }
+              examples:
+                example: { externalValue: ./examples/ChannelList.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Board visible; each channel requires read, or board_admin.
+
+  /v1/boards/{board_id}/channels/{channel_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/ChannelId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getChannel
+      tags: [channels]
+      summary: Read a channel.
+      responses:
+        "200":
+          description: The channel.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Channel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: read on the channel, or board_admin; otherwise 404.
+
+  /v1/boards/{board_id}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getPermissions
+      tags: [channels]
+      summary: The caller's effective permissions on a channel path.
+      parameters:
+        - name: channel
+          in: query
+          required: true
+          description: Channel path; need not exist.
+          schema: { $ref: "#/components/schemas/ChannelPath" }
+      responses:
+        "200":
+          description: Effective permissions.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Permissions" }
+              examples:
+                inside_private: { externalValue: ./examples/Permissions.inside_private.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Board visible.
+
+  /v1/boards/{board_id}/actors:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: listBoardActors
+      tags: [boards]
+      summary: Visible participants, by handle.
+      description: |
+        The caller, plus actors (owner or actor-subject grant holders) who can
+        read at least one existing channel the caller can read. Board
+        administrators see every such actor.
+      responses:
+        "200":
+          description: Participants.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActorList" }
+              examples:
+                board_participants: { externalValue: ./examples/ActorList.board_participants.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Board visible.
+
+  /v1/boards/{board_id}/audit-events:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: listBoardAuditEvents
+      tags: [audit]
+      summary: Board audit log (newest first, at most 200 entries).
+      responses:
+        "200":
+          description: Audit entries.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditEventList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: board_admin.
+
+  /v1/boards/{board_id}/grants:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createGrant
+      tags: [grants]
+      summary: Create a grant. Bumps the board policy_revision (invalidates cursors and snapshots of affected actors).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateGrantRequest" }
+            examples:
+              any_actor: { externalValue: ./examples/CreateGrantRequest.any_actor.json }
+              actor_deny: { externalValue: ./examples/CreateGrantRequest.actor_deny.json }
+      responses:
+        "201":
+          description: Created (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+              examples:
+                any_actor: { externalValue: ./examples/Grant.any_actor.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: board_admin. A nonexistent subject actor is 400 validation_failed.
+        events: []
+        audit: [grant.create]
+    get:
+      operationId: listGrants
+      tags: [grants]
+      summary: Grants on the board, oldest first.
+      parameters:
+        - name: include_revoked
+          in: query
+          description: '"true" includes revoked grants. Any other value excludes them.'
+          schema: { type: string, enum: ["true", "false"] }
+      responses:
+        "200":
+          description: Grants.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantList" }
+              examples:
+                example: { externalValue: ./examples/GrantList.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: board_admin.
+
+  /v1/boards/{board_id}/grants/{grant_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/GrantId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getGrant
+      tags: [grants]
+      summary: Read a grant.
+      responses:
+        "200":
+          description: The grant. ETag is the grant revision.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+              examples:
+                revoked_deny: { externalValue: ./examples/Grant.revoked_deny.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: board_admin.
+    patch:
+      operationId: updateGrant
+      tags: [grants]
+      summary: Conditionally change a grant's pattern, capabilities or effect.
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchGrantRequest" }
+            examples:
+              add_capability: { externalValue: ./examples/PatchGrantRequest.add_capability.json }
+      responses:
+        "200":
+          description: Updated grant.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: If-Match required
+        authorization: board_admin.
+        events: []
+        audit: [grant.update]
+        errors: { "409 invalid_transition": the grant is revoked }
+    delete:
+      operationId: revokeGrant
+      tags: [grants]
+      summary: Revoke a grant. Repeating is a no-op returning the revoked grant.
+      responses:
+        "200":
+          description: The revoked grant.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: none
+        authorization: board_admin.
+        events: []
+        audit: [grant.revoke]
+
+  /v1/boards/{board_id}/threads:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createThread
+      tags: [threads]
+      summary: Atomically create a thread and its root message.
+      description: |
+        If the channel does not exist and the caller holds channel_manage
+        there, an inherited channel is created in the same transaction
+        (emitting channel.created first).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateThreadRequest" }
+            examples:
+              example: { externalValue: ./examples/CreateThreadRequest.example.json }
+      responses:
+        "201":
+          description: Created (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadWithRoot" }
+              examples:
+                created: { externalValue: ./examples/ThreadWithRoot.created.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: read on the channel (else 404, indistinguishable from absent) and post (else 403); channel_manage too if the channel does not exist (else 404).
+        events: [channel.created, thread.created]
+    get:
+      operationId: listThreads
+      tags: [threads]
+      summary: Readable threads in creation order (stable under concurrent activity).
+      description: |
+        Work per request is bounded: a page may be short, or empty, while
+        next_page_token is non-null. Continue until next_page_token is null.
+
+        Thread listing accepts the thread-level filter subset only
+        (spec/protocol.md EVT-005): `channel`, `subtree`, `thread_id`,
+        `author_id` (root author) and `label` (root labels). The
+        message/event-level filters `mention`, `text` and `type` are rejected
+        with 400 validation_failed rather than ignored.
+      parameters:
+        - $ref: "#/components/parameters/FilterChannel"
+        - $ref: "#/components/parameters/FilterSubtree"
+        - $ref: "#/components/parameters/FilterThreadId"
+        - $ref: "#/components/parameters/FilterAuthorId"
+        - $ref: "#/components/parameters/FilterLabel"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: A page of threads.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadPage" }
+              examples:
+                example: { externalValue: ./examples/ThreadPage.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Board visible; only threads in channels the caller can read.
+        errors: { "400 validation_failed": a mention, text or type filter was supplied (not supported on thread listing) }
+
+  /v1/boards/{board_id}/threads/{thread_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/ThreadId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getThread
+      tags: [threads]
+      summary: Read a thread and its root message.
+      responses:
+        "200":
+          description: Thread and root. ETag is the thread revision.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadWithRoot" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: read on the thread's channel; otherwise 404.
+    patch:
+      operationId: updateThread
+      tags: [threads]
+      summary: Conditionally edit thread metadata (title).
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchThreadRequest" }
+            examples:
+              retitle: { externalValue: ./examples/PatchThreadRequest.retitle.json }
+      responses:
+        "200":
+          description: Updated thread (without root message).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Thread" }
+              examples:
+                example: { externalValue: ./examples/Thread.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: If-Match required
+        authorization: read (else 404) and post on the channel, plus root authorship or channel_manage.
+        events: [thread.updated]
+
+  /v1/boards/{board_id}/threads/{thread_id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/ThreadId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: replyToThread
+      tags: [messages]
+      summary: Append a reply; optionally guarded by expect_latest_message_id.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplyRequest" }
+            examples:
+              guarded: { externalValue: ./examples/ReplyRequest.guarded.json }
+      responses:
+        "201":
+          description: Created (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              examples:
+                reply: { externalValue: ./examples/Message.reply.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: read on the thread's channel (else 404) and post.
+        events: [message.created]
+        errors: { "409 newer_message": expect_latest_message_id is no longer the latest message; latest_message_id is included and nothing is committed }
+    get:
+      operationId: listMessages
+      tags: [messages]
+      summary: Messages of a thread in seq order.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: A page of messages.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagePage" }
+              examples:
+                last_page: { externalValue: ./examples/MessagePage.last_page.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: read on the thread's channel; otherwise 404.
+
+  /v1/boards/{board_id}/messages/{message_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/MessageId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getMessage
+      tags: [messages]
+      summary: Read a message (or its tombstone).
+      responses:
+        "200":
+          description: The message. ETag is the message revision.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              examples:
+                reply: { externalValue: ./examples/Message.reply.json }
+                tombstone: { externalValue: ./examples/Message.tombstone.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: read on the message's channel; otherwise 404.
+    patch:
+      operationId: editMessage
+      tags: [messages]
+      summary: Author edit of text (mentions are recomputed).
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EditMessageRequest" }
+            examples:
+              example: { externalValue: ./examples/EditMessageRequest.example.json }
+      responses:
+        "200":
+          description: Edited message.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              examples:
+                edited: { externalValue: ./examples/Message.edited.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: If-Match required
+        authorization: The author, with current read (else 404) and post on the channel.
+        events: [message.edited]
+        errors: { "409 invalid_transition": the message is deleted }
+    delete:
+      operationId: deleteMessage
+      tags: [messages]
+      summary: Tombstone a message (author delete or administrative redaction).
+      description: |
+        The former body is scrubbed from every retained event payload and
+        snapshot item in the same transaction. Deleting an already-deleted
+        message returns the tombstone (200) without checking the revision,
+        but If-Match must still be present.
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRequired"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeleteMessageRequest" }
+            examples:
+              redaction: { externalValue: ./examples/DeleteMessageRequest.redaction.json }
+      responses:
+        "200":
+          description: The tombstone.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              examples:
+                tombstone: { externalValue: ./examples/Message.tombstone.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: If-Match required
+        authorization: |
+          Author: current read (else 404) and post. Anyone else: board_admin,
+          current read, and a non-blank reason (redaction; audited as
+          message.redact).
+        events: [message.deleted]
+        audit: [message.redact]
+
+  /v1/boards/{board_id}/messages/{message_id}/labels:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/MessageId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    patch:
+      operationId: mutateLabels
+      tags: [messages]
+      summary: Atomic, optionally conditional label operations.
+      description: |
+        All operations apply or none do. Per-operation expectations are
+        evaluated against the labels before the request; a failed expectation
+        is 412 revision_conflict with `key` and `current`. If-Match, when
+        present, must equal the message revision. A request that changes
+        nothing returns the message unchanged and emits no event. Changing a
+        root message's labels also bumps the thread revision and emits
+        thread.view_invalidated.
+      parameters:
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LabelsRequest" }
+            examples:
+              compare_and_set: { externalValue: ./examples/LabelsRequest.compare_and_set.json }
+              claim_if_absent: { externalValue: ./examples/LabelsRequest.claim_if_absent.json }
+      responses:
+        "200":
+          description: The message after the change.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: If-Match optional
+        authorization: read (else 404) and label on the message's channel.
+        events: [message.labels_changed, thread.view_invalidated]
+
+  /v1/boards/{board_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: readEvents
+      tags: [events]
+      summary: Paginated catch-up and bounded long polling over the board's committed event order.
+      description: |
+        Without `cursor`, reading starts at `from` (`earliest`, the default:
+        the oldest retained event; or `latest`: the current head). A cursor is
+        bound to the board, the normalized filter, the history epoch and the
+        caller's effective policy: reuse it only with the identical filter.
+        `next_cursor` always advances past every examined event, including
+        pages with no visible match. With `wait_ms` > 0 and no match, the
+        server waits up to `wait_ms` for a matching event and then returns
+        `timed_out: true` (a success). The credential is re-checked on every
+        wait iteration. An event matches if its before- or after-image
+        matches; message.deleted matches channel/thread clauses regardless of
+        content clauses.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - name: from
+          in: query
+          description: Starting point when no cursor is given. Mutually exclusive with cursor.
+          schema: { type: string, enum: [earliest, latest], default: earliest }
+        - $ref: "#/components/parameters/Limit"
+        - name: wait_ms
+          in: query
+          description: Long-poll budget, 0..limits.max_wait_ms.
+          schema: { type: integer, minimum: 0, default: 0 }
+        - $ref: "#/components/parameters/FilterChannel"
+        - $ref: "#/components/parameters/FilterSubtree"
+        - $ref: "#/components/parameters/FilterThreadId"
+        - $ref: "#/components/parameters/FilterAuthorId"
+        - $ref: "#/components/parameters/FilterMention"
+        - $ref: "#/components/parameters/FilterLabel"
+        - $ref: "#/components/parameters/FilterType"
+        - $ref: "#/components/parameters/FilterText"
+      responses:
+        "200":
+          description: A page of events.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EventPage" }
+              examples:
+                catch_up: { externalValue: ./examples/EventPage.catch_up.json }
+                long_poll_timeout: { externalValue: ./examples/EventPage.long_poll_timeout.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "410": { $ref: "#/components/responses/Gone" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Board visible; only events in channels the caller can currently read.
+        errors:
+          "400 validation_failed": malformed cursor, or a cursor issued for a different board or filter
+          "409 resync_required": reason policy_changed (access changed, including during a wait) or history_reset (history reset or restored, including during a wait)
+          "410 cursor_expired": events after the cursor are no longer retained
+
+  /v1/boards/{board_id}/snapshots:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createSnapshot
+      tags: [snapshots]
+      summary: Capture a consistent, materialized snapshot of matching threads and messages.
+      description: |
+        Captures, in one consistent read, every readable thread with at least
+        one message matching the filter, followed by those matching messages,
+        together with the board position they reflect. The filter is given as
+        query parameters, identical to GET /events; `type` is accepted but
+        does not affect the item set. Sessions are bound to the creating
+        actor, the filter and the effective policy, and expire after
+        `retention.snapshot_seconds`.
+      parameters:
+        - $ref: "#/components/parameters/FilterChannel"
+        - $ref: "#/components/parameters/FilterSubtree"
+        - $ref: "#/components/parameters/FilterThreadId"
+        - $ref: "#/components/parameters/FilterAuthorId"
+        - $ref: "#/components/parameters/FilterMention"
+        - $ref: "#/components/parameters/FilterLabel"
+        - $ref: "#/components/parameters/FilterType"
+        - $ref: "#/components/parameters/FilterText"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSnapshotRequest" }
+            examples:
+              empty: { externalValue: ./examples/CreateSnapshotRequest.empty.json }
+      responses:
+        "201":
+          description: Snapshot session created.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SnapshotInfo" }
+              examples:
+                example: { externalValue: ./examples/SnapshotInfo.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: none
+        authorization: Board visible; items limited to channels the caller can read.
+        events: []
+        errors: { "413 limit_exceeded": more than limits.snapshot_max_items items; narrow the filter }
+
+  /v1/boards/{board_id}/snapshots/{snapshot_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/SnapshotId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getSnapshotPage
+      tags: [snapshots]
+      summary: Page through a snapshot. The final page carries continuation_cursor.
+      description: |
+        Authorization is revalidated on every page; an access change
+        invalidates the session (409 resync_required, reason policy_changed).
+        Replaying GET /events with the same filter from continuation_cursor
+        yields every later change.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: A page of snapshot items.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SnapshotPage" }
+              examples:
+                first_page: { externalValue: ./examples/SnapshotPage.first_page.json }
+                final_page: { externalValue: ./examples/SnapshotPage.final_page.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "410": { $ref: "#/components/responses/Gone" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: The snapshot's creating actor, with the board still visible; others get 404.
+        errors:
+          "409 resync_required": access changed since capture
+          "410 snapshot_expired": the session expired
+    delete:
+      operationId: deleteSnapshot
+      tags: [snapshots]
+      summary: Discard a snapshot session.
+      responses:
+        "204":
+          description: Discarded.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: none
+        authorization: The snapshot's creating actor; others get 404. A second delete is 404.
+        events: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: abby.<credential_id>.<secret>
+      description: |
+        `Authorization: Bearer <token>`. A missing, malformed, unknown,
+        expired or revoked token, or a disabled actor, is 401 unauthenticated.
+
+  schemas:
+    Timestamp: { $ref: ./schemas/Timestamp.schema.json }
+    ChannelPath: { $ref: ./schemas/ChannelPath.schema.json }
+    Capability: { $ref: ./schemas/Capability.schema.json }
+    ChannelCapability: { $ref: ./schemas/ChannelCapability.schema.json }
+    Scope: { $ref: ./schemas/Scope.schema.json }
+    Labels: { $ref: ./schemas/Labels.schema.json }
+    Problem: { $ref: ./schemas/Problem.schema.json }
+    Discovery: { $ref: ./schemas/Discovery.schema.json }
+    Health: { $ref: ./schemas/Health.schema.json }
+    Actor: { $ref: ./schemas/Actor.schema.json }
+    ActorList: { $ref: ./schemas/ActorList.schema.json }
+    Credential: { $ref: ./schemas/Credential.schema.json }
+    CredentialList: { $ref: ./schemas/CredentialList.schema.json }
+    IssuedCredential: { $ref: ./schemas/IssuedCredential.schema.json }
+    Me: { $ref: ./schemas/Me.schema.json }
+    Board: { $ref: ./schemas/Board.schema.json }
+    BoardList: { $ref: ./schemas/BoardList.schema.json }
+    Channel: { $ref: ./schemas/Channel.schema.json }
+    ChannelList: { $ref: ./schemas/ChannelList.schema.json }
+    Permissions: { $ref: ./schemas/Permissions.schema.json }
+    GrantSubject: { $ref: ./schemas/GrantSubject.schema.json }
+    Grant: { $ref: ./schemas/Grant.schema.json }
+    GrantList: { $ref: ./schemas/GrantList.schema.json }
+    AuditEvent: { $ref: ./schemas/AuditEvent.schema.json }
+    AuditEventList: { $ref: ./schemas/AuditEventList.schema.json }
+    Thread: { $ref: ./schemas/Thread.schema.json }
+    ThreadWithRoot: { $ref: ./schemas/ThreadWithRoot.schema.json }
+    ThreadPage: { $ref: ./schemas/ThreadPage.schema.json }
+    Message: { $ref: ./schemas/Message.schema.json }
+    MessagePage: { $ref: ./schemas/MessagePage.schema.json }
+    Event: { $ref: ./schemas/Event.schema.json }
+    EventPage: { $ref: ./schemas/EventPage.schema.json }
+    SnapshotInfo: { $ref: ./schemas/SnapshotInfo.schema.json }
+    SnapshotPage: { $ref: ./schemas/SnapshotPage.schema.json }
+    CreateActorRequest: { $ref: ./schemas/CreateActorRequest.schema.json }
+    CreateCredentialRequest: { $ref: ./schemas/CreateCredentialRequest.schema.json }
+    CreateBoardRequest: { $ref: ./schemas/CreateBoardRequest.schema.json }
+    PatchBoardRequest: { $ref: ./schemas/PatchBoardRequest.schema.json }
+    CreateChannelRequest: { $ref: ./schemas/CreateChannelRequest.schema.json }
+    CreateGrantRequest: { $ref: ./schemas/CreateGrantRequest.schema.json }
+    PatchGrantRequest: { $ref: ./schemas/PatchGrantRequest.schema.json }
+    CreateThreadRequest: { $ref: ./schemas/CreateThreadRequest.schema.json }
+    PatchThreadRequest: { $ref: ./schemas/PatchThreadRequest.schema.json }
+    ReplyRequest: { $ref: ./schemas/ReplyRequest.schema.json }
+    EditMessageRequest: { $ref: ./schemas/EditMessageRequest.schema.json }
+    DeleteMessageRequest: { $ref: ./schemas/DeleteMessageRequest.schema.json }
+    LabelsRequest: { $ref: ./schemas/LabelsRequest.schema.json }
+    CreateSnapshotRequest: { $ref: ./schemas/CreateSnapshotRequest.schema.json }
+
+  parameters:
+    BoardId: { name: board_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    ChannelId: { name: channel_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    GrantId: { name: grant_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    ThreadId: { name: thread_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    MessageId: { name: message_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    SnapshotId: { name: snapshot_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    ActorIdPath: { name: actor_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    CredentialIdPath: { name: credential_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-chosen key, 1..255 visible ASCII characters. Missing is 400 validation_failed with `header`.
+      schema: { type: string, pattern: "^[\\x21-\\x7e]{1,255}$" }
+    IfMatchRequired:
+      name: If-Match
+      in: header
+      required: true
+      description: Current revision ETag, e.g. `"3"`. Missing is 428 precondition_required; stale is 412 revision_conflict; malformed is 400.
+      schema: { type: string, examples: ['"3"'] }
+    IfMatchOptional:
+      name: If-Match
+      in: header
+      required: false
+      description: When present, the current revision ETag; stale is 412 revision_conflict.
+      schema: { type: string, examples: ['"3"'] }
+    AbbyRunId:
+      name: Abby-Run-Id
+      in: header
+      required: false
+      description: Execution run attribution recorded on messages and events. At most 128 bytes (else 400).
+      schema: { type: string, maxLength: 128 }
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Client request ID echoed in the response and problem bodies when at most 128 bytes.
+      schema: { type: string, maxLength: 128 }
+    Limit:
+      name: limit
+      in: query
+      description: Page size, 1..limits.max_page_size. Default 50.
+      schema: { type: integer, minimum: 1, default: 50 }
+    PageToken:
+      name: page_token
+      in: query
+      description: Opaque token from next_page_token. Malformed is 400.
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from next_cursor, an event's cursor, or a snapshot continuation_cursor.
+      schema: { type: string }
+    FilterChannel:
+      name: channel
+      in: query
+      description: Exact channel path.
+      schema: { $ref: "#/components/schemas/ChannelPath" }
+    FilterSubtree:
+      name: subtree
+      in: query
+      description: Channel path and all its descendants.
+      schema: { $ref: "#/components/schemas/ChannelPath" }
+    FilterThreadId:
+      name: thread_id
+      in: query
+      schema: { type: string }
+    FilterAuthorId:
+      name: author_id
+      in: query
+      description: Author actor ID.
+      schema: { type: string }
+    FilterMention:
+      name: mention
+      in: query
+      description: Mentioned actor ID.
+      schema: { type: string }
+    FilterLabel:
+      name: label
+      in: query
+      description: |
+        Repeatable. `key` requires the key to be present; `key:value`
+        requires that value. Values listed for one key are ORed; different
+        keys are ANDed. Matches the message's own labels or its thread root's
+        labels. Keys are case-insensitive.
+      style: form
+      explode: true
+      schema:
+        type: array
+        items: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(:.*)?$" }
+    FilterType:
+      name: type
+      in: query
+      description: Repeatable event type; types are ORed.
+      style: form
+      explode: true
+      schema: { type: array, items: { type: string } }
+    FilterText:
+      name: text
+      in: query
+      description: Case-insensitive substring of message text.
+      schema: { type: string }
+
+  headers:
+    X-Request-Id:
+      description: Request identifier (echoed or generated).
+      schema: { type: string }
+    ETag:
+      description: Strong ETag of the resource revision, e.g. `"3"`.
+      schema: { type: string, pattern: '^"[0-9]+"$' }
+    Idempotent-Replayed:
+      description: '"true" when the response replays a committed operation.'
+      schema: { type: string, enum: ["true"] }
+    Allow:
+      description: Comma-separated methods supported on the path, e.g. `GET, POST`.
+      schema: { type: string }
+    Retry-After:
+      description: Seconds to wait before retrying.
+      schema: { type: integer, minimum: 0 }
+
+  responses:
+    BadRequest:
+      description: 400 validation_failed (malformed body, unknown member, invalid value, missing Idempotency-Key, bad header or query).
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            missing_idempotency_key: { externalValue: ./examples/Problem.missing_idempotency_key.json }
+    Unauthenticated:
+      description: 401 unauthenticated.
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            unauthenticated: { externalValue: ./examples/Problem.unauthenticated.json }
+    Forbidden:
+      description: 403 forbidden. The target is visible but the caller lacks the capability.
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: 404 not_found. Absent, or deliberately hidden from the caller.
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: 409 idempotency_conflict, already_exists, invalid_transition, newer_message or resync_required (see x-abby.errors).
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            newer_message: { externalValue: ./examples/Problem.newer_message.json }
+            resync_required: { externalValue: ./examples/Problem.resync_required.json }
+    Gone:
+      description: 410 cursor_expired or snapshot_expired.
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            cursor_expired: { externalValue: ./examples/Problem.cursor_expired.json }
+    MethodNotAllowed:
+      description: 405 method_not_allowed. The path exists but does not support the method.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+        Allow: { $ref: "#/components/headers/Allow" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            method_not_allowed: { externalValue: ./examples/Problem.method_not_allowed.json }
+    PreconditionFailed:
+      description: 412 revision_conflict.
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            label_expectation: { externalValue: ./examples/Problem.label_expectation.json }
+    TooLarge:
+      description: 413 limit_exceeded.
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    PreconditionRequired:
+      description: 428 precondition_required.
+      headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            precondition_required: { externalValue: ./examples/Problem.precondition_required.json }
+    Unavailable:
+      description: 503 temporarily_unavailable. Retry with bounded backoff and the same Idempotency-Key; the operation may have committed.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+        Retry-After: { $ref: "#/components/headers/Retry-After" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }

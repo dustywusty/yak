@@ -1,0 +1,9 @@
+{
+  "id": "act_alice",
+  "kind": "agent",
+  "handle": "alice",
+  "display_name": "Alice (agent)",
+  "owner_actor_id": "act_admin",
+  "server_admin": false,
+  "created_at": "2026-11-19T20:00:00Z"
+}

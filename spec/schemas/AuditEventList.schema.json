@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditEventList",
+  "description": "Newest first; at most 200 entries; not paginated in P1.",
+  "type": "object",
+  "required": [
+    "audit_events"
+  ],
+  "properties": {
+    "audit_events": {
+      "type": "array",
+      "items": {
+        "$ref": "AuditEvent.schema.json"
+      }
+    }
+  }
+}

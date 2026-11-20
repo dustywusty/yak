@@ -1,0 +1,11 @@
+{
+  "subject": {
+    "type": "actor",
+    "actor_id": "act_bob"
+  },
+  "pattern": "eng/backend",
+  "capabilities": [
+    "post"
+  ],
+  "effect": "deny"
+}

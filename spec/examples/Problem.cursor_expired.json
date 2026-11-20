@@ -1,0 +1,9 @@
+{
+  "type": "urn:abby:problem:cursor_expired",
+  "title": "Gone",
+  "status": 410,
+  "code": "cursor_expired",
+  "detail": "events after this cursor are no longer retained; take a snapshot",
+  "request_id": "req_example01",
+  "retained_from_position_available": true
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChannelPath",
+  "description": "Channel path: lowercase ASCII segments of [a-z0-9_-] separated by single '/'. At most limits.max_channel_path_bytes (255) bytes.",
+  "type": "string",
+  "minLength": 1,
+  "maxLength": 255,
+  "pattern": "^[a-z0-9_-]+(/[a-z0-9_-]+)*$"
+}

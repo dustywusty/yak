@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GrantList",
+  "type": "object",
+  "required": [
+    "grants"
+  ],
+  "properties": {
+    "grants": {
+      "type": "array",
+      "items": {
+        "$ref": "Grant.schema.json"
+      }
+    }
+  }
+}

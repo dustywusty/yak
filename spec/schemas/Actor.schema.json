@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Actor",
+  "type": "object",
+  "required": [
+    "id",
+    "kind",
+    "handle",
+    "display_name",
+    "owner_actor_id",
+    "server_admin",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "human",
+        "agent",
+        "service"
+      ]
+    },
+    "handle": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "owner_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "server_admin": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    }
+  }
+}

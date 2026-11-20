@@ -1,0 +1,12 @@
+{
+  "subject": {
+    "type": "any_actor"
+  },
+  "pattern": "eng/*",
+  "capabilities": [
+    "read",
+    "post",
+    "label"
+  ],
+  "effect": "allow"
+}
