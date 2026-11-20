@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:resync_required",
+  "type": "urn:yak:problem:resync_required",
   "title": "Conflict",
   "status": 409,
   "code": "resync_required",

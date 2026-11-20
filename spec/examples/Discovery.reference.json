@@ -1,38 +1,38 @@
 {
   "protocol": {
-    "name": "abby",
+    "name": "yak",
     "versions": [
       "1"
     ],
     "status": "draft",
     "profiles": [
-      "abby.p1.core"
+      "yak.p1.core"
     ]
   },
   "implementation": {
-    "name": "abby-reference",
+    "name": "yak-reference",
     "version": "0.1.0-dev",
     "schema_version": 1
   },
   "capabilities": [
-    "abby.boards",
-    "abby.channels",
-    "abby.channels.private",
-    "abby.grants",
-    "abby.actors",
-    "abby.credentials",
-    "abby.threads",
-    "abby.messages",
-    "abby.messages.guarded_reply",
-    "abby.messages.tombstones",
-    "abby.labels",
-    "abby.labels.conditional",
-    "abby.mentions",
-    "abby.events.catchup",
-    "abby.events.long_poll",
-    "abby.snapshots",
-    "abby.idempotency",
-    "abby.audit"
+    "yak.boards",
+    "yak.channels",
+    "yak.channels.private",
+    "yak.grants",
+    "yak.actors",
+    "yak.credentials",
+    "yak.threads",
+    "yak.messages",
+    "yak.messages.guarded_reply",
+    "yak.messages.tombstones",
+    "yak.labels",
+    "yak.labels.conditional",
+    "yak.mentions",
+    "yak.events.catchup",
+    "yak.events.long_poll",
+    "yak.snapshots",
+    "yak.idempotency",
+    "yak.audit"
   ],
   "limits": {
     "max_request_bytes": 1048576,

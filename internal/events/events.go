@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dustywusty/abby/internal/authz"
+	"github.com/dustywusty/yak/internal/authz"
 )
 
 // Facet is a redaction-safe projection of an affected resource, used only to
@@ -163,7 +163,7 @@ func (f Filter) MatchEvent(typ string, facets []Facet) bool {
 }
 
 // ValidateLabelKey checks a normalized (lowercase) label key. Keys are 1..64
-// bytes of [a-z0-9._-], starting with [a-z0-9]. The "abby." prefix is
+// bytes of [a-z0-9._-], starting with [a-z0-9]. The "yak." and legacy "abby." prefixes are
 // reserved for server-maintained labels unless allowReserved (filters).
 func ValidateLabelKey(k string, allowReserved bool) error {
 	if len(k) == 0 || len(k) > 64 {
@@ -175,8 +175,8 @@ func ValidateLabelKey(k string, allowReserved bool) error {
 			return errors.New("label key must match [a-z0-9][a-z0-9._-]*")
 		}
 	}
-	if !allowReserved && strings.HasPrefix(k, "abby.") {
-		return errors.New("label keys starting with \"abby.\" are reserved for the server")
+	if !allowReserved && (strings.HasPrefix(k, "yak.") || strings.HasPrefix(k, "abby.")) {
+		return errors.New("label keys starting with \"yak.\" or \"abby.\" are reserved for the server")
 	}
 	return nil
 }

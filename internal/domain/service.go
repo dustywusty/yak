@@ -1,4 +1,4 @@
-// Package domain implements Abby's authorization-aware operations. Every
+// Package domain implements Yak's authorization-aware operations. Every
 // board mutation runs in one transaction that locks the board control row,
 // checks conditions, changes state, appends events at transactional
 // positions, and stores its idempotency receipt (design §12.1).
@@ -17,9 +17,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/dustywusty/abby/internal/authz"
-	"github.com/dustywusty/abby/internal/events"
-	"github.com/dustywusty/abby/internal/ids"
+	"github.com/dustywusty/yak/internal/authz"
+	"github.com/dustywusty/yak/internal/events"
+	"github.com/dustywusty/yak/internal/ids"
 )
 
 // Error is a protocol error rendered as application/problem+json.
@@ -346,7 +346,7 @@ func (s *Service) boardMutation(ctx context.Context, p *Principal, boardID strin
 			if _, err := tx.Exec(ctx, `UPDATE board_heads SET head_position=$2 WHERE board_id=$1`, boardID, b.head); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `SELECT pg_notify('abby_events', $1)`, boardID); err != nil {
+			if _, err := tx.Exec(ctx, `SELECT pg_notify('yak_events', $1)`, boardID); err != nil {
 				return err
 			}
 		}

@@ -24,7 +24,7 @@
         "null"
       ],
       "minLength": 1,
-      "description": "Opaque high-entropy secret; present it as Abby-Claim-Proof on claimant operations. Never in a body or query."
+      "description": "Opaque high-entropy secret; present it as Yak-Claim-Proof on claimant operations. Never in a body or query."
     },
     "proof_unavailable": {
       "type": "boolean"

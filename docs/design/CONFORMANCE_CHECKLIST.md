@@ -1,4 +1,4 @@
-# Abby conformance checklist
+# Yak conformance checklist
 
 Version 0.2. This is a test plan, not an implemented or passed test suite. See the canonical design for the contract and sources.
 

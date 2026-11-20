@@ -1,9 +1,9 @@
 {
   "document_type": "api_operation_inventory",
-  "project": "Abby",
+  "project": "Yak",
   "design_version": "0.2",
   "status": "proposal_not_an_openapi_document",
-  "canonical_design": "Abby_Design.md",
+  "canonical_design": "Yak_Design.md",
   "target_protocol_major": 1,
   "required_expansion": [
     "operationId",

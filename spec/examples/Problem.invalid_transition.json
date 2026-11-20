@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:invalid_transition",
+  "type": "urn:yak:problem:invalid_transition",
   "title": "Conflict",
   "status": 409,
   "code": "invalid_transition",

@@ -1,0 +1,107 @@
+// Command yak is the Yak CLI. Client commands use only the public HTTP
+// API through sdk/go/yak. The serve, migrate and admin commands are
+// operator tools for the reference server.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"github.com/dustywusty/yak/sdk/go/yak"
+)
+
+// Exit codes (spec/cli.md).
+const (
+	exitOK          = 0
+	exitError       = 1
+	exitUsage       = 2
+	exitAuth        = 3
+	exitNotFound    = 4
+	exitConflict    = 5
+	exitUnavailable = 6
+	exitTimeout     = 7
+	exitResync      = 8
+	// P2 (spec/cli.md "Tasks"):
+	exitClaimLost        = 9  // claim_lost or task_claimed: ownership is gone or held by another claim
+	exitLeaseUnconfirmed = 10 // yak run: renewal or settlement not confirmed before the local lease deadline
+	exitCommandFailed    = 11 // yak run: the command exited non-zero; the task was failed
+	exitInterrupted      = 12 // yak run: interrupted by SIGINT/SIGTERM; the claim was released if one was held
+	exitResultRejected   = 13 // yak run: the server rejected the result (400/413); the claim was released, not settled without it
+)
+
+type exitErr struct {
+	code int
+	err  error
+}
+
+func (e *exitErr) Error() string { return e.err.Error() }
+
+func exitCode(err error) int {
+	var ee *exitErr
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	var p *yak.Problem
+	if errors.As(err, &p) {
+		switch {
+		case p.Code == "claim_lost" || p.Code == "task_claimed":
+			return exitClaimLost
+		case p.Status == 401 || p.Status == 403:
+			return exitAuth
+		case p.Status == 404:
+			return exitNotFound
+		case p.Code == "resync_required" || p.Status == 410:
+			return exitResync
+		case p.Status == 409 || p.Status == 412 || p.Status == 428:
+			return exitConflict
+		case p.Status == 400 || p.Status == 413:
+			return exitUsage
+		case p.Status >= 500 || p.Status == 429:
+			return exitUnavailable
+		}
+		return exitError
+	}
+	var ne net.Error
+	if errors.As(err, &ne) || errors.Is(err, context.DeadlineExceeded) {
+		return exitUnavailable
+	}
+	return exitError
+}
+
+func main() {
+	root := &cobra.Command{
+		Use:           "yak",
+		Short:         "Yak: coordination for agents, people, and services",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Version:       version,
+	}
+	addGlobalFlags(root)
+	root.AddCommand(serverCmds()...)
+	root.AddCommand(clientCmds()...)
+	root.AddCommand(taskCmd(), runCmd())
+	if err := root.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "yak:", err)
+		code := exitCode(err)
+		if code == exitError && isUsageErr(err) {
+			code = exitUsage
+		}
+		os.Exit(code)
+	}
+}
+
+func isUsageErr(err error) bool {
+	var ue *usageErr
+	return errors.As(err, &ue)
+}
+
+type usageErr struct{ msg string }
+
+func (u *usageErr) Error() string { return u.msg }
+
+func usage(format string, a ...any) error { return &usageErr{fmt.Sprintf(format, a...)} }

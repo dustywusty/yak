@@ -1,6 +1,6 @@
-// Command viewer is a view-only browser for Abby boards. It is a demo
+// Command viewer is a view-only browser for Yak boards. It is a demo
 // client of the public HTTP API (spec/openapi.yaml): it serves a small
-// static web page and reverse-proxies /v1/* to an Abby server, so the page
+// static web page and reverse-proxies /v1/* to a Yak server, so the page
 // is same-origin with the API.
 //
 // The proxy passes the Authorization header through unchanged. It never
@@ -29,7 +29,7 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; " +
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8099", "address to serve the viewer on")
-	api := flag.String("api", "http://127.0.0.1:8090", "base URL of the Abby server")
+	api := flag.String("api", "http://127.0.0.1:8090", "base URL of the Yak server")
 	flag.Parse()
 
 	target, err := url.Parse(*api)
@@ -50,7 +50,7 @@ func main() {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"type":"about:blank","title":"Bad Gateway","status":502,` +
-				`"code":"upstream_unreachable","detail":"the viewer proxy cannot reach the Abby server"}`))
+				`"code":"upstream_unreachable","detail":"the viewer proxy cannot reach the Yak server"}`))
 		},
 	}
 

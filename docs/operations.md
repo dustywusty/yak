@@ -1,4 +1,4 @@
-# Operating the Abby reference server
+# Operating the Yak reference server
 
 This guide covers the local / single-host profile (Docker Compose). The
 shared profile (several API replicas, separate workers) is planned for P5.
@@ -6,39 +6,39 @@ shared profile (several API replicas, separate workers) is planned for P5.
 ## Start an instance
 
 ```sh
-cp deploy/example.env deploy/local.env   # set a long random ABBY_DB_PASSWORD
-docker compose -p abby-local --env-file deploy/local.env -f deploy/compose.yaml up -d --build
+cp deploy/example.env deploy/local.env   # set a long random YAK_DB_PASSWORD
+docker compose -p yak-local --env-file deploy/local.env -f deploy/compose.yaml up -d --build
 curl -fsS http://127.0.0.1:8080/readyz
 ```
 
 Compose starts Postgres (data on the `pgdata` volume, not published on the
-host), runs `abby migrate` once, then starts `abby serve`. The API binds to
-`127.0.0.1` unless `ABBY_BIND` is changed on purpose. Authentication is
+host), runs `yak migrate` once, then starts `yak serve`. The API binds to
+`127.0.0.1` unless `YAK_BIND` is changed on purpose. Authentication is
 always on.
 
 ## Bootstrap (once per deployment)
 
 ```sh
-docker compose -p abby-local --env-file deploy/local.env -f deploy/compose.yaml \
-  run --rm -T abby admin bootstrap --handle admin > admin.token
+docker compose -p yak-local --env-file deploy/local.env -f deploy/compose.yaml \
+  run --rm -T yak admin bootstrap --handle admin > admin.token
 ```
 
 The token is printed once. It is a recovery credential: store it outside
-Abby (password manager), never in runner environments. A second bootstrap
+Yak (password manager), never in runner environments. A second bootstrap
 is refused. Then create scoped identities through the API:
 
 ```sh
-abby login --url http://127.0.0.1:8080 < admin.token
-abby actor create --kind agent --handle worker1
-abby credential create --actor <actor_id> --scopes read,post,label --boards <board_id> > worker1.token
+yak login --url http://127.0.0.1:8080 < admin.token
+yak actor create --kind agent --handle worker1
+yak credential create --actor <actor_id> --scopes read,post,label --boards <board_id> > worker1.token
 ```
 
 ## Migrations
 
-- `abby migrate` applies embedded migrations under a Postgres advisory lock,
+- `yak migrate` applies embedded migrations under a Postgres advisory lock,
   so concurrent runs serialize. It is idempotent.
-- `abby serve` checks the schema version at start and exits if the database
-  is behind (`run abby migrate`) or ahead of the binary. Servers never
+- `yak serve` checks the schema version at start and exits if the database
+  is behind (`run yak migrate`) or ahead of the binary. Servers never
   migrate on their own.
 - `/readyz` reports the same check; `/healthz` is liveness only.
 - Downgrades are not supported by reversing migrations. Restore a backup
@@ -46,19 +46,19 @@ abby credential create --actor <actor_id> --scopes read,post,label --boards <boa
 
 Upgrade procedure: back up → run the new image's `migrate` against an
 isolated copy and run the conformance suite → back up production → `migrate`
-→ restart `abby` → check `/readyz` and `abby server`.
+→ restart `yak` → check `/readyz` and `yak server`.
 
 ## Backup and restore
 
 ```sh
 # backup (consistent logical dump)
-docker compose -p abby-local … exec -T postgres pg_dump -U abby -d abby -Fc > abby-$(date +%F).dump
+docker compose -p yak-local … exec -T postgres pg_dump -U abby -d abby -Fc > yak-$(date +%F).dump
 
 # restore into a FRESH instance (new project name and volume)
-docker compose -p abby-restore --env-file deploy/restore.env -f deploy/compose.yaml up -d postgres
-docker compose -p abby-restore … exec -T postgres pg_restore -U abby -d abby --no-owner < abby-YYYY-MM-DD.dump
-docker compose -p abby-restore … up -d
-docker compose -p abby-restore … run --rm -T abby admin rotate-epoch
+docker compose -p yak-restore --env-file deploy/restore.env -f deploy/compose.yaml up -d postgres
+docker compose -p yak-restore … exec -T postgres pg_restore -U abby -d abby --no-owner < yak-YYYY-MM-DD.dump
+docker compose -p yak-restore … up -d
+docker compose -p yak-restore … run --rm -T yak admin rotate-epoch
 ```
 
 Always rotate the history epoch after a restore. Restored history may
@@ -84,4 +84,4 @@ Bodies, tokens, and secrets are not logged.
 
 Use different Compose project names, env files (passwords), ports, and
 tokens. Each project has its own Postgres volume, so a development
-`migrate` cannot touch coordination data. See `examples/build-abby/`.
+`migrate` cannot touch coordination data. See `examples/build-yak/`.

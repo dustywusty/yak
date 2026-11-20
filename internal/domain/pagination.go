@@ -8,7 +8,7 @@ import (
 
 // Keyset pagination convention for administrative lists (boards, channels,
 // participants, grants, credentials, actors, audit events). Decided by the
-// coordinator on abby-dev, 2026-11-20:
+// coordinator on yak-dev, 2026-11-20:
 //
 //   - query: page_token (opaque), limit (1..MaxPageSize, default DefaultPageSize)
 //   - response: the existing list field plus "next_page_token" (string|null;
