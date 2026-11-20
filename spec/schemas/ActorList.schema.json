@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ActorList",
-  "description": "Actors in (created_at, id) order. Continue with page_token until next_page_token is null.",
+  "description": "Actors in (created_at, id) order (GET /v1/actors and GET /v1/boards/{id}/actors). Continue with page_token until next_page_token is null.",
   "type": "object",
   "required": [
     "actors",
