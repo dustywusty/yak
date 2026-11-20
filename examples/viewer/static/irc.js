@@ -139,7 +139,7 @@ export function irc(root, { threadHref }) {
           agents.map((a) => h('div', { class: 'i-agent' }, `+${a.handle}`)),
           h('div', { class: 'i-count' }, `${actors.length} board actors`), h('div', { class: 'i-count' }, ` ${people.length} people (@)`),
           h('div', { class: 'i-count' }, ` ${agents.length} agents/services (+)`))),
-      document.body.dataset.operator ? h('button', { type: 'button', class: 'i-input', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: S.board.id, ch: tab, t: topicThread } })) }, 'Reply / task actions') : h('input', { class: 'i-input', type: 'text', disabled: true, 'aria-label': 'message input (read-only)', placeholder: 'read-only viewer: /commands and messages are disabled' }),
+      document.body.dataset.operator ? h('button', { type: 'button', class: 'i-input', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: S.board.id, ch: tab, t: th } })) }, 'Reply / task actions') : h('input', { class: 'i-input', type: 'text', disabled: true, 'aria-label': 'message input (read-only)', placeholder: 'read-only viewer: /commands and messages are disabled' }),
       h('div', { class: 'i-statusbar' }, h('span', {}, `${connection} · ${S.board.name} as ${S.me?.handle}`),
         h('span', {}, 'Ctrl-K jump'), h('span', {}, `${S.channels.length} channels`)));
     root.replaceChildren(h('div', { class: 'i-desk' }, win));

@@ -1002,7 +1002,56 @@ async function op17024ProjectionRetryCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-024 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17012IrcContextCase() {
+ let assertions=0, fixtures=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-012: ${name}`,ok)};
+ for (const variant of ['initial fallback','stale other-channel topic','status','no readable thread']) {
+  await freshIdentityFixture(); fixtures++;
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-context';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");
+   await ev('window.__op.mountIrcContext()');
+   if (variant!=='initial fallback') {
+    await ev("document.querySelector('.i-link[data-thread=stale]').click()");
+    assert(`${variant}: divider selects explicit topic`,await ev("document.querySelector('.i-topic').textContent.includes('Moved topic')"));
+   }
+   if (variant==='stale other-channel topic') await ev("{const C=window.__op.ircContext;C.stale.channel_path='elsewhere';C.view.render(C.st);}");
+   if (variant==='status') await ev("document.querySelector('.i-tab[data-channel=status]').click()");
+   if (variant==='no readable thread') await ev("{const C=window.__op.ircContext;C.S.threads.clear();C.S.tasks.clear();C.view.render(C.st);}");
+   const hasThread=variant==='initial fallback'||variant==='stale other-channel topic';
+   assert(`${variant}: topic displays resolved context`,await ev(hasThread?"document.querySelector('.i-topic a').getAttribute('href').endsWith('t=th')":"!document.querySelector('.i-topic a')"));
+   assert(`${variant}: fresh fixture has no writes`,await count()===0);
+   await ev("document.querySelector('.i-input').click()");
+   await sleep(250);
+   assert(`${variant}: event matches displayed thread`,await ev(`window.__op.ircOpened.length===1 && window.__op.ircOpened[0].board==='brd_test' && window.__op.ircOpened[0].ch===${JSON.stringify(variant==='status'?'status':'ops')} && window.__op.ircOpened[0].t===${hasThread?"'th'":'null'}`));
+   if (hasThread) {
+    if (await ev("window.__op.ircOpened.at(-1).t==='th'")) await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
+    const selected=await ev("document.querySelector('.op-workspace select[aria-label=Thread]')?.value==='th' && !!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
+    assert(`${variant}: task controls select displayed task`,selected);
+    if (selected) {
+     await click('Assign to myself');
+     assert(`${variant}: confirmation names displayed task`,await ev("document.querySelector('.op-confirm').textContent.includes(window.__op.task.title) && document.querySelector('.op-confirm').textContent.includes('Channel: ops')"));
+     assert(`${variant}: confirmation sends nothing before approval`,await count()===0);
+     await confirm('Assign to @alice');
+     assert(`${variant}: confirmed write targets displayed task`,await ev("window.__op.writes.length===1 && window.__op.writes[0].path==='/v1/boards/brd_test/tasks/t/assignee' && window.__op.writes[0].body.assignee_actor_id==='a'"));
+    }
+   } else {
+    if (await ev("window.__op.ircOpened.at(-1).t===null")) await until("!!document.querySelector('.op-workspace textarea')");
+    assert(`${variant}: new-thread composer selects no task`,await ev("document.querySelector('.op-workspace select[aria-label=Thread]')?.value==='' && !document.querySelector('.op-workspace [aria-label=\"Task actions\"]') && [...document.querySelectorAll('.op-workspace h3')].some(e=>e.textContent==='New thread')"));
+   }
+   assert(`${variant}: opening context sends no unintended writes`,await count()===(hasThread && await ev("window.__op.task.assignee_actor_id==='a'")?1:0));
+  } finally {
+   if (await ev("!!document.querySelector('.op-workspace')")) await click('Close');
+   await ev('window.__op.disposeIrcContext()');
+   await ev("document.querySelector('#forget').click()");
+   await until("!document.querySelector('#login').hidden");
+  }
+ }
+ assert('all four fresh variants executed nonzero assertions',fixtures===4 && assertions>=23);
+ assert('no browser exceptions',errors.length===0);
+ console.log(`OP17-012 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
+}
+const operatorCases = new Map([['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

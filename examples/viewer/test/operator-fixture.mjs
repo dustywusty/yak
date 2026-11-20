@@ -113,6 +113,32 @@ export function operatorFixture() {
     return new Response(status === 204 ? null : fault.startsWith('truncated') ? '{"claim":' : '{broken', { status });
   };
 
+  // OP17-012: controlled IRC projection, separate from the operator API reads.
+  T.mountIrcContext = async () => {
+    const {irc} = await import('/irc.js');
+    const stale = {...thread,id:'stale',title:'Moved topic',channel_path:'ops'};
+    const S = {board:{id:B,name:'test'},me:actors[0],channels:[{path:'ops'}],
+      threads:new Map([[stale.id,stale],[thread.id,thread]]),
+      tasks:new Map([[task.id,task]]),actors:new Map(actors.map(a=>[a.id,a]))};
+    const st = {S,thread:id=>S.threads.get(id),tasks:()=>[...S.tasks.values()],
+      messages:id=>id==='stale'?[{...root,thread_id:id,created_at:'2020-01-01T00:00:00Z'}]:id===thread.id?[root]:[],
+      actor:id=>S.actors.get(id),handle:id=>S.actors.get(id)?.handle || id || '?',
+      via:()=>'',num:id=>id,labels:()=>thread.labels};
+    document.querySelector('#skin').hidden = false;
+    const view = irc(document.querySelector('#skin'),{threadHref:id=>`#/b/${B}?t=${id}`});
+    T.ircContext = {S,st,view,stale};
+    T.ircOpened = [];
+    T.captureIrcOpen = e => T.ircOpened.push({...e.detail});
+    window.addEventListener('yak-operator-open',T.captureIrcOpen);
+    view.render(st);
+  };
+  T.disposeIrcContext = () => {
+    T.ircContext?.view.dispose();
+    window.removeEventListener('yak-operator-open',T.captureIrcOpen);
+    document.querySelector('#skin').replaceChildren();
+    document.querySelector('#skin').hidden = true;
+  };
+
   // OP17-010: complete actor provenance and independently controlled store pages.
   T.enableStorePagination = () => {
     const base = window.fetch;
