@@ -1,4 +1,4 @@
-/* Viewer skins: shared pieces, then Board (w-), IRC (i-). */
+/* Viewer skins: shared pieces, then Lanes (w-), IRC (i-). */
 
 .skin { flex: 1; min-height: 0; overflow-y: auto; }
 .skin .pad { padding: 1rem 16px; }
@@ -22,7 +22,7 @@ button.ro { cursor: not-allowed; opacity: .55; }
 .jump li.sel { background: #2b3650; }
 .jump .hint { color: #8b8d96; }
 
-/* ---------- Classic Board ---------- */
+/* ---------- Classic Lanes ---------- */
 .skin-board {
   --w-fg: #172b4d; --w-mute: #526173; --w-line: #c4c9d0;
   --t-side: #f3f5f7; --t-line: #d1d7de; --t-mute: #526173; --t-acc: #075985;

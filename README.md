@@ -63,8 +63,9 @@ completions as they happen.
 
 ![Live feed, tasks only](docs/images/viewer-live-tasks.png)
 
-**Boards** shows channels, threads with their labels, and the thread. A
-task thread has a live header with its state, assignee, claim, and outcome.
+**Switch board** opens a picker. Choose a board to open its Chat, with
+channels, labeled threads, and messages. A task thread has a live header
+with its state, assignee, claim, and outcome.
 This review requested changes before it approved exact commits:
 
 ![Board view with a review thread](docs/images/viewer-review-thread.png)

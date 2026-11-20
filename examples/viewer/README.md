@@ -45,14 +45,14 @@ It checks these paths:
 - A broken event: its row is skipped and the error is shown once, while
   later events still appear.
 - Old deep links: `sub=0` and `label=` are honored.
-- The Board filter lists pick up a channel that is created later.
+- The Lanes filter lists pick up a channel that is created later.
 - Every snapshot session is deleted, even when the view changes while the
   snapshot is still loading.
 - Activity clocks across renewal, new claims, task state and reason changes.
 - Multiple claims, dependency completion, private prerequisite hints, release,
   expiry reads, disconnect, reconnect, and snapshot recovery.
 - Keyboard focus during live updates and layout at 390 px.
-- Classic Board routes, exact state lists, labels, prerequisite links, clocks,
+- Classic Lanes routes, exact state lists, labels, prerequisite links, clocks,
   independent scrolling, live focus and mobile horizontal navigation.
 - Full-viewport IRC chrome, embedded navigation/logout, channel keyboard jump,
   live transcript focus, scroll retention and mobile side panes.
@@ -135,8 +135,10 @@ from its continuation cursor, with the recovery rules in
 [Activity](#activity). Unread counts and "last seen" times are kept in this
 browser only (`localStorage`); the first visit starts them at zero.
 
-The board list is at `#/boards`. The header links (Chat, Boards, Board, IRC) show on every page except the default view, which has the same
-links at the bottom of its sidebar.
+**Switch board** opens the board picker at `#/boards`. Choose a board to open
+its Chat. Chat remains the default view.
+The header links (Chat, Switch board, Lanes, IRC) show on every page except
+the default view, which has the same links at the bottom of its sidebar.
 
 All message text goes into the page as text nodes, never as HTML. Times show
 in the local time zone. The tooltip shows the UTC value from the server.
@@ -209,15 +211,16 @@ rules above. Lease countdowns use the server clock: the offset comes from
 the `Date` header of `GET /v1/server`. The countdown is for display only.
 Avatars are generated initials; there are no photos.
 
-### Classic Board (`#/board`)
+### Classic Lanes (`#/board`)
 
 A separate task board with compact gray lists, white cards and a teal backdrop.
-Chat remains the default. Old `#/wall` links still open Board.
+Chat remains the default. Old `#/wall` links still open Lanes.
 The screenshots use the committed synthetic API and fake token, with no live board data.
+They were captured before the view was renamed from Board to Lanes.
 
-![Classic Board](../../docs/images/viewer-board-classic.png)
+![Classic Lanes](../../docs/images/viewer-board-classic.png)
 
-<img src="../../docs/images/viewer-board-classic-mobile.png" alt="Classic Board at 390 px" width="260">
+<img src="../../docs/images/viewer-board-classic-mobile.png" alt="Classic Lanes at 390 px" width="260">
 
 | Part | Yak data |
 |---|---|
@@ -295,7 +298,7 @@ pages) shows **live**, **reconnecting**, or **resyncing**.
 ## Design notes
 
 - The snapshot and the event stream use no filter (the whole board). Views
-  filter on the client (for example the Board filters). A filtered
+  filter on the client (for example the Lanes filters). A filtered
   event stream is bound to its filter (EVT-009), so a filter change would
   need a new snapshot. One board-wide stream avoids that.
 - `channel.created` events carry `caller_capabilities: []`, so the page
