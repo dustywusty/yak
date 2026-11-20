@@ -1054,41 +1054,56 @@ async function op17012IrcContextCase() {
 async function op17014IrcProvenanceCase() {
  let assertions=0,fixtures=0;
  const assert=(name,ok,detail='')=>{assertions++;check(`OP17-014: ${name}`,ok,detail)};
- for (const type of ['snapshot','task.created','task.claimed','task.completed','task.failed']) {
+ for (const variant of ['snapshot','task.created','task.claimed','task.completed','task.failed','task.completed conflicting','task.failed conflicting']) {
+  const [type,conflicting]=variant.split(' ');
+  const detail=type==='task.completed'?'recorded summary':'recorded failure';
+  const recorded=text=>text.includes(detail)&&!['mutable outcome substitute','mutable reason substitute','false top-level summary','false top-level reason'].some(value=>text.includes(value));
   await freshIdentityFixture(); fixtures++;
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-provenance';document.querySelector('#login-form').requestSubmit()");
    await until("document.body.dataset.operator==='true'");
    await ev('window.__op.mountIrcProvenance()');
    const before=await ev("document.querySelector('.i-text').textContent");
-   assert(`${type}: snapshot has no invented task history`,!['opened task','claimed task','completed task','mutable outcome substitute'].some(t=>before.includes(t)),before);
+   assert(`${variant}: snapshot has no invented task history`,!['opened task','claimed task','completed task','mutable outcome substitute'].some(t=>before.includes(t)),before);
    const messages=await ev("[...document.querySelectorAll('.i-text .i-line')].filter(e=>e.querySelector('.i-nick')).map(e=>e.textContent)");
-   assert(`${type}: visible delegated message retains both kinds`,messages.some(t=>t.includes('visible delegated message')&&t.includes('bot')&&t.includes('(agent) for alice (human)')));
-   assert(`${type}: deleted delegated message retains both kinds`,messages.some(t=>t.includes('message was deleted')&&t.includes('bot')&&t.includes('(agent) for alice (human)')));
-   assert(`${type}: deleted content stays hidden`,!before.includes('hidden deleted content'));
+   assert(`${variant}: visible delegated message retains both kinds`,messages.some(t=>t.includes('visible delegated message')&&t.includes('bot')&&t.includes('(agent) for alice (human)')));
+   assert(`${variant}: deleted delegated message retains both kinds`,messages.some(t=>t.includes('message was deleted')&&t.includes('bot')&&t.includes('(agent) for alice (human)')));
+   assert(`${variant}: deleted content stays hidden`,!before.includes('hidden deleted content'));
    if (type!=='snapshot') {
-    await ev(`{const T=window.__op,C=T.ircContext,e=T.ircTaskEvent(${JSON.stringify(type)});C.view.event(e,C.st);C.view.event(e,C.st);C.view.render(C.st);}`);
+    await ev(`{const T=window.__op,C=T.ircContext,e=T.ircTaskEvent(${JSON.stringify(type)},true,${!!conflicting});C.view.event(e,C.st);C.view.event(e,C.st);C.view.render(C.st);}`);
     const rows=await ev("[...document.querySelectorAll('.i-text .i-line')].filter(e=>e.textContent.includes('credential')).map(e=>e.textContent)");
-    assert(`${type}: event appears once with actor, principal kinds and credential`,rows.length===1&&rows[0].includes('bot (agent) for alice (human)')&&rows[0].includes('synthetic-event-credential'),JSON.stringify(rows));
+    assert(`${variant}: event appears once with actor, principal kinds and credential`,rows.length===1&&rows[0].includes('bot (agent) for alice (human)')&&rows[0].includes('synthetic-event-credential'),JSON.stringify(rows));
     const time=await ev("new Date('2026-11-20T17:43:00Z').toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'})");
-    assert(`${type}: uses recorded event time`,rows.length===1&&rows[0].startsWith('['+time+']'));
+    assert(`${variant}: uses recorded event time`,rows.length===1&&rows[0].startsWith('['+time+']'));
     const action={'task.created':'opened task','task.claimed':'claimed task','task.completed':'completed task','task.failed':'failed task'}[type];
-    assert(`${type}: corresponding task action displayed`,rows.length===1&&rows[0].includes(action));
-    assert(`${type}: never substitutes mutable owner/outcome or approval`,rows.length===1&&!rows[0].includes('mutable outcome substitute')&&!rows[0].includes('* alice (human) '+action)&&!rows[0].includes('approved'));
+    assert(`${variant}: corresponding task action displayed`,rows.length===1&&rows[0].includes(action));
+    if (type==='task.completed'||type==='task.failed')
+     assert(`${variant}: channel displays only recorded outcome detail`,rows.length===1&&recorded(rows[0]),JSON.stringify(rows));
+    assert(`${variant}: never substitutes mutable owner/outcome or approval`,rows.length===1&&!rows[0].includes('mutable outcome substitute')&&!rows[0].includes('* alice (human) '+action)&&!rows[0].includes('approved'));
     await ev("document.querySelector('.i-tab[data-channel=status]').click()");
     const status=await ev("document.querySelector('.i-text').textContent");
-    assert(`${type}: status preserves provenance once`,status.split('synthetic-event-credential').length===2&&status.includes('bot (agent) for alice (human)'));
+    assert(`${variant}: status preserves provenance once`,status.split('synthetic-event-credential').length===2&&status.includes('bot (agent) for alice (human)'));
+    if (type==='task.completed'||type==='task.failed')
+     assert(`${variant}: Status displays only recorded outcome detail`,recorded(status),status);
     await ev("document.querySelector('.i-tab[data-channel=ops]').click();{const T=window.__op,C=T.ircContext;C.view.event(T.ircTaskEvent('task.blocked',false),C.st);C.view.render(C.st);}");
-    assert(`${type}: ordinary direct task event remains visible`,await ev("[...document.querySelectorAll('.i-act')].some(e=>e.textContent.includes('alice (human) blocked task: recorded reason')&&!e.textContent.includes(' for '))"));
+    assert(`${variant}: ordinary direct task event remains visible`,await ev("[...document.querySelectorAll('.i-act')].some(e=>e.textContent.includes('alice (human) blocked task: recorded reason')&&!e.textContent.includes(' for '))"));
    }
-   assert(`${type}: read-only projection sends no writes`,await count()===0);
+   if (type==='task.completed'||type==='task.failed') {
+    await ev(`{const T=window.__op,C=T.ircContext;C.view.status('resyncing',C.st);T.task.outcome={...T.task.outcome,summary:'mutable outcome substitute after resync',reason:'mutable reason substitute after resync'};C.view.render(C.st);C.view.event(T.ircTaskEvent(${JSON.stringify(type)},true,${!!conflicting}),C.st);C.view.status('live',C.st);}`);
+    const after=await ev("[...document.querySelectorAll('.i-text .i-line')].filter(e=>e.textContent.includes('bot (agent) for alice (human)')&&e.textContent.includes('credential')).map(e=>e.textContent)");
+    assert(`${variant}: resync render retains recorded channel outcome once`,after.length===1&&recorded(after[0]),JSON.stringify(after));
+    await ev("document.querySelector('.i-tab[data-channel=status]').click()");
+    const afterStatus=await ev("document.querySelector('.i-text').textContent");
+    assert(`${variant}: resync render retains recorded Status outcome once`,recorded(afterStatus)&&afterStatus.split(detail).length===2,afterStatus);
+   }
+   assert(`${variant}: read-only projection sends no writes`,await count()===0);
   } finally {
    await ev('window.__op.disposeIrcContext()');
    await ev("document.querySelector('#forget').click()");
    await until("!document.querySelector('#login').hidden");
   }
  }
- assert('all variants executed meaningful assertions',fixtures===5&&assertions>=49);
+ assert('all variants executed meaningful assertions',fixtures===7&&assertions>=87);
  assert('no browser exceptions',errors.length===0,JSON.stringify(errors));
  console.log(`OP17-014 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }

@@ -8,8 +8,8 @@ const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minu
 // Task history comes only from events received during this view; no snapshot backfill.
 const LOGGED = {
   'task.created': () => 'opened task', 'task.claimed': () => 'claimed task',
-  'task.completed': (p) => `completed task${p.summary ? `: ${p.summary}` : ''}`,
-  'task.failed': (p) => `failed task${p.reason ? `: ${p.reason}` : ''}`,
+  'task.completed': (p) => `completed task${p.outcome?.summary ? `: ${p.outcome.summary}` : ''}`,
+  'task.failed': (p) => `failed task${p.outcome?.reason ? `: ${p.outcome.reason}` : ''}`,
   'task.blocked': (p) => `blocked task: ${p.reason ?? ''}`, 'task.unblocked': (p) => `unblocked task: ${p.reason ?? ''}`,
   'task.released': (p) => `released task (${p.reason ?? 'no reason'})`, 'task.claim_expired': () => 'let the claim on task expire',
   'task.reopened': (p) => `reopened task: ${p.reason ?? ''}`, 'task.became_ready': () => 'task is ready (dependencies satisfied)',
