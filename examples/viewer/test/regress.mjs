@@ -21,13 +21,13 @@ const CHROME = process.env.CHROME || ['/Applications/Google Chrome.app/Contents/
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync);
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-if (!CHROME) { console.error('Chrome not found; set CHROME=/path/to/chrome'); process.exit(2); }
+if (!CHROME && !process.env.VIEWER_PREVIEW) { console.error('Chrome not found; set CHROME=/path/to/chrome'); process.exit(2); }
 
 // ---------- fake Yak API, installed in the page before any script runs ----------
 const FAKE = () => {
   const B = 'brd_test', now = Date.now(), iso = (ms) => new Date(now + ms).toISOString();
   const actor = (id, handle, kind, owner = null) => ({ id, kind, handle, display_name: handle, owner_actor_id: owner, server_admin: false, created_at: iso(-9e6) });
-  const actors = [actor('act_alice', 'alice', 'human'), actor('act_bot', 'bot-a', 'agent', 'act_alice'), actor('act_view', 'viewer', 'service')];
+  const actors = [actor('act_alice', 'alice', 'human'), actor('act_bot', 'bot-a', 'agent', 'act_alice'), actor('act_view', 'viewer', 'service'), actor('act_bot_b', 'bot-b', 'agent')];
   const chan = (path) => ({ id: `chn_${path.replace('/', '_')}`, board_id: B, path, access_mode: 'inherited', created_by_actor_id: 'act_alice', created_at: iso(-9e6), caller_capabilities: ['read'] });
   const msg = (id, thread, path, seq, text, labels = {}) => ({ id, board_id: B, thread_id: thread, channel_id: `chn_${path.replace('/', '_')}`, channel_path: path, seq, is_root: seq === 1,
     author_actor_id: seq === 1 ? 'act_alice' : 'act_bot', attribution: { credential_id: 'c', run_id: null }, reply_to_message_id: null, text, labels,
@@ -38,7 +38,29 @@ const FAKE = () => {
     thread('thr_review', 'review', 'Review thread', { status: 'open' }, 1)];
   const msgs = [msg('thr_ops_m1', 'thr_ops', 'ops', 1, 'ops root'), msg('thr_ops_m2', 'thr_ops', 'ops', 2, 'ops reply'),
     msg('thr_deploy_m1', 'thr_deploy', 'ops/deploy', 1, 'deploy root'), msg('thr_review_m1', 'thr_review', 'review', 1, 'review root', { status: 'open' })];
-  const T = window.__fake = { channels: ['ops', 'ops/deploy', 'review'], queue: [], calls: {}, posts: 0, deletes: 0, slowSnapshot: 0 };
+  const claim = (id, minutes) => ({ id: `clm_${id}`, actor_id: 'act_bot', status: 'active', acquired_at: iso(-minutes * 60000), expires_at: iso(120000), lease_seconds: 300 });
+  const task = (id, state, minutes, extra = {}) => ({ id, board_id: B, title: id.replace('task_', ''), thread_id: 'thr_ops', channel_path: 'ops', revision: 1,
+    state, created_at: iso(-9e6), state_changed_at: iso(-minutes * 60000), updated_at: iso(0), assignee_actor_id: 'act_bot', current_claim: null, dependencies: [], ...extra });
+  const tasks = [task('task_work', 'claimed', 8, { current_claim: claim('work', 8) }),
+    task('task_second', 'claimed', 3, { current_claim: claim('second', 3) }),
+    task('task_wait', 'waiting', 20, { dependencies: [{ task_id: 'task_review', state: 'ready' }, { task_id: 'task_owner', state: 'blocked' }] }),
+    task('task_review', 'ready', 5, { assignee_actor_id: 'act_alice', thread_id: 'thr_review' }),
+    task('task_owner', 'blocked', 90, { assignee_actor_id: 'act_alice', thread_id: 'thr_deploy', block: { reason: 'waiting on @alice' } }),
+    task('task_hidden', 'waiting', 2, { assignee_actor_id: null, unreadable_dependencies_pending: true })];
+  // Each task has its own thread, just as on a real board. Keep the old
+  // ops/review fixtures for the channel-filter regression checks below.
+  for (const t of tasks) {
+    if (!['task_owner', 'task_review'].includes(t.id)) {
+      t.thread_id = `thr_${t.id.slice(5)}`;
+      t.channel_path = 'activity';
+      threads.push(thread(t.thread_id, 'activity', t.title, {}, 1));
+      msgs.push(msg(`${t.thread_id}_m1`, t.thread_id, 'activity', 1, t.title));
+    }
+    threads.find((th) => th.id === t.thread_id).task_id = t.id;
+  }
+  threads.find((t) => t.id === 'thr_review').labels.kind = 'review';
+  threads.find((t) => t.id === 'thr_deploy').labels.needs = 'owner';
+  const T = window.__fake = { channels: ['ops', 'ops/deploy', 'review', 'activity'], queue: [], calls: {}, posts: 0, deletes: 0, slowSnapshot: 0, resync: false, tasks, disconnected: false, taskReads: 0 };
   const json = (body, status = 200) => new Response(body == null ? null : JSON.stringify(body), { status, headers: { 'Content-Type': status >= 400 ? 'application/problem+json' : 'application/json' } });
   const count = (k) => { T.calls[k] = (T.calls[k] || 0) + 1; };
   window.fetch = async (url, opts = {}) => {
@@ -57,9 +79,13 @@ const FAKE = () => {
     if (/\/snapshots\/snp_\w+$/.test(p)) {
       if (T.slowSnapshot) await new Promise((r) => setTimeout(r, T.slowSnapshot));
       const items = threads.flatMap((t) => [{ type: 'thread', id: t.id, data: t }, ...msgs.filter((x) => x.thread_id === t.id).map((x) => ({ type: 'message', id: x.id, data: x }))]);
+      items.push(...T.tasks.map((t) => ({ type: 'task', id: t.id, data: t })));
       return json({ snapshot: { id: 'snp' }, items, next_page_token: null, continuation_cursor: 'c1.store' });
     }
+    if (/\/tasks\/task_\w+$/.test(p)) { T.taskReads++; return json(T.tasks.find((t) => p.endsWith(t.id))); }
     if (p.endsWith('/events')) {
+      if (T.disconnected) throw new TypeError('synthetic disconnect');
+      if (T.resync && u.searchParams.get('cursor') !== 'c1.feed') { T.resync = false; return json({ code: 'cursor_expired' }, 410); }
       const cursor = u.searchParams.get('cursor');
       if (!cursor) return json({ events: [], next_cursor: 'c1.feed', caught_up: true, timed_out: false });
       const who = cursor === 'c1.feed' ? 'feed' : 'store';
@@ -73,6 +99,11 @@ const FAKE = () => {
     if (/\/threads\/[\w]+$/.test(p)) { const t = threads.find((x) => p.endsWith(x.id)); return t ? json({ thread: t, root_message: msgs.find((x) => x.id === t.root_message_id) }) : json({ code: 'not_found', status: 404, detail: 'x' }, 404); }
     return json({ code: 'not_found', status: 404, detail: `fake: no route ${m} ${p}` }, 404);
   };
+  window.__taskEvent = (id, patch, type = 'task.updated') => {
+    const i = T.tasks.findIndex((t) => t.id === id);
+    T.tasks[i] = { ...T.tasks[i], ...patch, revision: T.tasks[i].revision + 1 };
+    T.queue.push({ __for: 'store', id: `evt_${id}_${T.tasks[i].revision}`, type, payload: { task: T.tasks[i] } });
+  };
   // Helper for checks: a message.created event for both loops.
   window.__msgEvent = (id, text, forWho) => ({ __for: forWho, id, cursor: 'c1.x', type: 'message.created', board_id: B, actor_id: 'act_bot', credential_id: null, run_id: null,
     resource: { type: 'message', id, revision: 1 }, channel_id: 'chn_ops', thread_id: 'thr_ops', recorded_at: new Date().toISOString(), effective_at: new Date().toISOString(),
@@ -83,11 +114,15 @@ const FAKE = () => {
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname.replace(/^\/$/, '/index.html');
   if (path.includes('..')) { res.writeHead(400).end(); return; }
-  try { const body = await readFile(join(STATIC, path)); res.writeHead(200, { 'Content-Type': TYPES[extname(path)] || 'application/octet-stream' }).end(body); }
+  if (process.env.VIEWER_PREVIEW && path === '/fixture.js') { res.writeHead(200, { 'Content-Type': 'text/javascript' }).end(`(${FAKE})(); sessionStorage.setItem('yak-viewer-token', 'yak.test.token');`); return; }
+  try { let body = await readFile(join(STATIC, path));
+    if (process.env.VIEWER_PREVIEW && path === '/index.html') body = body.toString().replace('<script type="module"', '<script src="/fixture.js"></script><script type="module"');
+    res.writeHead(200, { 'Content-Type': TYPES[extname(path)] || 'application/octet-stream' }).end(body); }
   catch { res.writeHead(404).end(); }
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
+if (process.env.VIEWER_PREVIEW) { console.log(`Synthetic viewer: ${ORIGIN}`); await new Promise(() => {}); }
 const profile = await mkdtemp(join(tmpdir(), 'viewer-regress-'));
 const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
 const wsUrl = await new Promise((resolve, reject) => {
@@ -134,6 +169,61 @@ try {
   let s = await state();
   check('lands on Activity with the feed in the page', s.term && s.liveInDoc, JSON.stringify(s));
   check('feed status is live', s.status.startsWith('live'), s.status);
+
+  const activity = () => ev(`document.querySelector('.t-agent-activity')?.textContent || ''`);
+  check('prominent working and waiting summary', (await activity()).includes('Working now') && (await activity()).includes('Waiting'), await activity());
+  check('counts actors separately from multiple claims', (await activity()).includes('1 working actor') && (await activity()).includes('2 claimed tasks'), await activity());
+  check('unclaimed agents are named without a process-status guess', (await activity()).includes('No active claimed task: bot-b'), await activity());
+  check('longest waits stand out', await ev(`getComputedStyle(document.querySelector('[data-activity-task="task_owner"] time')).color !== getComputedStyle(document.querySelector('[data-activity-task="task_wait"] time')).color`));
+  check('working clock uses acquired_at', (await activity()).includes('Working for 8m'), await activity());
+  const windowActivity = await activity();
+  check('waits show assignee, reason, dependency and time in state', ['bot-a', 'review', 'waiting on @alice', '20m in waiting'].every((t) => (windowActivity || '').includes(t)), '');
+  await ev(`window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() + 300000).toISOString() }, updated_at: new Date().toISOString() }, 'task.claim_renewed'); 1`);
+  await sleep(700);
+  check('renewal does not reset working clock', (await activity()).includes('Working for 8m'), await activity());
+  await ev(`window.__taskEvent('task_owner', { updated_at: new Date().toISOString(), block: { reason: 'Changed reason' } }); 1`);
+  await sleep(700);
+  check('reason update keeps duration labeled as time in state', (await activity()).includes('1h 30m in blocked') && (await activity()).includes('Changed reason'), await activity());
+  await ev(`window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, id: 'clm_new', acquired_at: new Date(Date.now() - 120000).toISOString() } }, 'task.claimed'); 1`);
+  await sleep(700);
+  check('new claim uses new acquired_at', (await ev(`document.querySelector('[data-activity-task="task_work"] time').textContent`)).includes('Working for 2m'), await activity());
+  await ev(`window.__taskEvent('task_wait', { state: 'blocked', state_changed_at: new Date().toISOString(), block: { reason: 'Check results' } }, 'task.blocked'); 1`);
+  await sleep(700);
+  check('state transition resets state clock and shows explicit reason', /[0-2]s in blocked/.test(await activity()) && (await activity()).includes('Check results'), await activity());
+  await ev(`window.__taskEvent('task_review', { state: 'completed' }, 'task.completed'); 1`);
+  await sleep(700);
+  check('completed dependency no longer shown as a wait cause', !(await ev(`document.querySelector('[data-activity-task="task_wait"] .a-reasons').textContent`)).includes('review'), await activity());
+  check('hidden prerequisite has no invented details', (await activity()).includes('Prerequisite pending (details not visible)'), await activity());
+  await ev(`document.querySelector('[data-activity-task="task_work"] a').focus(); window.__taskEvent('task_second', { updated_at: new Date().toISOString() }); 1`);
+  await sleep(700);
+  check('keyboard link focus survives live updates', await ev(`document.activeElement?.closest('[data-activity-task]')?.dataset.activityTask === 'task_work'`));
+  await cmd('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await cmd('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await sleep(400);
+  check('Enter opens focused task thread', await ev(`location.hash.includes('t=thr_work')`));
+  const ticking = await ev(`document.querySelector('[data-activity-task="task_wait"] time').textContent`);
+  await sleep(1200);
+  check('state timers tick without task events', ticking !== await ev(`document.querySelector('[data-activity-task="task_wait"] time').textContent`));
+  await ev(`window.__fake.disconnected = true; 1`);
+  await sleep(800);
+  check('disconnect marks last known data', (await activity()).includes('Last known'), await activity());
+  check('stale long waits use the last-known text color', await ev(`getComputedStyle(document.querySelector('[data-activity-task="task_owner"] time')).color === getComputedStyle(document.querySelector('.a-unclaimed')).color`));
+  const frozen = await ev(`document.querySelector('[data-activity-task="task_wait"] time').textContent`);
+  await sleep(1200);
+  check('disconnected elapsed clocks freeze', frozen === await ev(`document.querySelector('[data-activity-task="task_wait"] time').textContent`));
+  await ev(`window.__fake.disconnected = false; window.__taskEvent('task_second', { state: 'ready', current_claim: null }, 'task.released'); 1`);
+  await sleep(1800);
+  check('reconnect removes released claim', (await activity()).includes('1 claimed task') && !(await activity()).includes('Last known'), await activity());
+  await ev(`window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() - 1000).toISOString() } }); window.__fake.tasks[0] = { ...window.__fake.tasks[0], state: 'ready', current_claim: null, revision: 99 }; 1`);
+  await sleep(1500);
+  check('expired claim refresh uses authoritative task read', await ev(`window.__fake.taskReads > 0`) && (await activity()).includes('0 claimed tasks'), await activity());
+  const snapshotsBeforeResync = await ev(`window.__fake.posts`);
+  await ev(`window.__fake.resync = true; 1`);
+  await sleep(900);
+  check('resnapshot restores authoritative activity', await ev(`window.__fake.posts > ${snapshotsBeforeResync}`) && (await activity()).includes('0 claimed tasks') && !(await activity()).includes('Last known'), await activity());
+  const clockCases = await ev(`import('/agent-activity.js').then(({elapsed}) => [elapsed('bad', Date.now()), elapsed(new Date(60000).toISOString(), 0), elapsed(new Date(0).toISOString(), 3660000), elapsed(new Date(0).toISOString(), 90000000)])`);
+  check('duration formatting handles unknown, future, hours and days', JSON.stringify(clockCases) === JSON.stringify(['Time unknown', '0s', '1h 1m', '1d 1h']), JSON.stringify(clockCases));
+  check('claim absence never calls an agent idle or offline', (await activity()).includes('No active claimed task') && !/idle|offline/i.test(await activity()), await activity());
 
   // The reported path: Activity -> a channel (redraw drops #live) -> Activity.
   await go(`#/b/brd_test?ch=review`);
@@ -196,10 +286,16 @@ try {
   const f = await ev(`JSON.stringify({ posts: window.__fake.posts, deletes: window.__fake.deletes })`).then(JSON.parse);
   check('every snapshot session is deleted (R1)', f.deletes === f.posts, JSON.stringify(f));
 
+  await go('#/b/brd_test?v=activity');
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await sleep(300);
+  const mobile = await ev(`({ overflow: document.documentElement.scrollWidth > innerWidth, activity: document.querySelector('.t-agent-activity').getBoundingClientRect().height, chat: document.querySelector('.t-scroll').getBoundingClientRect().height })`);
+  check('390px layout keeps activity and chat usable without horizontal overflow', !mobile.overflow && mobile.activity >= 100 && mobile.chat >= 150, JSON.stringify(mobile));
+
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));
 } catch (e) {
-  check('test run', false, e.message);
+  check('test run', false, [e.message, ...errors].join(' | '));
 } finally {
   browser.close();
   chrome.kill();

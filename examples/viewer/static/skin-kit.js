@@ -123,7 +123,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   };
   const onChange = guard(change), onEvent = guard(event), onStatus = guard(status);
   const S = { board: null, actors: new Map(), channels: [], threads: new Map(), msgs: new Map(), tasks: new Map(),
-    order: [], me: null, cursor: null, seen: new Set(), events: 0 };
+    order: [], me: null, cursor: null, seen: new Set(), events: 0, lastSync: null };
   const abort = new AbortController();
   const B = `/v1/boards/${enc(boardId)}`;
   const get = (path, params) => api('GET', path, params, abort.signal);
@@ -226,6 +226,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
         if (!S.cursor) {
           onStatus('resyncing');
           await snapshot();
+          S.lastSync = now();
           onStatus('live');
           onChange();
         }
@@ -234,6 +235,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
         let changed = false;
         for (const ev of page.events) changed = apply(ev) || changed;
         S.cursor = page.next_cursor;
+        S.lastSync = now();
         onStatus('live');
         backoff = 1000;
         if (changed) onChange();
@@ -252,6 +254,23 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
       }
     }
   }
+
+  // Once display time passes expiry, ask for the effective server view.
+  // Do not invent a release from the browser clock (TASK-023..025).
+  const expiryReads = new Set(), expiryRetry = new Map();
+  const expiryTimer = setInterval(() => {
+    if (!S.cursor || abort.signal.aborted) return;
+    for (const t of S.tasks.values()) {
+      if (expiryReads.size >= 4) break;
+      if (t.state !== 'claimed' || !t.current_claim || Date.parse(t.current_claim.expires_at) > now()
+        || expiryReads.has(t.id) || (expiryRetry.get(t.id) || 0) > now()) continue;
+      expiryReads.add(t.id);
+      expiryRetry.set(t.id, now() + 10000);
+      get(`${B}/tasks/${enc(t.id)}`).then((r) => { putTask(r); onChange(); })
+        .catch((e) => { if (e.status === 401) onUnauthorized(); })
+        .finally(() => { expiryReads.delete(t.id); });
+    }
+  }, 1000);
 
   // ---- derived views ----
   const actor = (id) => S.actors.get(id);
@@ -272,6 +291,6 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const clockTimer = setInterval(syncClock, 60000);
   return {
     S, actor, handle, via, num, tasks, thread, messages, latest, labels, gated, blockers, settled,
-    stop: () => { abort.abort(); clearInterval(clockTimer); },
+    stop: () => { abort.abort(); clearInterval(clockTimer); clearInterval(expiryTimer); },
   };
 }

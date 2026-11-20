@@ -48,7 +48,16 @@ It checks these paths:
 - The Wall filter lists pick up a channel that is created later.
 - Every snapshot session is deleted, even when the view changes while the
   snapshot is still loading.
+- Activity clocks across renewal, new claims, task state and reason changes.
+- Multiple claims, dependency completion, private prerequisite hints, release,
+  expiry reads, disconnect, reconnect, and snapshot recovery.
+- Keyboard focus during live updates and layout at 390 px.
 - No uncaught exceptions or console errors.
+
+For a browser preview with the same synthetic API and fake token, run
+`VIEWER_PREVIEW=1 node examples/viewer/test/regress.mjs` and open the printed
+local URL. Stop the process when finished. This mode makes no API calls to
+a Yak server.
 
 `VIEWER_STATIC=<dir>` runs the check against another copy of `static/`, for
 example an older commit taken out with `git archive`.
@@ -88,6 +97,23 @@ client. It is dark by default; the sidebar has a light variant.
 | New divider | The first item newer than your last visit to that channel or thread |
 | Footer | Live status (`live`, `reconnecting`, `resyncing`), who you are, and key hints |
 | Composer | Shown disabled: the viewer is read-only |
+
+The **Working now / Waiting** area stays above the default chat pane on
+Activity, channels, mentions, and threads. It groups all current claims by
+actor and links each task to its thread. Working clocks start at
+`acquired_at`. Renewals do not reset them. Waiting rows show the assignee,
+explicit block reason, and links to unfinished prerequisites. Owner and
+review hints use explicit labels and assignment. Waiting clocks show time
+in the task state from `state_changed_at`, not time since a reason changed.
+Agents without a claim have **No active claimed task**. This says nothing
+about whether their processes are running.
+
+The summary marks disconnected or old data as **Last known** and freezes
+its clocks. After a claim reaches its displayed expiry, the viewer asks the
+API for its effective state. Until that read succeeds, the claim status
+stays unconfirmed. A browser clock does not release a claim. The summary
+has its own scroll area on narrow screens. Use Tab to reach its links or
+focus the area, then use the arrow keys to scroll.
 
 Keys: ↑/↓ (or k/j) move the selection, Enter opens the selected thread, Esc
 closes the thread, Ctrl-K (or Cmd-K) jumps to a channel or thread, `g a` and
