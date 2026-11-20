@@ -1,0 +1,101 @@
+# CI for pull requests to main and pushes to main. One job, `ci`, so it can
+# be a required check. It runs vet, unit tests, the reference tests with the
+# race detector against Postgres, and the full black-box conformance suite
+# against a server started in the job.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# The repository is private, so minutes are billed: a newer push to the
+# same ref cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        # Explicit bash adds -o pipefail, so `go test … | tee` fails the step.
+        shell: bash
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: abby
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: abby
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U abby"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      PGHOST: 127.0.0.1
+      PGUSER: abby
+      PGPASSWORD: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: Create databases
+        run: |
+          psql -d abby -c "CREATE DATABASE abby_ref"
+          psql -d abby -c "CREATE DATABASE abby_conf"
+
+      - name: Reference tests (race, Postgres)
+        env:
+          ABBY_TEST_DATABASE_URL: postgres://abby:ci@127.0.0.1:5432/abby_ref?sslmode=disable
+        run: |
+          go test -race -count=1 -v ./internal/... 2>&1 | tee ref.out
+          if grep -q -- '--- SKIP' ref.out; then echo "reference tests skipped"; exit 1; fi
+
+      - name: Start server (migrate, bootstrap admin, serve)
+        env:
+          ABBY_DATABASE_URL: postgres://abby:ci@127.0.0.1:5432/abby_conf?sslmode=disable
+        run: |
+          go build -o "$RUNNER_TEMP/abby" ./cmd/abby
+          "$RUNNER_TEMP/abby" migrate
+          "$RUNNER_TEMP/abby" admin bootstrap --handle admin > "$RUNNER_TEMP/admin.token"
+          echo "::add-mask::$(cat "$RUNNER_TEMP/admin.token")"
+          nohup "$RUNNER_TEMP/abby" serve --listen 127.0.0.1:18080 > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:18080/readyz && exit 0
+            sleep 1
+          done
+          echo "server not ready"; cat "$RUNNER_TEMP/server.log"; exit 1
+
+      - name: Conformance suite
+        run: |
+          export ABBY_CONFORMANCE_URL=http://127.0.0.1:18080
+          ABBY_CONFORMANCE_ADMIN_TOKEN=$(cat "$RUNNER_TEMP/admin.token")
+          export ABBY_CONFORMANCE_ADMIN_TOKEN
+          go test ./conformance/ -count=1 -v -timeout 900s 2>&1 | tee conformance.out
+          if grep -q -- '--- SKIP' conformance.out; then echo "conformance skipped tests"; exit 1; fi
+
+      - name: Server log
+        if: failure()
+        run: cat "$RUNNER_TEMP/server.log" || true

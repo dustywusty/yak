@@ -2015,10 +2015,11 @@ paths:
     post:
       operationId: renewClaim
       tags: [claims]
-      summary: Renew the active claim (L4, CLAIM-023). Changes neither task revision, epoch, execution nor state.
+      summary: Renew the active claim (L4, CLAIM-023). Increments the claim and task revisions; changes neither epoch, execution nor state.
       description: |
         Sets `expires_at` = now + lease_seconds (may shorten) and increments
-        the claim revision. claim_id must match the claim named by the proof
+        the claim revision. Without `lease_seconds` the claim keeps its
+        current lease length (CLAIM-020). claim_id must match the claim named by the proof
         (CLAIM-015). A replay returns the current claim view without renewing.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"

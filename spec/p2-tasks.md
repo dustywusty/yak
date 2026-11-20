@@ -259,15 +259,20 @@ any change to `completed` except root redaction.
 ### 7.3 Leases
 
 - **CLAIM-020** `lease_seconds` is optional on claim, claim-next, and
-  renew; the default is `limits.claim_lease_default_seconds`. A value
-  outside `[claim_lease_min_seconds, claim_lease_max_seconds]` MUST return
+  renew. On claim and claim-next the default is
+  `limits.claim_lease_default_seconds`. On renew the default is the
+  claim's current `lease_seconds`, so a renewal without a value keeps the
+  lease that the claimant chose. A value outside
+  `[claim_lease_min_seconds, claim_lease_max_seconds]` MUST return
   `400 validation_failed`. The server MUST NOT clamp silently.
 - **CLAIM-021** The server MUST sample authoritative time after it acquires
   the board lock and MUST compute `expires_at = now + lease_seconds`.
 - **CLAIM-022** A claim is active while `now < expires_at`. At or after
   `expires_at` every claimant operation MUST fail with `409 claim_lost`.
 - **CLAIM-023** Renew (L4) MUST set `expires_at = now + lease_seconds` and
-  increment the claim's `revision`. It MUST NOT change the task revision,
+  increment the claim's `revision`. Because the task view shows
+  `current_claim.expires_at`, renew MUST also increment the task
+  `revision` and set the task `updated_at` to `now`. It MUST NOT change the
   epoch, execution, or state. Renewal MAY shorten the lease.
 
 ### 7.4 Settlement
@@ -528,9 +533,9 @@ any change to `completed` except root redaction.
 - **TASK-081** Clients cannot create task events. Only operations emit
   them.
 - **TASK-082** Each task event MUST have `resource` = `{type: "task", id,
-  revision}` (task revision after the change), except
-  `task.claim_renewed`, whose resource is `{type: "claim", id, revision}`
-  (claim revision). `channel_id` and `thread_id` MUST be set.
+  revision}` (task revision after the change). This includes
+  `task.claim_renewed`; its claim revision is in `payload.claim.revision`.
+  `channel_id` and `thread_id` MUST be set.
 - **TASK-083** Task events are thread-scoped for filtering: the channel,
   subtree, thread, label (root labels, before and after, including
   `abby.task.state`), and type clauses apply; the author, mention, and text
@@ -586,7 +591,12 @@ projection of `dependencies`). Additional fields:
   time, projected per reader. Replay from the continuation cursor then
   reaches a consistent state: a later `task.claim_expired` for a lapse that
   the snapshot already showed carries the same revision, so consumers that
-  apply events by revision ignore it.
+  apply events by revision ignore it. Every change to the task's own
+  fields, including `current_claim` on renewal (CLAIM-023), increments the
+  task revision. So a client that keeps the view with the highest task
+  revision, and ignores a view with a lower revision, always has the newest
+  task fields. (`dependencies[].state` shows each prerequisite's state; it
+  follows the prerequisite's own revision, not this task's.)
 - **TASK-093** A snapshot with label filter `abby.task.state=<s>` MUST use
   the effective state at capture time.
 
@@ -786,7 +796,7 @@ script. New scenario IDs CT-029..CT-038 extend design §14.1.
 | CLAIM-001..003 | CT TestCT007ClaimRace (N parallel claimers, one winner, epochs strictly increase) |
 | CLAIM-004..005 | CT TestClaimFields; CT TestCT026BriefUpdateVsTerminal (expect_brief_revision) |
 | CLAIM-010..015 | CT TestCT008ExpiredProofRejected; CT TestCT038ProofHygiene |
-| CLAIM-020..023 | CT TestLeaseBounds (14 s and 301 s rejected; default 120 s); CT TestCT010RenewCancelCompleteRace |
+| CLAIM-020..023 | CT TestCT008ExpiredProofRejected (min − 1 and max + 1 rejected; default on claim); CT TestRenewKeepsLease (renew without `lease_seconds` keeps the claim's lease; task revision +1 per renewal); CT TestCT029LifecycleWalk (L4 renew: task revision +1, task resource); CT TestCT010RenewCancelCompleteRace |
 | CLAIM-030..033 | CT TestCT010RenewCancelCompleteRace; CT TestCompleteEvidenceRecorded |
 | CLAIM-040..042, CLAIM-044..045 | CT TestCT009LostResponses (lost claim response, lost completion response, replay after lapse) |
 | CLAIM-043 | REF TestClaimReplayMaterialEncrypted (ciphertext only; destroyed on end); OPS discovery shows `claim_proof_replay` matches key config |

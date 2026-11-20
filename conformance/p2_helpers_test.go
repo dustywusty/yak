@@ -327,11 +327,9 @@ func checkTaskEvents(t *testing.T, evs []J) {
 				t.Fatalf("%s payload has no task: %v", typ, e)
 			}
 			res := obj(e, "resource")
-			if typ == "task.claim_renewed" {
-				if res["type"] != "claim" || res["id"] != obj(pl, "claim")["id"] || res["revision"] != obj(pl, "claim")["revision"] {
-					t.Fatalf("task.claim_renewed resource %v, want claim resource", res)
-				}
-			} else if res["type"] != "task" || res["id"] != tk["id"] || res["revision"] != tk["revision"] {
+			// Every task event, task.claim_renewed included, names the
+			// task at its new revision (TASK-082, CLAIM-023).
+			if res["type"] != "task" || res["id"] != tk["id"] || res["revision"] != tk["revision"] {
 				t.Fatalf("%s resource %v, want {task,%v,%v}", typ, res, tk["id"], tk["revision"])
 			}
 			if str(e, "channel_id") == "" || str(e, "thread_id") == "" || e["thread_id"] != tk["thread_id"] {
