@@ -68,6 +68,9 @@ for g in json.load(sys.stdin)["grants"]:
 for role in coordinator implementer-a implementer-b reviewer; do
   ensure_grant "$(actor $role)" "*" "read,post,label"
 done
+for role in implementer-a implementer-b reviewer; do
+  ensure_grant "$(actor $role)" "*" "read,post,label,claim"
+done
 ensure_grant "$(actor coordinator)" "*" "read,post,label,channel_manage,task_manage"
 ensure_grant "$(actor viewer)" "*" "read"
 ADMIN_ID=$(adm me --json | py 'import sys,json;print(json.load(sys.stdin)["actor"]["id"])')
@@ -79,16 +82,35 @@ for c in roadmap spec server cli review ops; do
   [[ " $existing " == *" $c "* ]] || { adm channel create "$c" >/dev/null; echo "created channel $c"; }
 done
 
-# ---- per-actor credentials (issued once; files are never overwritten) ----
+# ---- per-actor credentials ----
+# Issued once. If an existing token is missing a required scope (for example
+# after P2 added `claim`), a replacement is issued first and the old
+# credential is revoked; nothing else changes.
+scopes_for() {
+  case $1 in
+    coordinator) echo read,post,label,channel_manage,task_manage ;;
+    implementer-a|implementer-b) echo read,post,label,claim ;;
+    reviewer) echo read,post,label,claim ;;
+    viewer) echo read ;;
+  esac
+}
 for role in coordinator implementer-a implementer-b reviewer viewer; do
   f=$SECRETS_DIR/$role.token
-  [[ -s $f ]] && continue
-  scopes=read,post,label
-  [[ $role == coordinator ]] && scopes=read,post,label,channel_manage,task_manage
-  [[ $role == viewer ]] && scopes=read
-  adm credential create --actor "$(actor $role)" --scopes "$scopes" --boards "$B" --label "build-abby $role" --expires 2160h > "$f"
-  chmod 600 "$f"
-  echo "issued credential for $role -> $f"
+  want=$(scopes_for $role)
+  old_cred=""
+  if [[ -s $f ]]; then
+    have=$(ABBY_TOKEN=$(cat "$f") "$A" me --json 2>/dev/null | py 'import sys,json
+d=json.load(sys.stdin); print(d["credential"]["id"]+" "+",".join(d["credential"]["scopes"]))' || true)
+    missing=$(py 'import sys
+have=set(sys.argv[2].split(",")) if sys.argv[2] else set()
+print(",".join(s for s in sys.argv[1].split(",") if s not in have and "*" not in have))' "$want" "${have#* }")
+    [[ -n $have && -z $missing ]] && continue
+    old_cred=${have%% *}
+  fi
+  adm credential create --actor "$(actor $role)" --scopes "$want" --boards "$B" --label "build-abby $role" --expires 2160h > "$f.new"
+  chmod 600 "$f.new" && mv "$f.new" "$f"
+  echo "issued credential for $role ($want) -> $f"
+  if [[ -n $old_cred ]]; then adm credential revoke "$old_cred" >/dev/null; echo "revoked superseded credential $old_cred"; fi
 done
 
 # ---- seed threads (found by root label seed=<key>; never edited) ----
