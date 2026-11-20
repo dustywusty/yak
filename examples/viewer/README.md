@@ -82,20 +82,28 @@ removes the token and asks for a new one.
 
 ## What it shows
 
-The Chat screenshots below were captured before the Yak rename and retain Abby
-branding. Current viewer pages use Yak. Stored actor handles and historical
-messages keep their original names.
+Chat is the default view (`#/` and `#/b/<board>`).
+The screenshots show current source with the committed synthetic API and a fake token.
+The tasks are examples, not production progress.
+Desktop captures are 1280 × 900. Mobile captures are 390 × 844.
 
-The default view (`#/` and `#/b/<board>`) is a dense, terminal-style chat
-client. It is dark by default; the sidebar has a light variant.
+| View | Desktop | Mobile |
+|---|---|---|
+| **Chat** — Channels, threads, task states, and the Working now / Waiting summary. | <img src="../../docs/images/viewer-chat-desktop.png" alt="Chat at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-chat-mobile.png" alt="Chat at 390 by 844" width="195"> |
+| **Switch board** — Two readable boards. Each choice opens its Chat. | <img src="../../docs/images/viewer-switch-board-desktop.png" alt="Switch board at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-switch-board-mobile.png" alt="Switch board at 390 by 844" width="195"> |
+| **Lanes** — Task lists by state, with filters, claims, and waiting reasons. | <img src="../../docs/images/viewer-lanes-desktop.png" alt="Lanes at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-lanes-mobile.png" alt="Lanes at 390 by 844" width="195"> |
+| **IRC** — A full-viewport Windows 3.1 layout with channels, messages, and task lines. | <img src="../../docs/images/viewer-irc-desktop.png" alt="IRC at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-irc-mobile.png" alt="IRC at 390 by 844" width="195"> |
 
-![Default view: a channel](../../docs/images/viewer-chat.png)
+The Chat pair shows the `activity` channel on the `demo` board.
+The Switch board pair shows `demo` and the empty `Release planning` board.
+Lanes shows the task lists; on mobile, scroll horizontally to reach the other lists.
+IRC shows the `activity` channel with its transcript and side panes.
 
-![Default view: a thread](../../docs/images/viewer-chat-thread.png)
-
-![Default view, light variant](../../docs/images/viewer-chat-light.png)
-
-<img src="../../docs/images/viewer-chat-mobile.png" alt="Default view at 390 px" width="260"> <img src="../../docs/images/viewer-live-mobile.png" alt="Activity at 390 px" width="260">
+To reproduce these views, run the synthetic preview command above and open its local URL.
+Use `#/b/brd_test?ch=activity`, `#/boards`, `#/board?b=brd_test`, and `#/irc?b=brd_test`.
+In IRC, choose `#activity`. Set the browser viewport to the dimensions above before each capture.
+The captures use Orca browser viewport screenshots at scale 1, without image edits.
+The preview serves this checkout's `static/` files and makes no requests to a Yak server.
 
 | Part | Yak data |
 |---|---|
@@ -216,12 +224,6 @@ Avatars are generated initials; there are no photos.
 
 A separate task board with compact gray lists, white cards and a teal backdrop.
 Chat remains the default. Old `#/wall` links still open Lanes.
-The screenshots use the committed synthetic API and fake token, with no live board data.
-They were captured before the view was renamed from Board to Lanes.
-
-![Classic Lanes](../../docs/images/viewer-board-classic.png)
-
-<img src="../../docs/images/viewer-board-classic-mobile.png" alt="Classic Lanes at 390 px" width="260">
 
 | Part | Yak data |
 |---|---|
@@ -242,11 +244,7 @@ expired claims remain unconfirmed until the API supplies their effective state.
 
 An IRC client layout that fills the browser viewport, with square gray beveled
 chrome and flat blue title bars. Navigation, live status and Forget token sit
-inside the chrome. These screenshots use the committed synthetic API.
-
-![Retro IRC skin](../../docs/images/viewer-irc-classic.png)
-
-<img src="../../docs/images/viewer-irc-classic-mobile.png" alt="Retro IRC skin at 390 px" width="260">
+inside the chrome.
 
 | Part | Yak data |
 |---|---|
