@@ -42,3 +42,36 @@ The live upgrade, board rename and GitHub repository rename remain operational
 steps for the coordinator after independent review. This evidence does not
 claim those operations happened. New repository URLs become available when
 the repository is renamed; external documentation URLs were not checked.
+
+## Follow-up: predecessor Compose environment
+
+Independent review found that the renamed Compose file supplied only
+`YAK_DATABASE_URL`. The real P1 image `abby:coord-f7bd448` requires
+`ABBY_DATABASE_URL`. Running the upgrade gate reproduced migration exit 1;
+the container log said `abby: ABBY_DATABASE_URL is required`.
+
+Compose now gives both images equivalent database, listen and role settings.
+A new `python3 scripts/check-compose.py` CI step checks legacy-only settings,
+current-only settings and new-setting precedence. It verifies the actual
+rendered environment for both the migration and API services.
+
+The actual gate command is:
+
+```sh
+DOCKER_CONTEXT=desktop-linux P1_IMAGE=abby:coord-f7bd448 \
+  WORK=/tmp/yak-predecessor-gate-final-a PORT=18383 scripts/p2-gate.sh
+```
+
+The predecessor image digest is
+`sha256:14ce165cabdfca311177c9062e61ab8d74add4c401fccd5802c30aa43cde6431`.
+It advertises `abby.p1.core`; the candidate advertises `yak.p1.core` and
+`yak.p2.tasks`. The gate creates predecessor data, applies migrations 0002
+and 0003, checks message count and old-cursor continuation, runs conformance,
+then verifies worker takeover after expiry and rejection of a stale proof.
+The interruption drill now kills only its recorded child process.
+
+Raw reproduction logs are in `/tmp/yak-predecessor-repro-a/`; final gate logs
+are in `/tmp/yak-predecessor-gate-final-a/`. Exact checked head, final command
+exit status and CI receipt are recorded in the fix task and PR comments.
+These checks use their own Compose project, port and volume. They do not
+operate the coordination service or complete the parent rename task.

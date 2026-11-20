@@ -74,11 +74,16 @@ adm grant create --any --pattern "work" --caps read,post,claim,task_manage,chann
 task=$(as alice task create work --title "interruptible job" --text "sleep, then succeed" --json | j 'd["id"]')
 # Worker 1 (bob): claims through the runner and gets killed with SIGKILL, so
 # it cannot release. Its stdout report is lost with it.
-( YAK_TOKEN_FILE="$WORK/bob.token" YAK_BOARD=$board exec "$A" run "$task" --lease 15s --run-id worker1 -- sleep 600 ) > "$WORK/w1.out" 2>&1 &
+rm -f "$WORK/w1.child.pid"
+( YAK_TOKEN_FILE="$WORK/bob.token" YAK_BOARD=$board exec "$A" run "$task" --lease 15s --run-id worker1 -- sh -c 'echo $$ > "$1"; exec sleep 600' gate-child "$WORK/w1.child.pid" ) > "$WORK/w1.out" 2>&1 &
 W1=$!
 for _ in $(seq 1 30); do [[ $(as bob task show "$task" --json | j 'd["state"]') == claimed ]] && break; sleep 0.5; done
 c1=$(as bob task show "$task" --json | j 'd["current_claim"]["id"]+" "+d["current_claim"]["execution_id"]+" "+str(d["epoch"])')
-kill -9 "$W1"; pkill -9 -f "sleep 600" || true
+# Record the gate child explicitly; do not kill unrelated host processes.
+for _ in $(seq 1 30); do [[ -s "$WORK/w1.child.pid" ]] && break; sleep 0.1; done
+[[ -s "$WORK/w1.child.pid" ]] || die "worker1 child did not start"
+kill -9 "$W1"
+kill -9 "$(cat "$WORK/w1.child.pid")"
 ok "worker1 claimed ($c1) and was killed without releasing"
 # A manual claim by worker1's actor cannot take the task while the lease is live.
 set +e; as bob task claim "$task" --proof-file "$WORK/stale.proof" >/dev/null 2>"$WORK/claim2.err"; rc=$?; set -e

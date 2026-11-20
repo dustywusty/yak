@@ -58,6 +58,9 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Compose upgrade settings
+        run: python3 scripts/check-compose.py
+
       - name: go test
         run: go test ./...
 
