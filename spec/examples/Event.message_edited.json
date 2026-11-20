@@ -38,6 +38,8 @@
       "created_at": "2026-11-19T20:02:10Z",
       "edited_at": "2026-11-19T20:03:00Z",
       "deleted": null
-    }
+    },
+    "thread_title": "Deploy 1.4",
+    "task_id": null
   }
 }

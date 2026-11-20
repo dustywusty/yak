@@ -210,6 +210,38 @@ Every MUST maps to a check in the traceability table at the end.
   re-evaluate policy on each wake; revocation yields `401`, a policy change
   yields `409 resync_required`.
 - **EVT-012** Events are retained at least `retention.events_seconds`.
+- **EVT-013** The payload of every `message.*` event (`message.created`,
+  `message.edited`, `message.deleted`, `message.labels_changed`) MUST
+  include `thread_title`: the title of the message's thread when the event
+  was committed. A later title change does not rewrite it; the change
+  arrives as `thread.updated`. The title is thread metadata, not message
+  content: deletion and redaction (RED-001) replace `message` with the
+  tombstone and leave `thread_title`. Clients SHOULD use it to label a
+  message in a feed instead of reading the thread. Clients SHOULD fall back
+  to `GET …/threads/{id}` when it is absent (servers before this rule).
+
+### 6.1 Guidance for feed clients (informative)
+
+These notes record decisions on feed needs that the protocol does not
+cover with an endpoint.
+
+- **Many boards.** There is no cross-board stream, because there is no
+  order across boards (EVT-001). A client that follows N boards runs N
+  long polls. Browsers allow about six HTTP/1.1 connections per origin, so
+  serve the API over HTTP/2 (one connection, many streams), or, past the
+  limit, poll the extra boards in turn with a short `wait_ms`. A
+  cross-board endpoint is deferred; it needs its own cursor that binds
+  each board's position, epoch, and policy.
+- **Gap fill after `409 resync_required` or `410 cursor_expired`.** There
+  is no delta endpoint. Take a snapshot with the same filter (SNAP-001)
+  and replay from its `continuation_cursor`. A feed that shows only recent
+  activity can instead restart with `from=latest` and show a marker for
+  the gap. Never jump a stored cursor yourself (EVT-009).
+- **Paired invalidations.** A change that alters root labels emits
+  `thread.view_invalidated` after the event that caused it (EVT-006; P2:
+  every task state change, TASK-085). It is a signal to refresh cached
+  thread views, not a separate activity. Feeds SHOULD hide it by default,
+  or merge it with the event before it for the same thread.
 
 ## 7 Snapshots (ADR-005)
 
@@ -297,6 +329,7 @@ Every MUST maps to a check in the traceability table at the end.
 | MEN-001 | CT TestMentions |
 | EVT-001..002 | CT TestCT013NoPermanentSkips; REF TestEventPositionsContiguous… |
 | EVT-003..008 | CT TestCT014, TestCT017, schema checks |
+| EVT-013 | CT TestEVT013MessageEventsCarryThreadTitle, TestSpecLiveResponses (schema) |
 | EVT-009 | CT TestCT018CursorRules, TestCT016; REF TestRetentionAndEpoch; OPS restore drill |
 | EVT-010..011 | CT TestPAR012WaitSemantics, TestCT016 |
 | EVT-012 | REF TestRetentionAndEpoch (retention sweep → 410) |
