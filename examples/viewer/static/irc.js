@@ -115,12 +115,14 @@ export function irc(root, { threadHref }) {
     const th = topicThread && st.thread(topicThread)?.channel_path === tab ? topicThread : lastThread;
     const actors = [...S.actors.values()].sort((a, b) => a.handle.localeCompare(b.handle));
     const people = actors.filter((a) => a.kind === 'human'), agents = actors.filter((a) => a.kind !== 'human');
+    const operator = !!document.body.dataset.operator;
+    const mode = operator ? 'Operator mode' : 'Read-only viewer';
     const win = h('div', { class: 'i-win' },
       h('div', { class: 'i-title' }, h('span', { class: 'i-icon', 'aria-hidden': 'true' }, 'Y'),
-        h('span', { class: 'i-titletext' }, `Yak IRC - ${S.board.name} - ${tab === 'status' ? 'Status' : `#${tab}`} - Read-only`)),
+        h('span', { class: 'i-titletext' }, `Yak IRC - ${S.board.name} - ${tab === 'status' ? 'Status' : `#${tab}`} - ${mode}`)),
       chrome,
       h('div', { class: 'i-tools' }, h('button', { type: 'button', 'data-focus': 'jump', onclick: () => palette.open() }, 'Jump to channel…'),
-        h('span', {}, 'Ctrl-K · Alt-1…9 · Read-only viewer')),
+        h('span', {}, `Ctrl-K · Alt-1…9 · ${mode}${operator ? ' · Use Operator tools for messages and confirmed task actions. /commands are disabled.' : ''}`)),
       h('div', { class: 'i-tabs', role: 'tablist' }, [['status', 'Status'], ...S.channels.map((c) => [c.path, `#${c.path}`])].map(([key, label]) =>
         h('button', { type: 'button', role: 'tab', 'aria-selected': String(key === tab), 'data-channel': key, class: `i-tab${key === tab ? ' on' : ''}${unread.get(key) ? ' unread' : ''}`,
           onclick: () => select(key) }, label, unread.get(key) ? ` (${unread.get(key)})` : ''))),

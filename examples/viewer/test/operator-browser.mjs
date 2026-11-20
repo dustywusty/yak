@@ -1107,7 +1107,45 @@ async function op17014IrcProvenanceCase() {
  assert('no browser exceptions',errors.length===0,JSON.stringify(errors));
  console.log(`OP17-014 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17040IrcModeCase() {
+ let assertions=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-040: ${name}`,ok)};
+ await freshIdentityFixture();
+ try {
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-mode';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  await ev("location.hash='#/irc?b=brd_test'");
+  await until("!!document.querySelector('.i-titletext') && !!document.querySelector('.i-link[data-thread=th]')");
+  assert('operator title describes active mode',await ev("document.querySelector('.i-titletext').textContent.endsWith('Operator mode') && !document.querySelector('.i-titletext').textContent.includes('Read-only')"));
+  assert('operator toolbar describes mode and tools',await ev("document.querySelector('.i-tools').textContent.includes('Operator mode') && document.querySelector('.i-tools').textContent.includes('Operator tools') && !document.querySelector('.i-tools').textContent.includes('Read-only')"));
+  assert('operator Reply / task actions opener is enabled',await ev("document.querySelector('button.i-input')?.textContent==='Reply / task actions' && !document.querySelector('button.i-input').disabled"));
+  await ev("document.querySelector('.i-input').click()");
+  await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
+  assert('operator opener exposes reply and task actions',await ev("!!document.querySelector('.op-workspace textarea') && !!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')"));
+  await click('Close');
+  await ev("document.querySelector('.i-tab[data-channel=status]').click()");
+  assert('operator status keeps commands disabled with tools guidance',await ev("document.querySelector('.i-text').textContent.includes('Use Operator tools') && document.querySelector('.i-text').textContent.includes('/commands are disabled')"));
+  assert('operator navigation and tools opening send no writes',await count()===0);
+  await ev("document.querySelector('#operator-logout').click()");
+  await until("!document.querySelector('#login').hidden && !document.body.dataset.operator");
+  assert('logout clears operator workspace and revokes only own credential',await ev("!document.querySelector('.op-workspace') && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
+  await ev("window.__op.revoked=false;window.__op.scope=['read'];document.querySelector('#operator-login').checked=false;document.querySelector('#token').value='synthetic-irc-read';document.querySelector('#login-form').requestSubmit()");
+  await until("document.querySelector('#login').hidden && !!document.querySelector('.i-titletext') && !document.body.dataset.operator");
+  assert('read-only remount restores title',await ev("document.querySelector('.i-titletext').textContent.endsWith('Read-only viewer')"));
+  assert('read-only remount restores toolbar',await ev("document.querySelector('.i-tools').textContent.includes('Read-only viewer') && !document.querySelector('.i-tools').textContent.includes('Operator mode')"));
+  assert('read-only remount has no write opener and input is disabled',await ev("!document.querySelector('button.i-input') && document.querySelector('input.i-input')?.disabled && !document.querySelector('#operator-tools')?.offsetWidth"));
+  await ev("document.querySelector('.i-tab[data-channel=status]').click()");
+  assert('read-only status and input keep commands disabled',await ev("document.querySelector('.i-text').textContent.includes('This window is read-only. /commands are disabled.') && document.querySelector('input.i-input').placeholder.includes('/commands and messages are disabled')"));
+  assert('read-only navigation sends no further writes',await count()===1);
+ } finally {
+  await ev("document.querySelector('#forget').click()");
+  await until("!document.querySelector('#login').hidden");
+ }
+ assert('no browser exceptions',errors.length===0);
+ if (assertions!==13) throw new Error(`OP17-040 expected 13 assertions, executed ${assertions}`);
+ console.log(`OP17-040 executed ${assertions} assertions across operator login and read-only remount`);
+}
+const operatorCases = new Map([['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
