@@ -70,11 +70,14 @@ async function matrix(action,named=action,setup='',report=check,reject=false){
  if(setup)await ev(setup);
  const n=await count();
  await op17027TextFields('.op-workspace',action,check);check(`${action}: Enter in text fields sends nothing`,await count()===n);
+ const details=await op17030ExpectedDetails(action);
+ const inspect=async()=>{const actual=await ev("document.querySelector('.op-confirm pre').textContent");check(`${action}: exact confirmed read values`,actual===details,JSON.stringify({expected:details,actual}));};
  await click(action);await until("!!document.querySelector('.op-confirm[open]')");
  check(`${action}: no write on open`,await count()===n);
- const text=await ev("document.querySelector('.op-confirm').textContent");check(`${action}: read state and acting identity`,['alice','ops',...(action==='Create task'?['Needs my approval']:['Revision:','Claim holder:','Assignee:','State:'])].every(x=>text.includes(x)),text);
+ await inspect();
  check(`${action}: Cancel focused`,await ev("document.activeElement.textContent==='Cancel'"));await cancel();check(`${action}: Cancel sends nothing`,await count()===n);
  await click(action);await until("!!document.querySelector('.op-confirm[open]')");
+ await inspect();
  await op17027Enter();
  check(`${action}: Enter on Cancel sends nothing`,await count()===n);
  if(await ev("!!document.querySelector('.op-confirm[open]')"))await op17027TextFields('.op-confirm',action,check);
@@ -82,6 +85,7 @@ async function matrix(action,named=action,setup='',report=check,reject=false){
  const receipts=await ev("document.querySelectorAll('.op-pending').length");
  await ev(`window.__op.enableConfirmationDelay();window.__op.delayConfirmation=true;window.__op.rejectConfirmation=${reject}`);
  await click(action);await until("!!document.querySelector('.op-confirm[open]')");
+ await inspect();
  const expected=await op17026ExpectedWrites(action);
  await confirm(named);
  await until("typeof window.__op.resolveConfirmation==='function'");
@@ -91,6 +95,45 @@ async function matrix(action,named=action,setup='',report=check,reject=false){
  await until(`[...document.querySelectorAll('.op-pending')].length===${receipts+1} && ![...document.querySelectorAll('.op-pending')].at(-1).textContent.includes('Sending')`);
  check(`${action}: explicit confirmation writes exact ordered intent`,await op17026Matches(n,reject?expected.slice(0,1):expected));
  check(`${action}: one receipt after settlement`,await ev(`document.querySelectorAll('.op-pending').length===${receipts+1}`));
+}
+// OP17-030: the oracle uses API fixture reads and form inputs, never dialog labels.
+async function op17030ExpectedDetails(action) {
+ const {task:t,values:v}=await ev(`({task:structuredClone(window.__op.task),values:{title:document.querySelector('input[aria-label^="Task title"]').value,channel:document.querySelector('select[aria-label="Channel"]').value,text:document.querySelector('textarea[aria-label^="Message"]').value,assignee:document.querySelector('select[aria-label="Task assignee"]').value || null,gate:document.querySelector('input[aria-label^="Needs my approval"]').checked,note:document.querySelector('textarea[aria-label="Gate note t"]')?.value || '',newAssignee:document.querySelector('select[aria-label="New assignee"]')?.value || null}})`);
+ const actor=id=>id==='a'?'@alice (human)':id==='bot'?'@bot (agent)':id?`${id.slice(0,16)} (unknown)`:'none';
+ const lines=['Acting as @alice (human)'];
+ if(action==='Create task')return [...lines,`Channel: ${v.channel}`,`Title: ${v.title}`,`Assignee: ${actor(v.assignee)}`,`Needs my approval: ${v.gate}`,`Text: ${v.text}`].join('\n');
+ const next=action==='Approve and unblock'?'ready or waiting (prerequisites decide)':action.startsWith('Work on')?'claimed':action==='Release'?'ready':t.state;
+ lines.push(`Task: ${t.title}`,`Channel: ${t.channel_path}`,`State: ${t.state} → ${next}`,`Assignee: ${actor(t.assignee_actor_id)}`,`Claim holder: ${actor(t.current_claim?.actor_id)}`,`Revision: ${t.revision}; brief: ${t.brief_revision}`);
+ if(action==='Require my approval'||action==='Remove approval requirement')lines.push(`Needs my approval: ${t.direct_action_required} → ${action==='Require my approval'}`);
+ if(action==='Assign to myself'||action==='Assign / unassign')lines.push(`New assignee: ${actor(action==='Assign to myself'?'a':v.newAssignee)}`);
+ if(action==='Approve and unblock'||action==='Request changes')lines.push(`Gate reason: ${t.block.reason}`,`Note: ${v.note}`);
+ return lines.join('\n');
+}
+async function op17030ConfirmationValuesCase() {
+ let assertions=0,fixtures=0;
+ const assert=(name,ok,detail='')=>{assertions++;check(`OP17-030: ${name}`,ok,detail)};
+ const variants=[
+  ['A6','Approve and unblock','Approve and unblock'],
+  ['A7','Work on this now (while this tab is open)','Claim'],['A9','Release','Release'],
+  ['A10 assign','Assign to myself','Assign to @alice'],['A10 unassign','Assign / unassign','Unassign'],
+  ['A11 off','Create task','Create task',false],['A11 on','Create task','Create task',true],
+  ['A12','Request changes','Request changes'],['A13 on','Require my approval','Require my approval'],['A13 off','Remove approval requirement','Remove approval requirement'],
+ ];
+ for(const [variant,action,named,gate=false] of variants) {
+  // Each variant starts with distinct fixed read values and its own write capture.
+  await freshIdentityFixture(`Object.assign(window.__op.task,{title:'OP17-030 read title',revision:730,brief_revision:43,state:${JSON.stringify(['A7','A9'].includes(variant)?'ready':'blocked')},assignee_actor_id:${JSON.stringify(['A7','A9'].includes(variant)?'a':'bot')},direct_action_required:${action!=='Require my approval'},block:{reason:'OP17-030 waiting for security review'}});window.__op.enableConfirmationDelay();`);fixtures++;
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-values-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");await open();
+   if(action==='Release'){await click('Work on this now (while this tab is open)');await confirm('Claim');await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");}
+   await ev(`document.querySelector('input[aria-label^="Task title"]').value='OP17-030 new title';document.querySelector('textarea[aria-label^="Message"]').value='OP17-030 new task text';document.querySelector('select[aria-label="Task assignee"]').value=${JSON.stringify(gate?'a':'bot')};document.querySelector('input[aria-label^="Needs my approval"]').checked=${gate};const note=document.querySelector('textarea[aria-label="Gate note t"]');if(note)note.value='OP17-030 requested security changes';const assignee=document.querySelector('select[aria-label="New assignee"]');if(assignee)assignee.value='';`);
+   await matrix(action,named,'',(name,ok,detail)=>assert(`${variant}: ${name}`,ok,detail));
+   if(action==='Request changes')assert(`${variant}: gate flag remains true and state remains blocked`,await ev("window.__op.task.direct_action_required===true && window.__op.task.state==='blocked'"));
+  } finally {await ev("window.__op.resolveConfirmation?.();document.querySelector('#operator-logout')?.click()");}
+ }
+ assert('all ten variants executed',fixtures===10 && assertions>=140);
+ assert('no browser exceptions',errors.length===0,errors.join(' | '));
+ console.log(`OP17-030 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
 // CDP input invokes browser default actions, unlike dispatchEvent(KeyboardEvent).
 async function op17027Enter() {
@@ -1352,7 +1395,7 @@ async function op17044WireCase() {
  if(assertions!==10)throw new Error(`OP17-044 executed ${assertions}, expected 10`);
  console.log(`OP17-044 executed ${assertions} assertions across two fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
