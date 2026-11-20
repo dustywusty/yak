@@ -450,7 +450,80 @@ async function openRaceCase() {
  if (!assertions) throw new Error('OP17-006 executed no assertions');
  console.log(`OP17-006 executed ${assertions} assertions across four fresh initial-open fixtures`);
 }
-const operatorCases = new Map([['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function delayedDraftCase() {
+ let assertions = 0, fixtures = 0;
+ const assert = (name, ok) => { assertions++; check(`OP17-018: ${name}`, ok); };
+ const setField = async (selector, value) => ev(`{const n=document.querySelector(${JSON.stringify(selector)});n.value=${JSON.stringify(value)};n.dispatchEvent(new Event('input',{bubbles:true}));}`);
+ const text = 'textarea[aria-label^=Message]';
+ for (const kind of ['reply', 'thread', 'task']) {
+  const title = kind === 'task' ? 'input[aria-label^="Task title"]' : 'input[aria-label^=Title]';
+  const variants = ['unchanged','text','restore','network','conflict','reopen',...(kind === 'reply' ? [] : ['title','both','title-restore', ...(kind === 'task' ? ['cancel'] : [])])];
+  for (const variant of variants) {
+   fixtures++;
+   await freshIdentityFixture('window.__op.enableBoardSwitch();window.__op.enableDraftDelay();');
+   try {
+    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-draft-token';document.querySelector('#login-form').requestSubmit()");
+    await until("document.body.dataset.operator==='true'");
+    if (kind === 'reply') await open();
+    else {
+     await ev("document.querySelector('#operator-tools').click()");
+     await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");
+    }
+    await setField(text, 'submitted text');
+    if (kind !== 'reply') await setField(title, 'submitted title');
+    await ev(`window.__op.delayDraft=true;window.__op.draftOutcome=${JSON.stringify(variant)}`);
+    const action = {reply:'Send reply',thread:'Start thread',task:'Create task'}[kind];
+    const before = await count();
+    await click(action);
+    if (kind === 'task') {
+     if (variant === 'cancel') {
+      await cancel();
+      assert(`${kind}/${variant}: no write and both drafts retained`, await count()===before && await ev(`document.querySelector(${JSON.stringify(text)}).value==='submitted text' && document.querySelector(${JSON.stringify(title)}).value==='submitted title'`));
+      continue;
+     }
+     await confirm(action);
+    }
+    await until('typeof window.__op.resolveDraft==="function"');
+    assert(`${kind}/${variant}: one captured original request`, await ev(`window.__op.writes.length===${before+1} && window.__op.writes.at(-1).body${kind === 'task' ? '.thread' : ''}.text==='submitted text' ${kind === 'reply' ? '' : `&& window.__op.writes.at(-1).body${kind === 'task' ? '.thread' : ''}.title==='submitted title'`}`));
+    let expectedText = 'submitted text', expectedTitle = 'submitted title';
+    if (['text','both','reopen'].includes(variant)) { await setField(text, 'later text'); expectedText='later text'; }
+    if (['title','both'].includes(variant)) { await setField(title, 'later title'); expectedTitle='later title'; }
+    if (variant === 'restore') { await setField(text, 'temporary'); await setField(text, 'submitted text'); }
+    if (variant === 'title-restore') { await setField(title, 'temporary'); await setField(title, 'submitted title'); }
+    if (variant === 'reopen') {
+     await click('Close');
+     await ev("window.dispatchEvent(new CustomEvent('yak-operator-open',{detail:{board:'brd_other'}}))");
+     await until("!!document.querySelector('textarea[aria-label*=brd_other]')");
+     await setField('textarea[aria-label*=brd_other]', 'other board draft');
+     await ev('window.__op.resolveDraft()');
+     await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+     assert(`${kind}/${variant}: completion preserves other board`, await ev("document.querySelector('textarea[aria-label*=brd_other]').value==='other board draft'"));
+     await click('Close');
+     await ev(`window.dispatchEvent(new CustomEvent('yak-operator-open',{detail:{board:'brd_test',ch:'ops',${kind === 'reply' ? "t:'th'" : ''}}}))`);
+     await until(`!!document.querySelector(${JSON.stringify(text)})`);
+    } else {
+     await ev('window.__op.resolveDraft()');
+     await until(variant === 'network' ? "document.querySelector('.op-receipts').textContent.includes('Retry same intent')" : variant === 'conflict' ? "document.querySelector('.op-receipts').textContent.includes('No retry was sent')" : "document.querySelector('.op-receipts').textContent.includes('Saved.') && !document.querySelector('.op-pending')?.textContent.includes('Sending')");
+     if (!['network','conflict'].includes(variant)) {
+      if (!['text','both','restore'].includes(variant)) expectedText='';
+      if (!['title','both','title-restore'].includes(variant)) expectedTitle='';
+     }
+    }
+    await until(`!!document.querySelector(${JSON.stringify(text)})`);
+    assert(`${kind}/${variant}: text retained or cleared independently`, await ev(`document.querySelector(${JSON.stringify(text)}).value===${JSON.stringify(expectedText)}`));
+    if (kind !== 'reply') assert(`${kind}/${variant}: title retained or cleared independently`, await ev(`document.querySelector(${JSON.stringify(title)}).value===${JSON.stringify(expectedTitle)}`));
+    assert(`${kind}/${variant}: no implicit resend`, await count()===before+1);
+   } finally {
+    await ev("window.__op.delayDraft=false;document.querySelector('#operator-logout')?.click()");
+    await until("!document.body.dataset.operator");
+   }
+  }
+ }
+ assert('no browser exceptions', errors.length===0);
+ assert('all variants executed nonzero assertions', fixtures===25 && assertions>=80);
+ console.log(`OP17-018 executed ${assertions} assertions across ${fixtures} fresh delayed-draft fixtures`);
+}
+const operatorCases = new Map([['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

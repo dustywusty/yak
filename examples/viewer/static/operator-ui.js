@@ -9,6 +9,7 @@ const field = (label, node) => h('label', {}, label, node);
 export function createOperatorUI({ session, read, route }) {
   let panel, content, status, current, opener, refresh, sequence = 0;
   const drafts = new Map();
+  const draftEdits = new WeakMap();
   const receipts = h('div', { class: 'op-receipts' });
   const guards = new WeakMap();
   const valid = (snapshot, version) => current === snapshot && sequence === version && snapshot?.generation === session.generation && session.active && !session.ending;
@@ -33,8 +34,21 @@ export function createOperatorUI({ session, read, route }) {
   function provenance(m) { return `${actor(m.author_actor_id || m.actor_id)}${m.on_behalf_of_actor_id ? ` for ${actor(m.on_behalf_of_actor_id)}` : ''}`; }
   function draft(label, kind = 'textarea') {
     const key = JSON.stringify([current.B, current.channel, current.thread?.id || null, label]);
-    if (!drafts.has(key)) drafts.set(key, h(kind, { 'aria-label': label }));
+    if (!drafts.has(key)) {
+      const node = h(kind, { 'aria-label': label });
+      draftEdits.set(node, 0);
+      node.addEventListener('input', () => draftEdits.set(node, draftEdits.get(node) + 1));
+      drafts.set(key, node);
+    }
     return drafts.get(key);
+  }
+  function submittedDrafts(...nodes) {
+    const sent = nodes.map((node) => ({ node, value: node.value, edits: draftEdits.get(node) }));
+    return () => {
+      for (const { node, value, edits } of sent) {
+        if (node.value === value && draftEdits.get(node) === edits) node.value = '';
+      }
+    };
   }
   function rights(cap) { return session.me.credential.scopes.includes('read') && current.permissions.includes('read') && current.permissions.includes(cap) && session.me.credential.scopes.includes(cap); }
   function manager(t) { return rights('task_admin') || (t.owner_actor_id === session.me.actor.id && rights('task_manage')); }
@@ -196,7 +210,8 @@ export function createOperatorUI({ session, read, route }) {
     const sendMessage = writeButton(isReply ? 'Send reply' : 'Start thread', () => {
       if (!text.value.trim() || (!isReply && !title.value.trim())) { say('Enter text and a title for a new thread.'); return; }
       const mentions = view.actors.filter((a) => new RegExp(`(?:^|[^A-Za-z0-9_])@${a.handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`).test(text.value)).map((a) => a.id);
-      send(sendMessage, { steps: [{ method: 'POST', path: isReply ? `${view.B}/threads/${enc(view.thread.id)}/messages` : `${view.B}/threads`, body: { text: text.value, mentions, ...(!isReply ? { channel: view.channel, title: title.value } : {}) } }] }, () => { text.value = ''; });
+      const clearSubmitted = submittedDrafts(...(isReply ? [text] : [text, title]));
+      send(sendMessage, { steps: [{ method: 'POST', path: isReply ? `${view.B}/threads/${enc(view.thread.id)}/messages` : `${view.B}/threads`, body: { text: text.value, mentions, ...(!isReply ? { channel: view.channel, title: title.value } : {}) } }] }, clearSubmitted);
     });
     const box = h('section', {}, h('h3', {}, isReply ? 'Reply' : 'New thread'), !isReply ? field('Title', title) : null, field('Message (mentions notify; they grant no authority)', text), sendMessage);
     if (rights('task_manage') && session.server.capabilities?.includes('yak.tasks')) {
@@ -205,7 +220,8 @@ export function createOperatorUI({ session, read, route }) {
       const create = writeButton('Create task', () => {
         if (!taskTitle.value.trim()) { say('Enter a task title.'); return; }
         const values = { title: taskTitle.value, text: text.value, channel: view.channel, gate: gate.checked, assignee: assignee.value || null };
-        confirmation('Create task', `Acting as ${actor(session.me.actor.id)}\nChannel: ${values.channel}\nTitle: ${values.title}\nAssignee: ${actor(values.assignee)}\nNeeds my approval: ${values.gate}\nText: ${values.text}`, taskIntent('create', view.B, null, values), create, () => { taskTitle.value = ''; text.value = ''; });
+        const clearSubmitted = submittedDrafts(taskTitle, text);
+        confirmation('Create task', `Acting as ${actor(session.me.actor.id)}\nChannel: ${values.channel}\nTitle: ${values.title}\nAssignee: ${actor(values.assignee)}\nNeeds my approval: ${values.gate}\nText: ${values.text}`, taskIntent('create', view.B, null, values), create, clearSubmitted);
       });
       box.append(h('h3', {}, 'New task'), field('Task title', taskTitle), field('Task assignee', assignee), field('Needs my approval', gate), create);
     }

@@ -138,4 +138,18 @@ export function operatorFixture() {
     };
   };
 
+  // OP17-018: settle a captured disposable write only when the test releases it.
+  T.enableDraftDelay = () => {
+    const base = window.fetch;
+    window.fetch = async (url, opts = {}) => {
+      const response = await base(url, opts);
+      if (!T.delayDraft || (opts.method || 'GET') === 'GET' || new URL(url, location.href).pathname.includes('/snapshots')) return response;
+      T.delayDraft = false;
+      await new Promise(resolve => T.resolveDraft = resolve);
+      if (T.draftOutcome === 'network') throw new TypeError('synthetic draft network failure');
+      if (T.draftOutcome === 'conflict') return json({code:'revision_conflict'},409);
+      return response;
+    };
+  };
+
 }
