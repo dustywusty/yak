@@ -1,6 +1,9 @@
 package conformance
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // DLG-090 and the direct-credential portion of DLG-099 ship before delegation.
 func TestGateFieldDirectLifecycle(t *testing.T) {
@@ -93,5 +96,39 @@ func TestGateFieldBatchConvertAndSnapshot(t *testing.T) {
 	}
 	if count != 3 {
 		t.Fatal("snapshot count")
+	}
+}
+
+func TestGateFieldParserBooleanValidation(t *testing.T) {
+	f := newP2Board(t)
+	m := f.manager(t)
+	task := f.createTask(t, m, "work", "original", "brief", J{"direct_action_required": true})
+	id := str(task, "id")
+	th, _ := f.post(t, m, "work", "convert", "brief")
+	for _, fields := range []string{
+		`"DIRECT_ACTION_REQUIRED":null`,
+		`"Direct_Action_Required":null`,
+		`"direct_action_required":null,"direct_action_required":true`,
+		`"DIRECT_ACTION_REQUIRED":null,"direct_action_required":true`,
+		`"direct_action_required":true,"DIRECT_ACTION_REQUIRED":null`,
+		`"direct_action_required":true,"Direct_Action_Required":null,"direct_action_required":false`,
+	} {
+		m.must(400, m.do("POST", f.p("/tasks"), json.RawMessage(`{"thread":{"channel":"work","title":"gate","text":"brief"},`+fields+`}`), newKey()))
+		m.must(400, m.do("POST", f.p("/tasks"), json.RawMessage(`{"thread_id":"`+str(th, "id")+`",`+fields+`}`), newKey()))
+		m.must(400, m.do("POST", f.p("/tasks/batch"), json.RawMessage(`{"TaſKs":[{"ref":"gate","thread":{"channel":"work","title":"gate","text":"brief"},`+fields+`}]}`), newKey()))
+		m.must(400, m.do("PATCH", f.tp(id), json.RawMessage(`{"title":"should not commit",`+fields+`}`), ifMatch(task["revision"])))
+	}
+	got := f.getTask(t, m, id)
+	if got["title"] != "original" || got["revision"] != task["revision"] || got["direct_action_required"] != true {
+		t.Fatal("invalid parser input changed task")
+	}
+	page := m.must(200, m.do("GET", f.p("/tasks"), nil)).Body
+	if len(arr(page, "items")) != 1 {
+		t.Fatal("invalid parser input created tasks")
+	}
+	// Valid duplicates keep the request decoder's last-value behavior.
+	cleared := m.must(200, m.do("PATCH", f.tp(id), json.RawMessage(`{"DIRECT_ACTION_REQUIRED":true,"direct_action_required":false}`), ifMatch(task["revision"]))).Body
+	if cleared["direct_action_required"] != false {
+		t.Fatal("valid duplicate boolean order changed")
 	}
 }
