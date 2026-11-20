@@ -139,7 +139,7 @@ func TestBoardIsolation(t *testing.T) { // PAR-001
 	f1.grant(t, a, "*", "allow", "read", "post", "channel_manage")
 	a.wantProblem(404, "not_found", a.do("GET", f2.p(""), nil))
 	a.wantProblem(404, "not_found", a.do("GET", f2.p("/events"), nil))
-	boards := string(a.must(200, a.do("GET", "/v1/boards", nil)).Raw)
+	boards := strings.Join(idsOf(listAll(a, "/v1/boards", "boards", 0)), " ") // PAGE-001: follow tokens
 	if strings.Contains(boards, f2.board) || !strings.Contains(boards, f1.board) {
 		t.Fatalf("board listing: %s", boards)
 	}

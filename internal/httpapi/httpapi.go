@@ -443,11 +443,15 @@ func (a *API) routes() {
 		return a.respond(w, r, p, "", res)
 	}))
 	m.HandleFunc("GET /v1/boards", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListBoards(r.Context(), p)
+		tok, limit, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"boards": l})
+		l, next, err := a.S.ListBoards(r.Context(), p, tok, limit)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"boards": l, "next_page_token": next})
 	}))
 	m.HandleFunc("GET /v1/boards/{board_id}", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
 		b, err := a.S.GetBoard(r.Context(), p, r.PathValue("board_id"))
@@ -499,11 +503,15 @@ func (a *API) boardRoutes() {
 		return a.respond(w, r, p, bid(r), res)
 	}))
 	m.HandleFunc("GET "+B+"/channels", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListChannels(r.Context(), p, bid(r))
+		tok, limit, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"channels": l})
+		l, next, err := a.S.ListChannels(r.Context(), p, bid(r), tok, limit)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"channels": l, "next_page_token": next})
 	}))
 	m.HandleFunc("GET "+B+"/channels/{channel_id}", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
 		c, err := a.S.GetChannel(r.Context(), p, bid(r), r.PathValue("channel_id"))
@@ -520,11 +528,15 @@ func (a *API) boardRoutes() {
 		return writeJSON(w, 200, v)
 	}))
 	m.HandleFunc("GET "+B+"/actors", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.BoardActors(r.Context(), p, bid(r))
+		tok, limit, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"actors": l})
+		l, next, err := a.S.BoardActors(r.Context(), p, bid(r), tok, limit)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"actors": l, "next_page_token": next})
 	}))
 	m.HandleFunc("GET "+B+"/audit-events", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
 		l, err := a.S.ListAudit(r.Context(), p, bid(r), 200)

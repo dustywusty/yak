@@ -477,6 +477,12 @@ paths:
       operationId: listBoards
       tags: [boards]
       summary: Boards whose metadata the caller may see (owner or any allow grant), oldest first.
+      description: |
+        Keyset-paginated in (created_at, id) order (PAGE-001). Boards the
+        caller cannot see are skipped; next_page_token is null on the last page.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
       responses:
         "200":
           description: Boards.
@@ -600,7 +606,13 @@ paths:
     get:
       operationId: listChannels
       tags: [channels]
-      summary: Channels the caller can read (all channels for board_admin), by path.
+      summary: Channels the caller can read (all channels for board_admin), oldest first.
+      description: |
+        Keyset-paginated in (created_at, id) order (PAGE-001). Channels the
+        caller cannot read are skipped; next_page_token is null on the last page.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
       responses:
         "200":
           description: Channels.
@@ -680,11 +692,16 @@ paths:
     get:
       operationId: listBoardActors
       tags: [boards]
-      summary: Visible participants, by handle.
+      summary: Visible participants, oldest actor first.
       description: |
         The caller, plus actors (owner or actor-subject grant holders) who can
         read at least one existing channel the caller can read. Board
-        administrators see every such actor.
+        administrators see every such actor. Keyset-paginated in actor
+        (created_at, id) order (PAGE-001); the visibility filter is applied
+        before the page is cut, so pages never skip or repeat a visible actor.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
       responses:
         "200":
           description: Participants.

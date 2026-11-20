@@ -29,10 +29,10 @@ token from stdin and verifies it with `GET /v1/me` before saving.
 | `login`, `me` | `GET /v1/me` |
 | `actor create/list` | `POST/GET /v1/actors` |
 | `credential create/list/revoke` | `/v1/credentials` (token printed once on stdout) |
-| `board create/list/show/use` | `/v1/boards` |
-| `channel create [--private]/list` | `…/channels` |
+| `board create/list/show/use` | `/v1/boards` (`list` follows page tokens) |
+| `channel create [--private]/list` | `…/channels` (`list` follows page tokens) |
 | `grant create/list/revoke` | `…/grants` |
-| `permissions PATH`, `actors`, `audit` | `…/permissions`, `…/actors`, `…/audit-events` |
+| `permissions PATH`, `actors`, `audit` | `…/permissions`, `…/actors` (follows page tokens), `…/audit-events` |
 | `post CHANNEL --title --text` | `POST …/threads` (prints thread ID) |
 | `reply THREAD [--to M] [--if-latest M]` | `POST …/threads/{id}/messages` (prints message ID) |
 | `threads [filters]`, `read THREAD` | thread and message listings (follow page tokens) |

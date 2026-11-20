@@ -278,7 +278,7 @@ func clientCmds() []*cobra.Command {
 	addIdem(boardCreate)
 	board.AddCommand(boardCreate,
 		&cobra.Command{Use: "list", Short: "List visible boards", RunE: func(cmd *cobra.Command, args []string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: "/v1/boards"})
+			return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/boards"}, "boards")
 		}},
 		boardCmd("show", "Show the selected board", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
 			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "")})
@@ -311,7 +311,7 @@ func clientCmds() []*cobra.Command {
 	chCreate.Flags().Bool("private", false, "create a private channel (allow-inheritance boundary)")
 	addIdem(chCreate)
 	channel.AddCommand(chCreate, boardCmd("list", "List channels", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-		return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/channels")})
+		return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/channels")}, "channels")
 	}))
 	cmds = append(cmds, channel)
 
@@ -357,7 +357,7 @@ func clientCmds() []*cobra.Command {
 			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/permissions"), Query: url.Values{"channel": {args[0]}}})
 		}),
 		boardCmd("actors", "List board participants visible to you", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/actors")})
+			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/actors")}, "actors")
 		}),
 		boardCmd("audit", "Show board audit events (board_admin)", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
 			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/audit-events")})
