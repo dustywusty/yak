@@ -7,24 +7,24 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dustywusty/abby/internal/domain"
-	"github.com/dustywusty/abby/internal/events"
+	"github.com/dustywusty/yak/internal/domain"
+	"github.com/dustywusty/yak/internal/events"
 )
 
-// claimProof reads Abby-Claim-Proof. The proof is accepted only as a header
+// claimProof reads Yak-Claim-Proof. The proof is accepted only as a header
 // (CLAIM-012); a missing header on a claimant route is 428 (CLAIM-013).
 func claimProof(r *http.Request, required bool) (*domain.ClaimProof, error) {
 	q := r.URL.Query()
 	if q.Has("proof") || q.Has("claim_proof") {
-		return nil, domain.Validation("the claim proof is accepted only in the Abby-Claim-Proof header")
+		return nil, domain.Validation("the claim proof is accepted only in the Yak-Claim-Proof header")
 	}
-	h := r.Header.Get("Abby-Claim-Proof")
+	h := r.Header.Get("Yak-Claim-Proof")
 	if h == "" {
 		if !required {
 			return nil, nil
 		}
-		e := domain.E(428, "precondition_required", "Abby-Claim-Proof header is required for claimant operations")
-		e.Extra = map[string]any{"header": "Abby-Claim-Proof"}
+		e := domain.E(428, "precondition_required", "Yak-Claim-Proof header is required for claimant operations")
+		e.Extra = map[string]any{"header": "Yak-Claim-Proof"}
 		return nil, e
 	}
 	return domain.ParseClaimProof(h)

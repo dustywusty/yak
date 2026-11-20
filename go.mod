@@ -1,4 +1,4 @@
-module github.com/dustywusty/abby
+module github.com/dustywusty/yak
 
 go 1.27.3
 

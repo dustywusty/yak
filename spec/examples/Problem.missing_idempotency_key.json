@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:validation_failed",
+  "type": "urn:yak:problem:validation_failed",
   "title": "Bad Request",
   "status": 400,
   "code": "validation_failed",

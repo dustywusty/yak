@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:claim_lost",
+  "type": "urn:yak:problem:claim_lost",
   "title": "Conflict",
   "status": 409,
   "code": "claim_lost",

@@ -16,7 +16,7 @@ Status: Accepted (2026-11-19). Implements design §8 and §12.1.
   private paths, the credential scopes, and ownership. Creating an inherited
   channel does not change it; grants and private channels do.
 - History epoch lives in `server_state` and is rotated by the operator
-  after a restore (`abby admin rotate-epoch`). Mismatch → `409
+  after a restore (`yak admin rotate-epoch`). Mismatch → `409
   resync_required` (`history_reset`). A cursor ahead of the head is treated
   the same way.
 - Retention: a sweeper deletes events older than 30 days under the board

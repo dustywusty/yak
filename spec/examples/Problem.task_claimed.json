@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:task_claimed",
+  "type": "urn:yak:problem:task_claimed",
   "title": "Conflict",
   "status": 409,
   "code": "task_claimed",

@@ -1,6 +1,6 @@
 package conformance
 
-// Helpers for the P2 (abby.p2.tasks) black-box tests in p2_test.go. They are
+// Helpers for the P2 (yak.p2.tasks) black-box tests in p2_test.go. They are
 // written from spec/p2-tasks.md and ADR-0016 only; no server code is used.
 
 import (
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const p2Profile = "abby.p2.tasks"
+const p2Profile = "yak.p2.tasks"
 
 // p2disc is the P2 part of GET /v1/server.
 type p2disc struct {
@@ -29,7 +29,7 @@ var (
 	p2skip string
 )
 
-// requireP2 skips the test unless the server advertises abby.p2.tasks.
+// requireP2 skips the test unless the server advertises yak.p2.tasks.
 func requireP2(t *testing.T) *p2disc {
 	t.Helper()
 	skipIfUnconfigured(t)
@@ -119,7 +119,7 @@ func (f *tf) worker(t *testing.T, prefix string, extra ...string) *actorClient {
 	return w
 }
 
-func proof(p string) opt { return header("Abby-Claim-Proof", p) }
+func proof(p string) opt { return header("Yak-Claim-Proof", p) }
 
 // --- tiny JSON accessors ---
 
@@ -327,11 +327,9 @@ func checkTaskEvents(t *testing.T, evs []J) {
 				t.Fatalf("%s payload has no task: %v", typ, e)
 			}
 			res := obj(e, "resource")
-			if typ == "task.claim_renewed" {
-				if res["type"] != "claim" || res["id"] != obj(pl, "claim")["id"] || res["revision"] != obj(pl, "claim")["revision"] {
-					t.Fatalf("task.claim_renewed resource %v, want claim resource", res)
-				}
-			} else if res["type"] != "task" || res["id"] != tk["id"] || res["revision"] != tk["revision"] {
+			// Every task event, task.claim_renewed included, names the
+			// task at its new revision (TASK-082, CLAIM-023).
+			if res["type"] != "task" || res["id"] != tk["id"] || res["revision"] != tk["revision"] {
 				t.Fatalf("%s resource %v, want {task,%v,%v}", typ, res, tk["id"], tk["revision"])
 			}
 			if str(e, "channel_id") == "" || str(e, "thread_id") == "" || e["thread_id"] != tk["thread_id"] {
@@ -341,7 +339,7 @@ func checkTaskEvents(t *testing.T, evs []J) {
 		}
 		if typ == "thread.view_invalidated" && pl["reason"] == "task_state_changed" {
 			after := obj(pl, "labels_after")
-			if lastTask == nil || after["abby.task.state"] != lastTask["state"] || e["thread_id"] != lastTask["thread_id"] {
+			if lastTask == nil || after["yak.task.state"] != lastTask["state"] || e["thread_id"] != lastTask["thread_id"] {
 				t.Fatalf("task_state_changed invalidation %v does not follow its task event (last task %v)", pl, lastTask)
 			}
 		}

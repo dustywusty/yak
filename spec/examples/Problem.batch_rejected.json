@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:not_found",
+  "type": "urn:yak:problem:not_found",
   "title": "Not Found",
   "status": 404,
   "code": "not_found",

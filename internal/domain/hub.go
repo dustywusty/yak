@@ -84,7 +84,7 @@ func (h *Hub) listenOnce(ctx context.Context, url string) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if _, err := conn.Exec(ctx, `LISTEN abby_events`); err != nil {
+	if _, err := conn.Exec(ctx, `LISTEN yak_events`); err != nil {
 		return err
 	}
 	for {

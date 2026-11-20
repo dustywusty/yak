@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dustywusty/abby/internal/domain"
-	"github.com/dustywusty/abby/internal/events"
+	"github.com/dustywusty/yak/internal/domain"
+	"github.com/dustywusty/yak/internal/events"
 )
 
 type p2 struct {
@@ -331,9 +331,9 @@ func TestExpiryProjectionMatchesMaterialization(t *testing.T) {
 	if err != nil || len(pg.Items) != 1 || pg.Items[0].ID != tk.ID {
 		t.Fatalf("state filter must use the effective state: %v %+v", err, pg)
 	}
-	th, err := x.svc.ListThreads(ctx, x.admin, x.board, events.Filter{Labels: map[string][]string{"abby.task.state": {"ready"}}}, 0, 50)
-	if err != nil || len(th.Threads) != 1 || th.Threads[0].Labels["abby.task.state"] != "ready" {
-		t.Fatalf("abby.task.state label must be effective: %v %+v", err, th)
+	th, err := x.svc.ListThreads(ctx, x.admin, x.board, events.Filter{Labels: map[string][]string{"yak.task.state": {"ready"}}}, 0, 50)
+	if err != nil || len(th.Threads) != 1 || th.Threads[0].Labels["yak.task.state"] != "ready" {
+		t.Fatalf("yak.task.state label must be effective: %v %+v", err, th)
 	}
 	n, err := x.svc.SweepClaimExpiry(ctx, 100)
 	if err != nil || n < 1 {

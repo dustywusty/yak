@@ -62,7 +62,7 @@
         "string",
         "null"
       ],
-      "description": "P2 (abby.p2.tasks, TASK-024): the thread's task, or null. Absent on servers without the P2 profile."
+      "description": "P2 (yak.p2.tasks, TASK-024): the thread's task, or null. Absent on servers without the P2 profile."
     },
     "created_at": {
       "$ref": "Timestamp.schema.json"

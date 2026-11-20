@@ -1,5 +1,5 @@
 {
-  "type": "urn:abby:problem:limit_exceeded",
+  "type": "urn:yak:problem:limit_exceeded",
   "title": "Content Too Large",
   "status": 413,
   "code": "limit_exceeded",

@@ -1,9 +1,9 @@
 {
-  "type": "urn:abby:problem:precondition_required",
+  "type": "urn:yak:problem:precondition_required",
   "title": "Precondition Required",
   "status": 428,
   "code": "precondition_required",
-  "detail": "Abby-Claim-Proof is required",
+  "detail": "Yak-Claim-Proof is required",
   "request_id": "req_example01",
-  "header": "Abby-Claim-Proof"
+  "header": "Yak-Claim-Proof"
 }

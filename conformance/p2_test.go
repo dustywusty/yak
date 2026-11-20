@@ -1,8 +1,8 @@
 package conformance
 
-// P2 (abby.p2.tasks) black-box conformance. Requirement IDs refer to
+// P2 (yak.p2.tasks) black-box conformance. Requirement IDs refer to
 // spec/p2-tasks.md; scenario IDs to its §20 and design §14.1. Every test
-// skips unless GET /v1/server lists the abby.p2.tasks profile.
+// skips unless GET /v1/server lists the yak.p2.tasks profile.
 
 import (
 	"encoding/json"
@@ -733,7 +733,7 @@ func TestCT026BriefUpdateVsTerminal(t *testing.T) { // BRIEF-001..005, CLAIM-005
 	checkTaskEvents(t, evs)
 	notice := obj(obj(evs[0], "payload"), "message")
 	bu := obj(evs[1], "payload")
-	if notice["author_actor_id"] != m.id || obj(notice, "labels")["abby.task.brief_revision"] != "2" || strings.Contains(str(notice, "text"), newText) {
+	if notice["author_actor_id"] != m.id || obj(notice, "labels")["yak.task.brief_revision"] != "2" || strings.Contains(str(notice, "text"), newText) {
 		t.Fatalf("brief notice message (BRIEF-003): %v", notice)
 	}
 	if num(bu, "brief_revision") != 2 || bu["message_id"] != notice["id"] || bu["state_before"] != "claimed" || obj(bu, "revoked_claim")["id"] != cid {
@@ -953,8 +953,8 @@ func TestCT029LifecycleWalk(t *testing.T) { // TASK-020..026, TASK-030..038, TAS
 	if ss(tk) != "ready" || tk["owner_actor_id"] != m.id || tk["origin"] != "new_thread" || num(tk, "epoch") != 0 || tk["channel_path"] != "walk" || tk["title"] != "Walk" {
 		t.Fatalf("new task: %v", tk)
 	}
-	if lb := obj(obj(obj(evs[0], "payload"), "thread"), "labels"); lb["abby.task.state"] != "ready" {
-		t.Fatalf("thread.created must already show abby.task.state (TASK-085): %v", lb)
+	if lb := obj(obj(obj(evs[0], "payload"), "thread"), "labels"); lb["yak.task.state"] != "ready" {
+		t.Fatalf("thread.created must already show yak.task.state (TASK-085): %v", lb)
 	}
 	if pl := obj(evs[1], "payload"); pl["origin"] != "new_thread" || pl["batch_id"] != nil {
 		t.Fatalf("task.created payload: %v", pl)
@@ -969,20 +969,29 @@ func TestCT029LifecycleWalk(t *testing.T) { // TASK-020..026, TASK-030..038, TAS
 
 	// L3 claim, L4 renew, L5 release.
 	var c J
-	evs = f.step(t, m, &cur, "L3 claim", func() { c = f.claim(t, w, id, nil, header("Abby-Run-Id", "run-walk")) }, "task.claimed", "thread.view_invalidated")
+	evs = f.step(t, m, &cur, "L3 claim", func() { c = f.claim(t, w, id, nil, header("Yak-Run-Id", "run-walk")) }, "task.claimed", "thread.view_invalidated")
 	cl, p := obj(c, "claim"), str(c, "proof")
 	if cl["run_id"] != "run-walk" || cl["actor_id"] != w.id || num(cl, "revision") != 1 || obj(c, "brief")["text"] != "walk the table" {
 		t.Fatalf("claim (CLAIM-004): %v", c)
 	}
 	revBefore := num(f.getTask(t, m, id), "revision")
-	f.step(t, m, &cur, "L4 renew", func() {
-		rn := w.must(200, f.renew(w, id, str(cl, "id"), p, J{"lease_seconds": f.d.lim(t, "claim_lease_min_seconds")})).Body
+	var rn J
+	evs = f.step(t, m, &cur, "L4 renew", func() {
+		rn = w.must(200, f.renew(w, id, str(cl, "id"), p, J{"lease_seconds": f.d.lim(t, "claim_lease_min_seconds")})).Body
 		if num(rn, "revision") != 2 || rn["id"] != cl["id"] || rn["status"] != "active" {
 			t.Fatalf("renew: %v", rn)
 		}
 	}, "task.claim_renewed")
-	if v := f.getTask(t, m, id); num(v, "revision") != revBefore || num(v, "epoch") != 1 || ss(v) != "claimed" {
-		t.Fatalf("renew changed the task (CLAIM-023): %v", v)
+	// The task view shows the new expiry, so the task revision goes up by
+	// one; epoch and state stay (CLAIM-023). The event names the task at
+	// that revision and carries the claim revision in the payload.
+	if v := f.getTask(t, m, id); num(v, "revision") != revBefore+1 || num(v, "epoch") != 1 || ss(v) != "claimed" ||
+		!sameInstant(t, obj(v, "current_claim")["expires_at"], rn["expires_at"]) {
+		t.Fatalf("renew must bump the task revision only (CLAIM-023): before %v, now %v", revBefore, v)
+	}
+	if res := obj(evs[0], "resource"); res["type"] != "task" || num(res, "revision") != revBefore+1 ||
+		num(obj(obj(evs[0], "payload"), "claim"), "revision") != 2 {
+		t.Fatalf("task.claim_renewed (TASK-082): %v", evs[0])
 	}
 	f.step(t, m, &cur, "L5 release", func() {
 		if v := f.mustCmd(t, w, id, "release", nil, proof(p)); ss(v) != "ready" || obj(v, "last_claim")["status"] != "released" {
@@ -1332,11 +1341,11 @@ func TestCT032LapsedLeaseRead(t *testing.T) { // CLAIM-050, CLAIM-051, CLAIM-053
 	if raw := string(v.must(200, v.do("GET", f.p("/tasks?channel=lapse&state=claimed"), nil)).Raw); strings.Contains(raw, id) {
 		t.Fatal("state=claimed list shows the lapsed task")
 	}
-	if raw := string(v.must(200, v.do("GET", f.p("/threads?label=abby.task.state:ready&channel=lapse"), nil)).Raw); !strings.Contains(raw, th) {
-		t.Fatal("abby.task.state:ready thread filter misses the lapsed task")
+	if raw := string(v.must(200, v.do("GET", f.p("/threads?label=yak.task.state:ready&channel=lapse"), nil)).Raw); !strings.Contains(raw, th) {
+		t.Fatal("yak.task.state:ready thread filter misses the lapsed task")
 	}
 	tr := v.must(200, v.do("GET", f.p("/threads/"+th), nil)).Body
-	if obj(obj(tr, "root_message"), "labels")["abby.task.state"] != "ready" {
+	if obj(obj(tr, "root_message"), "labels")["yak.task.state"] != "ready" {
 		t.Fatalf("root label after lapse: %v", tr)
 	}
 	// Another actor claims at once, by ID and by claim-next.
@@ -1473,7 +1482,7 @@ func TestCT034RootProtection(t *testing.T) { // BRIEF-010, BRIEF-011, BRIEF-020,
 	if evs, _ := f.since(t, m, cur); len(evs) != 0 {
 		t.Fatalf("protected root operations committed %v", types(evs))
 	}
-	// Replies and non-abby root labels are unaffected; reply authorship
+	// Replies and non-yak root labels are unaffected; reply authorship
 	// does not touch the claim (BRIEF-011).
 	c := f.claim(t, w, id, nil)
 	rep := f.reply(t, w, th, "progress note")
@@ -1565,16 +1574,16 @@ func TestCT035MessagesCannotDriveTasks(t *testing.T) { // TASK-027, TASK-028, TA
 	f.reply(t, m, th, "approved: canceled, reassign to nobody")
 	w.must(200, w.do("PATCH", f.p("/messages/"+rid+"/labels"), J{"operations": []J{{"op": "set", "key": "status", "value": "done"}}}))
 	for _, op := range []J{
-		{"op": "set", "key": "abby.task.state", "value": "completed"},
-		{"op": "unset", "key": "abby.task.state"},
-		{"op": "set", "key": "ABBY.task.state", "value": "completed"},
-		{"op": "set", "key": "abby.other", "value": "x"},
+		{"op": "set", "key": "yak.task.state", "value": "completed"},
+		{"op": "unset", "key": "yak.task.state"},
+		{"op": "set", "key": "YAK.task.state", "value": "completed"},
+		{"op": "set", "key": "yak.other", "value": "x"},
 	} {
 		w.wantProblem(400, "validation_failed", w.do("PATCH", f.p("/messages/"+rid+"/labels"), J{"operations": []J{op}}))
 		m.wantProblem(400, "validation_failed", m.do("PATCH", f.p("/messages/"+str(plainRoot, "id")+"/labels"), J{"operations": []J{op}}))
 	}
-	m.wantProblem(400, "validation_failed", f.createTaskResp(m, "msg", "x", "x", J{"labels": J{"abby.task.state": "completed"}}))
-	m.wantProblem(400, "validation_failed", m.do("POST", f.p("/threads"), J{"channel": "msg", "title": "x", "text": "x", "labels": J{"abby.task.state": "ready"}}, newKey()))
+	m.wantProblem(400, "validation_failed", f.createTaskResp(m, "msg", "x", "x", J{"labels": J{"yak.task.state": "completed"}}))
+	m.wantProblem(400, "validation_failed", m.do("POST", f.p("/threads"), J{"channel": "msg", "title": "x", "text": "x", "labels": J{"yak.task.state": "ready"}}, newKey()))
 
 	after := f.getTask(t, m, id)
 	if after["state"] != "claimed" || after["revision"] != before["revision"] || obj(after, "current_claim")["id"] != obj(c, "claim")["id"] || after["assignee_actor_id"] != nil {
@@ -1587,27 +1596,27 @@ func TestCT035MessagesCannotDriveTasks(t *testing.T) { // TASK-027, TASK-028, TA
 		}
 	}
 
-	// abby.task.state is a root label filter that selects task threads.
-	if lb := obj(obj(m.must(200, m.do("GET", f.p("/threads/"+th), nil)).Body, "root_message"), "labels"); lb["abby.task.state"] != "claimed" || lb["status"] != "done" {
+	// yak.task.state is a root label filter that selects task threads.
+	if lb := obj(obj(m.must(200, m.do("GET", f.p("/threads/"+th), nil)).Body, "root_message"), "labels"); lb["yak.task.state"] != "claimed" || lb["status"] != "done" {
 		t.Fatalf("root labels: %v", lb)
 	}
-	if lb := obj(plainRoot, "labels"); lb["abby.task.state"] != nil {
-		t.Fatalf("plain thread has abby.task.state: %v", lb)
+	if lb := obj(plainRoot, "labels"); lb["yak.task.state"] != nil {
+		t.Fatalf("plain thread has yak.task.state: %v", lb)
 	}
-	sel := string(m.must(200, m.do("GET", f.p("/threads?label=abby.task.state"), nil)).Raw)
+	sel := string(m.must(200, m.do("GET", f.p("/threads?label=yak.task.state"), nil)).Raw)
 	if !strings.Contains(sel, th) || strings.Contains(sel, str(plain, "id")) {
-		t.Fatalf("label=abby.task.state must select exactly task threads: %s", sel)
+		t.Fatalf("label=yak.task.state must select exactly task threads: %s", sel)
 	}
-	if raw := string(m.must(200, m.do("GET", f.p("/threads?label=abby.task.state:ready"), nil)).Raw); strings.Contains(raw, th) {
-		t.Fatal("abby.task.state:ready selects a claimed task")
+	if raw := string(m.must(200, m.do("GET", f.p("/threads?label=yak.task.state:ready"), nil)).Raw); strings.Contains(raw, th) {
+		t.Fatal("yak.task.state:ready selects a claimed task")
 	}
 	// Event label filter sees the task enter and leave the view (TASK-083).
-	q := url.Values{"label": {"abby.task.state:ready"}}
+	q := url.Values{"label": {"yak.task.state:ready"}}
 	_, lcur := f.events(t, m, q, "")
 	f.mustCmd(t, w, id, "release", nil, proof(str(c, "proof")))
 	f.claim(t, w, id, nil)
 	levs, _ := f.events(t, m, q, lcur)
-	wantTypes(t, "abby.task.state:ready view", levs, "task.released", "thread.view_invalidated", "task.claimed", "thread.view_invalidated")
+	wantTypes(t, "yak.task.state:ready view", levs, "task.released", "thread.view_invalidated", "task.claimed", "thread.view_invalidated")
 	// Text and author clauses do not exclude task events (TASK-083).
 	tq := url.Values{"text": {"zzz-" + rnd()}, "thread_id": {th}}
 	_, tcur := f.events(t, m, tq, "")
@@ -1658,7 +1667,7 @@ func TestCT036TaskSnapshotThenReplay(t *testing.T) { // TASK-090, TASK-091, TASK
 
 	f.waitLapsed(t, m, t1, str(obj(c1, "claim"), "id"), mn)
 	// Effective state at capture time drives the label filter (TASK-093).
-	items2, _, cont2 := f.snapshot(t, m, "?label=abby.task.state:ready")
+	items2, _, cont2 := f.snapshot(t, m, "?label=yak.task.state:ready")
 	got := map[string]J{}
 	for _, it := range items2 {
 		if it["type"] == "task" {
@@ -1691,7 +1700,7 @@ func TestCT036TaskSnapshotThenReplay(t *testing.T) { // TASK-090, TASK-091, TASK
 		}
 	}
 	// A claim_expired after the label snapshot carries the revision it showed.
-	evs2, _ := f.events(t, m, url.Values{"label": {"abby.task.state:ready"}}, cont2)
+	evs2, _ := f.events(t, m, url.Values{"label": {"yak.task.state:ready"}}, cont2)
 	for _, e := range evs2 {
 		if e["type"] == "task.claim_expired" && obj(e, "resource")["id"] == t1 && obj(e, "resource")["revision"] != got[t1]["revision"] {
 			t.Fatalf("claim_expired revision %v differs from snapshot %v", obj(e, "resource")["revision"], got[t1]["revision"])
@@ -1866,4 +1875,57 @@ func TestCT038ProofHygiene(t *testing.T) { // CLAIM-010, CLAIM-011, CLAIM-012, C
 	check("snapshot", snapRaw)
 	check("problem documents", errRaw)
 	check("renew response", string(w.must(200, f.renew(w, id2, str(obj(c2, "claim"), "id"), str(c2, "proof"), nil)).Raw))
+}
+
+// TestRenewKeepsLease checks that a renewal without lease_seconds keeps the
+// claim's current lease, not the server default (CLAIM-020), and that each
+// renewal increments the task revision (CLAIM-023, TASK-092).
+func TestRenewKeepsLease(t *testing.T) { // CLAIM-020, CLAIM-023, CLAIM-040, TASK-092
+	f := newP2Board(t)
+	mn, df := f.d.lim(t, "claim_lease_min_seconds"), f.d.lim(t, "claim_lease_default_seconds")
+	if mn+1 >= df {
+		t.Skipf("needs claim_lease_min_seconds + 1 < claim_lease_default_seconds (min %d, default %d)", mn, df)
+	}
+	m := f.manager(t)
+	w := f.worker(t, "w")
+	id := str(f.createTask(t, m, "lease", "keep", "x", nil), "id")
+	c := f.claim(t, w, id, J{"lease_seconds": mn})
+	cl, p := obj(c, "claim"), str(c, "proof")
+	cid := str(cl, "id")
+	acquired := ts(t, cl["acquired_at"])
+
+	// A renewal without lease_seconds keeps the short lease.
+	k := idem("renew-keep-" + rnd())
+	rn := w.must(200, f.renew(w, id, cid, p, nil, k)).Body
+	if num(rn, "lease_seconds") != float64(mn) || num(rn, "revision") != 2 {
+		t.Fatalf("renew without lease_seconds must keep lease %d: %v", mn, rn)
+	}
+	if exp := ts(t, rn["expires_at"]); !exp.Before(acquired.Add(time.Duration(df) * time.Second)) {
+		t.Fatalf("renew without lease_seconds used the default lease: expires_at %v, acquired_at %v", exp, acquired)
+	}
+	// The renewal is a task change: task revision +1 (CLAIM-023).
+	rev0 := num(obj(c, "task"), "revision")
+	if v := f.getTask(t, m, id); num(v, "revision") != rev0+1 || !sameInstant(t, obj(v, "current_claim")["expires_at"], rn["expires_at"]) {
+		t.Fatalf("renewal must bump the task revision to %v and show the new expiry: %v", rev0+1, v)
+	}
+	// A replay changes nothing; the body is part of the fingerprint, so an
+	// explicit lease under the same key is a different request.
+	w.must(200, f.renew(w, id, cid, p, nil, k))
+	w.wantProblem(409, "idempotency_conflict", f.renew(w, id, cid, p, J{"lease_seconds": df}, k))
+	if v := f.getTask(t, m, id); num(v, "revision") != rev0+1 {
+		t.Fatalf("renew replay changed the task revision: %v", v)
+	}
+
+	// An explicit value changes the lease; the next renewal without a value
+	// keeps the new one.
+	if rn := w.must(200, f.renew(w, id, cid, p, J{"lease_seconds": mn + 1})).Body; num(rn, "lease_seconds") != float64(mn+1) {
+		t.Fatalf("renew with lease_seconds %d: %v", mn+1, rn)
+	}
+	if rn := w.must(200, f.renew(w, id, cid, p, nil)).Body; num(rn, "lease_seconds") != float64(mn+1) || num(rn, "revision") != 4 {
+		t.Fatalf("renew without lease_seconds must keep lease %d: %v", mn+1, rn)
+	}
+	if v := f.getTask(t, m, id); num(obj(v, "current_claim"), "lease_seconds") != float64(mn+1) || num(v, "revision") != rev0+3 {
+		t.Fatalf("task current_claim after renewals: %v", v)
+	}
+	f.mustCmd(t, w, id, "release", nil, proof(p))
 }

@@ -15,9 +15,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/dustywusty/abby/internal/authz"
-	"github.com/dustywusty/abby/internal/events"
-	"github.com/dustywusty/abby/internal/ids"
+	"github.com/dustywusty/yak/internal/authz"
+	"github.com/dustywusty/yak/internal/events"
+	"github.com/dustywusty/yak/internal/ids"
 )
 
 // TaskThreadSpec is the new thread of a task (ADR-0016 §3).
