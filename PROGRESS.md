@@ -66,7 +66,22 @@ Contract feedback from building it (open spec issues):
 - Design §11 routes not implemented: reactions, schemas, attachments, tasks
   (P2), SSE, subscriptions, deliveries, schedules, external links.
 
-## Next bounded work package: P2 tasks and claims
+## P2 — tasks and claims: gate PASSED (2026-11-20, commit db4ac4a)
+- Contract: `spec/p2-tasks.md`, ADR-0004/0008/0016 (owner-approved), 22 more
+  OpenAPI operations, 28 schemas. Server: migration 0002, domain, HTTP,
+  claim-expiry sweeper (correctness does not depend on it). CLI: `abby task …`,
+  resumable plan batches, `abby run` runner.
+- Verification: 47 black-box conformance tests (P1 + CT-007..012, CT-025..027,
+  CT-029..038, written from the spec independently of the server) pass with no
+  skips; reference Postgres tests with `-race`; `scripts/p2-gate.sh` (P1→P2
+  upgrade with live data, conformance, runner kill → takeover at epoch 2,
+  stale proof → claim_lost). Evidence: `docs/evidence/p2-gate-2026-11-20.md`.
+- Coordination instance upgraded to P2 (BOOT-05); roadmap imported (BOOT-02).
+
+**From now on the task ledger is the `abby-dev` board** (design §15.2). This
+file only summarizes; see `examples/build-abby/EVIDENCE.md` for IDs.
+
+## Former next work package: P2 tasks and claims (done)
 1. Owner review of `spec/p2-tasks.md`, ADR-0004/0008/0016.
 2. Migration 0002 (tasks, briefs, dependencies, claims) + domain + HTTP.
 3. Conformance CT-007..012, CT-025..027, CT-029..038; CLI `task` commands and
