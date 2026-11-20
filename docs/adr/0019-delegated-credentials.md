@@ -1,10 +1,9 @@
 # ADR-0019 Delegated credentials: an agent acts on behalf of a person
 
-Status: Proposed (draft for owner review, 2026-11-20). Not approved for
-implementation. Normative text: `spec/delegation.md` (DLG-001..140,
-CT-DLG-01..18). Builds on design §3.2, §4, §4.2, §13, PAR-039; ADR-0002;
-ADR-0003; ADR-0016. Designed together with ADR-0018 (operator mode, PR #6)
-and closes its conflicts C1 and C5. Abby task:
+Status: Accepted (owner, 2026-11-20). Normative text: `spec/delegation.md`
+(DLG-001..140, CT-DLG-01..18). Builds on design §3.2, §4, §4.2, §13,
+PAR-039; ADR-0002; ADR-0003; ADR-0016. Designed together with ADR-0018
+(operator mode, accepted) and closes its conflicts C1 and C5. Abby task:
 `task_sa3li42ffdox4bf5augfdus3he`.
 
 ## Context
@@ -171,8 +170,9 @@ Decision: two additive booleans on every credential,
 one to `true` if the issuer has `false`. `false` refuses issue, list,
 revoke-other (revoke-self stays allowed for logout), or delegation
 create, mint, revoke, with `403 credential_restricted`. Delegated
-credentials always have both `false`. A server may implement the pair
-without the rest of the profile (`abby.credentials.restrictions`).
+credentials always have both `false`. The pair ships first, alone, as
+the capability `abby.credentials.restrictions` (Q14). Operator-mode
+tokens have both `false` (Q2).
 
 Rejected: new scopes (`credentials`, `delegate`) in the scope list.
 Scopes are channel capabilities plus two roles and are intersected with
@@ -191,8 +191,8 @@ A through D**. `on_behalf_of_actor_id` and `delegation_id` cannot be set
 by any client input. `run_id` stays diagnostic; clients never show an
 `operator/…` run ID as proof. There is no "from the browser" or "human
 present" fact, because the server cannot see where a direct token lives.
-Q13 asks whether to add an issuer-declared, server-stored credential
-purpose; it would still be the person's claim, not proof.
+There is no issuer-declared credential purpose either (Q13); it would
+still be the person's claim, not proof.
 
 ### 8 Claims, ownership, idempotency, revocation
 
@@ -229,7 +229,7 @@ classes and never-delegable operations, for consent screens.
 
 ### 10 How the agent bridge uses this (informative)
 
-1. Person P creates a delegation to the bridge actor B (CLI in v1, see
+1. Person P creates a delegation to the bridge actor B (CLI in v1,
    Q2), for example `spec`, `server/*`, classes `read, message.post,
    task.create, task.claim`, 24 h.
 2. B (direct token, `may_delegate: true`) mints, per request, a delegated
@@ -246,19 +246,25 @@ classes and never-delegable operations, for consent screens.
   always-present field is the effective actor. This ADR keeps `actor_id`
   = authenticating actor and adds `on_behalf_of_actor_id` (§4). Both
   actors are recorded, as the design requires, but the shape differs.
-  Needs owner decision (Q1).
+  **Resolved:** the owner chose this shape (Q1).
 - **D2 — ADR-0018 gate is a label convention.** This ADR needs a
   server-known flag to enforce the human gate (§5). It amends ADR-0016
   (Task, CreateTaskRequest, PatchTaskRequest) and adds a step to the
-  ADR-0018 gate flow (set the flag when opening a gate). Q7.
-- **D3 — ADR-0018 C1/C5** are closed here (§6, §7). ADR-0018 option B
-  (in-browser exchange) becomes safe once `may_manage_credentials: false`
-  exists; that is ADR-0018's call.
+  ADR-0018 gate flow (set the flag when opening a gate). **Resolved**
+  (Q7): the field is added. Accepted ADR-0018 defines a gate as a
+  `blocked` task with `direct_action_required: true`; its approve flow
+  checks the flag and does not clear it, and the `gate` label is display
+  only (OPR-501, OPR-513, OPR-520, OPR-533).
+- **D3 — ADR-0018 C1/C5** are closed here (§6, §7). **Resolved:**
+  accepted ADR-0018 marks C1 and C5 closed. Its operator tokens have both
+  credential flags `false` (OPR-106). ADR-0018 keeps option A (pasted
+  token) for v1; option B stays out of v1.
 - **D4 — IDEM-002, TASK-042/043, TASK-052, AUTH-005, EVT-003/005** are
   amended by ID (spec §17). P1/P2 behavior for direct credentials does
   not change.
 - **D5 — PAR-039 is P4** in the design milestone table. The owner pulled
-  it forward; §15 and A3 of the design need an update on acceptance.
+  it forward; §15 and A3 of the design need an update with the
+  implementation.
 - **D6 — Self-issued chain stops at a different actor** in
   `Authenticate`. Delegation adds a cross-actor link (delegated credential
   → delegation → person's issuing credential). The cascade must be
@@ -275,55 +281,57 @@ classes and never-delegable operations, for consent screens.
 
 - One new server resource (delegation), two credential attributes, one
   task field, new attribution fields, one filter, three error codes.
+- Delivery order: the credential flags ship first and alone
+  (`abby.credentials.restrictions`, board task
+  `task_ej3tgn5syl5fqyesin6ge4f2pm`). The task field
+  `direct_action_required` is board task
+  `task_hm7cvzd6z553n4josm2vfypj54`.
+- Board archives (ADR-0017) export `direct_action_required` and the
+  attribution fields, and never export delegations or the credential
+  flags (ARC-031..033, ARC-040).
 - The authz package gains a combinator over two `Policy` values and an
   operation-class check. Every route needs a class in a table that a
   reference test checks for completeness.
 - Viewers must show "A for P". Old viewers show "A" — safe by default.
 - The bridge example can be built with least privilege per request.
 
-## Open questions for the owner
+## Owner decisions (2026-11-20)
 
-1. **Attribution shape (D1).** Keep `actor_id` = agent and add
-   `on_behalf_of_actor_id` = person? Recommended: yes. Old clients then
-   never show an agent's words as the person's.
-2. **Can the operator-mode browser token create delegations
-   (`may_delegate: true`)?** Recommended: no in v1. Create delegations
-   with the CLI. Allow it from the browser when the server session
-   endpoint (ADR-0018 option C) or OIDC exists, with a consent screen.
-3. **Is a delegation tied to the person's issuing credential (cascade)
-   or to the person's actor?** Recommended: cascade (DLG-024). It matches
-   the existing chain rule, and "revoke my token" then stops every agent.
-   Use a CLI token with a suitable lifetime to create delegations.
-4. **Effective authority: intersection of both actors, or the delegator
-   only?** Recommended: intersection (§2).
-5. **When a delegation ends, do its active claims lapse or are they
-   released at once?** Recommended: lapse (≤ 300 s), as TASK-042 does for
-   lost rights. The runner stops on the first `401`. The person can
-   block the task to end it at once.
-6. **Add an OR filter for "author or on behalf of P"?** Recommended: no.
-   Two reads are enough for v1; revisit with the viewer.
-7. **Gate marker: server field `direct_action_required`, or label-only
-   gates?** Recommended: add the field. Without it, the only protection
-   is advice to leave `task.manage` and `task.settle` out of delegations
-   (DLG-097).
-8. **Subscriptions and schedules (P3) under delegation?** Recommended:
-   not in v1 (DLG-095). They outlive the request and need their own
-   suspension rules.
-9. **Only `human` actors can delegate?** Recommended: yes in v1. Agent
-   to sub-agent delegation (chains) is a later decision.
-10. **Must the delegate be an agent that the person owns
-    (`owner_actor_id`)?** Recommended: no. The shared bridge is owned by
-    an administrator, and intersection already needs grants for the agent.
-11. **Expiry limits: default 24 h, maximum 30 days, delegated credential
-    maximum 24 h; no `max_uses`?** Recommended: yes.
-12. **Can board admins list or revoke delegations that cover their
-    board?** Recommended: not in v1. They see create and revoke in board
-    audit and can cut an agent off with a deny grant (intersection makes
-    that complete). Add a board-scoped list later if needed.
-13. **Add an issuer-declared credential purpose (for example
-    `purpose: "operator"`) that readers can see?** Recommended: no. It is
-    still the person's claim, not proof, and invites misplaced trust.
-    The trusted fact is direct vs delegated (§7).
-14. **Ship the credential restriction pair (§6) first, alone, as
-    `abby.credentials.restrictions`?** Recommended: yes. It fixes
-    ADR-0018 C1 for operator mode without waiting for delegation.
+The owner accepted every recommendation of the draft.
+
+1. Attribution shape (D1): `actor_id` stays the agent (authenticating
+   actor). New `on_behalf_of_actor_id` names the person, with
+   `delegation_id` (DLG-100).
+2. Operator-mode browser token and `may_delegate`: no in v1. Create
+   delegations with the CLI. Allow it from the browser only with the
+   server session endpoint (ADR-0018 option C) or OIDC, and a consent
+   screen (DLG-039, OPR-106).
+3. Delegation lifetime: tied to the person's issuing credential
+   (cascade, DLG-024). Revoking that token stops every agent.
+4. Effective authority: the person's current grants AND the agent's
+   current grants AND both ceilings. A deny on either actor wins
+   (DLG-070, DLG-071).
+5. Claims when a delegation ends: they lapse (≤ 300 s), as in TASK-042.
+   The runner stops on the first `401` (DLG-116).
+6. OR filter "author or on behalf of P": no. Two reads in v1 (DLG-103).
+7. Gate marker: add the task field `direct_action_required`. A delegated
+   credential cannot unblock, claim, renew, release, complete, fail,
+   change the brief or root labels, or remove the task as a
+   prerequisite (DLG-090..093). ADR-0018's approve flow uses the field.
+8. Subscriptions and schedules (P3) under delegation: not in v1
+   (DLG-095).
+9. Delegators: `human` actors only in v1 (DLG-011). No chains.
+10. Delegate ownership: not required. The delegate need not be owned by
+    the delegator (DLG-012).
+11. Expiry limits: default 24 h, maximum 30 days, delegated credential
+    maximum 24 h. No `max_uses` (DLG-002).
+12. Board admins and delegations: no list or revoke in v1. They see
+    create and revoke in board audit and can cut an agent off with a deny
+    grant (DLG-131, DLG-133).
+13. Issuer-declared credential purpose: no. The trusted fact is direct or
+    delegated (DLG-106..108).
+14. Credential flags first: yes. `may_manage_credentials` and
+    `may_delegate` ship first and separately as
+    `abby.credentials.restrictions`. Default: the issuer's value. A child
+    can never turn one back to `true`. A refusal is
+    `403 credential_restricted` (DLG-004, DLG-036..038).

@@ -1,12 +1,12 @@
-# Abby delegated credentials, version 1 (draft) — optional profile `abby.delegation`
+# Abby delegated credentials, version 1 — optional profile `abby.delegation`
 
-Status: draft for owner review (2026-11-20). Not approved for
-implementation. This document will be normative for the `abby.delegation`
-profile when the owner accepts it. It extends `spec/protocol.md`
+Status: accepted (owner, 2026-11-20). This document is normative for the
+`abby.delegation` profile and for the capability
+`abby.credentials.restrictions`. It extends `spec/protocol.md`
 (`abby.p1.core`) and `spec/p2-tasks.md` (`abby.p2.tasks`). Every P1 and P2
 requirement still applies, unless a requirement here amends it by ID. The
-decision record is ADR-0019; "Q1..Q14" below are the open questions
-in ADR-0019. Abby task: `task_sa3li42ffdox4bf5augfdus3he`.
+decision record is ADR-0019; "Q1..Q14" below are the owner decisions in
+ADR-0019. Abby task: `task_sa3li42ffdox4bf5augfdus3he`.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are used as in RFC 2119.
 Every MUST maps to a check in the traceability table (§16).
@@ -71,12 +71,19 @@ schedules, P3) under delegation is deferred (DLG-095).
   `delegation_max_seconds` (reference 2592000, 30 days),
   `delegation_default_seconds` (reference 86400),
   `delegated_credential_max_seconds` (reference 86400), and
-  `max_active_delegations_per_delegator` (reference 100).
+  `max_active_delegations_per_delegator` (reference 100). There is no
+  use-count limit (`max_uses`) on a delegation or a delegated credential
+  (Q11).
 - **DLG-003** Discovery MUST add an object `delegation` with
   `operation_classes` (the list in §5, in that order) and
   `never_delegable` (the list of operation names in §6). Clients use it to
   build consent screens. It MUST NOT contain secrets or board data
   (DISC-002).
+- **DLG-004** A server that implements DLG-036..038 MUST list the
+  capability `abby.credentials.restrictions` in discovery. A server that
+  lists `abby.delegation` MUST also list it. The restriction pair ships
+  first, alone, before the rest of this profile (Q14). A server MAY list
+  `abby.credentials.restrictions` without `abby.delegation`.
 
 ## 3 The delegation resource
 
@@ -101,12 +108,15 @@ schedules, P3) under delegation is deferred (DLG-095).
 
   `scopes` MUST NOT contain `*`, `board_admin`, or `server_admin`
   (DLG-060). Sets are sorted and de-duplicated (ADR-0003 normalization).
-- **DLG-011** The delegator MUST be an actor of kind `human`. A request
-  whose effective actor is of another kind MUST get `403 forbidden`.
+- **DLG-011** The delegator MUST be an actor of kind `human` (Q9). A
+  request whose effective actor is of another kind MUST get `403
+  forbidden`. There are no delegation chains in v1.
 - **DLG-012** The delegate MUST be an existing, enabled actor of kind
   `agent` or `service`, and MUST NOT be the delegator. Otherwise `400
   validation_failed`. The server MUST NOT reveal whether the delegate can
-  read any board (no membership check, no error that depends on it).
+  read any board (no membership check, no error that depends on it). The
+  server MUST NOT require that the delegator owns the delegate
+  (`owner_actor_id`) (Q10).
 - **DLG-013** A delegation is immutable after creation, except for
   revocation. To change a ceiling, revoke and create a new delegation.
   There is no `PATCH`.
@@ -140,7 +150,7 @@ schedules, P3) under delegation is deferred (DLG-095).
 - **DLG-024** The delegation records the calling credential as its
   issuing credential. If that credential is revoked, or its own issuance
   chain is broken, the delegation MUST stop authorizing at the next check,
-  as if revoked with reason `issuer_revoked`. (Open question Q3.)
+  as if revoked with reason `issuer_revoked`. (Q3: cascade, not actor.)
 - **DLG-025** Consent. The delegator consents by creating the delegation.
   The delegate consents by minting a delegated credential (§4.2). Until
   then, the delegation authorizes nothing. A client that offers delegation
@@ -187,10 +197,10 @@ ADR-0018 found that any credential can issue child credentials and revoke
 the person's other credentials (its conflict C1). A stolen operator token
 can therefore revoke the person's CLI token. The same gap would let a
 stolen operator token create delegations. This profile closes both with
-one additive pair of credential attributes. They are part of this profile
-so that ADR-0018 and ADR-0019 use one design. A server MAY implement them
-without the rest of `abby.delegation`; it then lists the capability
-`abby.credentials.restrictions` in discovery.
+one additive pair of credential attributes. They are part of this
+document so that ADR-0018 and ADR-0019 use one design. They ship first,
+alone, as the capability `abby.credentials.restrictions` (DLG-004, Q14).
+This closes ADR-0018 conflict C1.
 
 - **DLG-036** A credential has two boolean attributes:
   `may_manage_credentials` and `may_delegate`. Both appear in every
@@ -210,9 +220,10 @@ without the rest of `abby.delegation`; it then lists the capability
   (`403 forbidden`; the AUTH-005 narrowing rule).
 - **DLG-038** Every delegated credential has both attributes `false`. A
   request to mint one with `true` MUST return `400 validation_failed`.
-- **DLG-039** Operator-mode tokens (ADR-0018 option A) SHOULD be minted
-  with `may_manage_credentials: false`. Whether they get `may_delegate:
-  true` is open question Q2 in ADR-0019.
+- **DLG-039** An operator-mode token (ADR-0018 option A) MUST have
+  `may_manage_credentials: false` and `may_delegate: false`. In v1,
+  people create delegations with the CLI, not from the browser (Q2). The
+  operator client refuses a token with either flag `true` (OPR-106).
 
 ### 4.4 Presenting a delegation
 
@@ -306,7 +317,7 @@ credential's `operations` (**DLG-050**). Reads of hidden resources stay
   direct credentials (design §4): evaluate P's policy and A's policy with
   the existing function and combine them with AND.
 - **DLG-071** **Both actors' grants.** Step 7 is the intersection of the
-  delegator's and the delegate's current rights. A deny on either actor
+  delegator's and the delegate's current rights (Q4). A deny on either actor
   wins. A private boundary that admits only one of them admits neither.
   (ADR-0019 explains why this is not "delegator only".)
 - **DLG-072** **Private boundary in a ceiling.** A delegation channel
@@ -351,19 +362,21 @@ credential's `operations` (**DLG-050**). Reads of hidden resources stay
 
 ## 9 Gate tasks and the human-gate rule
 
-The P2 profile has no approval resource. Two approval shapes are in use or
-in draft, and both are ordinary task transitions:
+The P2 profile has no approval resource. Two approval shapes are in use,
+and both are ordinary task transitions:
 
 - Review task (BUILD_ABBY_WITH_ABBY BOOT-03): approval is the
   **completion** of a review task by the reviewer.
-- Operator-mode gate (ADR-0018 §7, OPR-501): a `blocked` task with root
-  label `gate=pending`; approval is the **unblock** by a manager, then the
-  label `gate=approved`.
+- Operator-mode gate (ADR-0018 §7, OPR-501): a `blocked` task with
+  `direct_action_required: true`; approval is the **unblock** by a
+  manager with a direct credential. The root label `gate=approved`
+  follows for display only.
 
-ADR-0018 keeps `gate` as a board label convention that the server does not
-know. A server cannot protect a convention it does not know. So this
-profile adds one task field that marks a task as a gate for both shapes.
-(Open question Q7 covers the label-only alternative.)
+A server cannot protect a label convention it does not know. So this
+profile adds one task field that marks a task as a gate for both shapes
+(Q7: the field, not label-only gates). Accepted ADR-0018 uses this field
+for its gate, and its `gate` label is display only (resolves conflict
+D2).
 
 - **DLG-090** A task MAY have `direct_action_required: true` (a "gate
   task"). It is set at creation (`POST …/tasks`, batch item) or by
@@ -371,8 +384,11 @@ profile adds one task field that marks a task as a gate for both shapes.
   direct credential. The default is `false`. This amends ADR-0016
   (`Task`, `CreateTaskRequest`, `PatchTaskRequest`). The field is in
   every task view and in `task.created` / `task.updated` payloads. An
-  agent that opens a gate (ADR-0018 §6.4) SHOULD set the field when it
-  creates the task, or ask the owner to set it.
+  actor that opens a gate MUST set the field (at creation, or by `PATCH`
+  with a direct credential) before it blocks the task and sets the
+  display label `gate=pending` (OPR-533). A label without the field is
+  not a gate. An agent that holds only a delegated credential asks the
+  owner to set it.
 - **DLG-091** For a gate task, these operations MUST return `403
   forbidden` with code `direct_action_required` when the credential is
   delegated: **unblock**, claim, renew, release, complete, fail,
@@ -396,15 +412,18 @@ profile adds one task field that marks a task as a gate for both shapes.
   show a `task.unblocked` or `task.completed` event as a person's approval
   if its `on_behalf_of_actor_id` is not `null`. It shows "A for P" and no
   approval badge. (This rule protects tasks that were not marked as gates.)
-- **DLG-097** Until a server implements DLG-090, a delegator SHOULD NOT
-  put `task.manage` or `task.settle` in a delegation whose channels hold
-  gates or review tasks. Clients that create delegations SHOULD warn.
+- **DLG-097** A server that lists `abby.delegation` MUST implement
+  DLG-090..093 (Q7). There is no label-only gate mode. A client that
+  creates delegations SHOULD still warn when a delegation includes
+  `task.manage` or `task.settle` on channels that hold review tasks,
+  because a review task that is not marked as a gate is protected only
+  by the display rule DLG-096.
 
 Durable automation (P3) is not delegable in this version:
 
 - **DLG-095** When P3 is present, creating a subscription or schedule with
   a delegated credential MUST return `403 forbidden`, code
-  `not_delegable`. (Open question Q8.)
+  `not_delegable`. (Q8: not in v1.)
 
 ## 10 Attribution
 
@@ -412,8 +431,9 @@ The design says: "record the effective actor, authenticating actor when
 delegated, credential identifier, and optional run ID separately" (§3.2).
 This profile records all four. The field that already exists on every
 record (`actor_id`, `author_actor_id`) keeps its P1 meaning: **the actor
-that authenticated**. A new field names the principal. ADR-0019 explains
-the choice (old clients must never show an agent's words as the person's).
+that authenticated**. A new field names the principal (Q1). ADR-0019
+explains the choice (old clients must never show an agent's words as the
+person's). This resolves conflict D1.
 
 - **DLG-100** Every record of a write made under delegation MUST carry
   `on_behalf_of_actor_id` = P and `delegation_id` = D, next to the
@@ -440,8 +460,8 @@ the choice (old clients must never show an agent's words as the person's).
 - **DLG-103** The event filter vocabulary (EVT-005) gains
   `on_behalf_of` (actor ID). `author_id` keeps matching the authenticating
   actor only. A viewer that wants "everything for Dusty" uses
-  `author_id=Dusty` and `on_behalf_of=Dusty` in two reads. (Open question
-  Q6: an OR filter.)
+  `author_id=Dusty` and `on_behalf_of=Dusty` in two reads. (Q6: no OR
+  filter in v1.)
 - **DLG-104** A client that renders attribution SHOULD show both actors,
   for example "abby-bridge for Dusty". It MUST NOT show the delegator
   alone.
@@ -469,9 +489,9 @@ this, or an agent for the person?"
   presence. A client MAY show it marked "unverified".
 - **DLG-108** The profile does not add a "from the browser" or "human
   present" fact. Any such fact is either client data or a property of
-  where a person keeps a direct token, which the server cannot see. (Open
-  question Q13 covers a server-stored, issuer-declared credential
-  purpose.)
+  where a person keeps a direct token, which the server cannot see. It
+  adds no issuer-declared credential purpose that readers can see (Q13).
+  This closes ADR-0018 conflict C5 (OPR-606).
 
 ## 11 Ownership, authorship, claims
 
@@ -504,8 +524,8 @@ this, or an agent for the person?"
   MUST get `403 forbidden`.
 - **DLG-116** A claim is not revoked when its delegation ends. It lapses at
   `expires_at` (TASK-042), or a manager blocks the task. Runners MUST stop
-  their managed process on `401` from a renew (CLAIM-055). (Open question
-  Q5.)
+  their managed process on `401` from a renew (CLAIM-055). (Q5: lapse,
+  not release.)
 - **DLG-117** `assignee=me` in claim-next and task lists means the
   effective actor P under delegation.
 
@@ -541,7 +561,10 @@ this, or an agent for the person?"
   caller's delegations (direct credential only) in `(created_at, id)`
   order with keyset tokens (PAGE-001). `GET /v1/delegations/{id}` reads
   one. Other actors get `404`. Server administrators MAY list all with
-  `GET /v1/delegations?all=true`.
+  `GET /v1/delegations?all=true`. Board administrators MUST NOT list or
+  revoke delegations through a board role in v1 (Q12). They see create
+  and revoke in board audit (DLG-131) and can cut an agent off with a deny
+  grant (DLG-071).
 
 ## 14 Errors (additions)
 
@@ -605,9 +628,8 @@ An event written by the bridge for the person:
 
 `CT` = black-box conformance test in `conformance/` (planned names). `REF`
 = reference-server test in `internal/` (planned). Scenario IDs use the
-prefix `CT-DLG-` so that they cannot collide with numbers that other
-drafts take (ADR-0017 uses CT-039..048; ADR-0018, PR #6, is a draft); the
-owner can renumber them on acceptance.
+prefix `CT-DLG-` so that they cannot collide with the numbers of other
+contracts (ADR-0017 uses CT-039..048).
 
 | ID | Scenario | Required result |
 |---|---|---|
@@ -633,6 +655,7 @@ owner can renumber them on acceptance.
 | Requirement | Verification |
 |---|---|
 | DLG-001..003 | CT-DLG-15 (TestDelegationDiscovery); schema checks |
+| DLG-004 | CT-DLG-18 (capability listed; listed with the profile); CT-DLG-15 |
 | DLG-010..014 | CT TestDelegationCreateView; schema checks; CT-DLG-17 |
 | DLG-020..023, DLG-027 | CT-DLG-01 (TestDelegationCeiling); CT TestDelegationLimits |
 | DLG-024 | CT-DLG-07 (TestDelegationCascades) |
@@ -662,7 +685,10 @@ owner can renumber them on acceptance.
 | DLG-130..133 | CT-DLG-17 (TestDelegationAudit) |
 | DLG-140 | CT TestDelegatedErrorsNoLeak |
 
-## 17 Amendments to other documents (on acceptance)
+## 17 Amendments to other documents
+
+The owner accepted this profile on 2026-11-20. The changes below land
+with the implementation, except where the row says it is done.
 
 | Document | Change |
 |---|---|
@@ -672,6 +698,7 @@ owner can renumber them on acceptance.
 | `spec/protocol.md` EVT-003, EVT-005 | New event fields (DLG-100) and the `on_behalf_of` filter (DLG-103). |
 | `spec/p2-tasks.md` TASK-042, TASK-043, TASK-052 | Same-pair rule (DLG-115); eligibility by effective actor (DLG-113). |
 | `spec/protocol.md` AUTH-005, `POST /v1/credentials` | `may_manage_credentials`, `may_delegate` (DLG-036..038); closes ADR-0018 C1. |
-| `spec/operator-mode.md` OPR-502, OPR-602, OPR-603 | Approval display rule DLG-096; `run_id` is never proof (DLG-107). |
+| `spec/operator-mode.md` OPR-106, OPR-107, OPR-501..502, OPR-513, OPR-520, OPR-533, OPR-603, OPR-606 | Done in the accepted operator-mode contract: flags `false` on operator tokens, direct credentials only, gate = `blocked` + `direct_action_required`, label display only, approval display rule DLG-096, `run_id` is never proof (DLG-107). |
+| `spec/archive.md` ARC-031..033, ARC-040 | Done in the accepted archive contract: archives keep `direct_action_required` and the attribution fields; delegations and credential flags are never exported. |
 | ADR-0016 | `direct_action_required` on Task; attribution fields on Task, Brief, Claim, block. |
 | `docs/design/Abby_Design.md` §15, A3 | PAR-039 moves from P4 to the chat-with-agents milestone. |
