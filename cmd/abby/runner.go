@@ -15,6 +15,9 @@ package main
 //	running: child + renew loop (every lease/3 ± 10 %)
 //	   ├─ child exit 0 ─────▶ stop renewals ─▶ complete ─▶ exit 0
 //	   ├─ child exit ≠ 0 ───▶ stop renewals ─▶ fail ─────▶ exit 11
+//	   │     (result file unusable, or complete/fail rejected 400/413
+//	   │      ─▶ renew ─▶ release ─▶ exit 13, even if the release fails;
+//	   │      never settle without the result it was given)
 //	   ├─ claim_lost/403/404/401 on renew ─▶ stop child ─▶ exit 9
 //	   ├─ no renewal confirmed by deadline − margin
 //	   │                    ─▶ stop child, no more writes ─▶ exit 10
@@ -29,6 +32,7 @@ package main
 // (RUN-006); each renewal has its own key (RUN-002).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,6 +47,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/abby-protocol/abby/sdk/go/abby"
 )
@@ -82,11 +87,35 @@ type runReport struct {
 	ExecutionID string     `json:"execution_id,omitempty"`
 	Epoch       int64      `json:"epoch,omitempty"`
 	RunID       string     `json:"run_id,omitempty"`
-	Outcome     string     `json:"outcome"` // completed | failed | released | claim_lost | lease_unconfirmed | no_work | interrupted
+	Outcome     string     `json:"outcome"` // completed | failed | released | result_rejected | claim_lost | lease_unconfirmed | no_work | interrupted
 	ExitStatus  *int       `json:"exit_status,omitempty"`
 	Renewals    int        `json:"renewals"`
 	Task        *abby.Task `json:"task,omitempty"`
 	Detail      string     `json:"detail,omitempty"`
+	// EvidenceMapped lists result-file evidence whose kind the protocol
+	// does not accept; each was sent as kind "other".
+	EvidenceMapped []string `json:"evidence_mapped,omitempty"`
+	// RejectedResult is the result the runner did not settle (outcome
+	// result_rejected), kept so it can be corrected and settled again.
+	RejectedResult *rejectedResult `json:"rejected_result,omitempty"`
+	// ReleaseError is set when the release after a rejected result failed.
+	ReleaseError string `json:"release_error,omitempty"`
+}
+
+// rejectedResult is a result the runner did not settle. Status is the
+// server's HTTP status (400/413), or 0 with code result_file_unusable when
+// the command's result file could not be used.
+type rejectedResult struct {
+	Settlement string          `json:"settlement"` // complete | fail
+	Status     int             `json:"status"`
+	Code       string          `json:"code"`
+	Detail     string          `json:"detail,omitempty"`
+	Summary    string          `json:"summary,omitempty"`
+	Reason     string          `json:"reason,omitempty"`
+	Evidence   []abby.Evidence `json:"evidence,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
+	// Raw is the result file as read (up to 64 KiB) when it could not be used.
+	Raw string `json:"raw,omitempty"`
 }
 
 type runner struct {
@@ -570,26 +599,39 @@ type childResult struct {
 	Data     json.RawMessage `json:"data"`
 }
 
-func readChildResult(path string) (*childResult, error) {
+// maxResultFileBytes bounds the result file the runner reads.
+const maxResultFileBytes = 1 << 20
+
+// readChildResult reads $ABBY_RESULT_FILE. A missing file is (nil, nil,
+// nil). A file that exists but cannot be used (I/O error, larger than
+// maxResultFileBytes, not exactly one JSON object, unknown fields) is an
+// error; raw holds what was read, for the report.
+func readChildResult(path string) (cr *childResult, raw []byte, err error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
+	raw, err = io.ReadAll(io.LimitReader(f, maxResultFileBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, raw, err
 	}
-	var cr childResult
-	dec := json.NewDecoder(strings.NewReader(string(b)))
+	if len(raw) > maxResultFileBytes {
+		return nil, raw[:maxResultFileBytes], fmt.Errorf("result file is larger than %d bytes", maxResultFileBytes)
+	}
+	cr = &childResult{}
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&cr); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+	if err := dec.Decode(cr); err != nil {
+		return nil, raw, fmt.Errorf("result file is not a valid result object: %w", err)
 	}
-	return &cr, nil
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, raw, errors.New("result file has content after the result object")
+	}
+	return cr, raw, nil
 }
 
 // buildData merges the command's data object with the runner's fields.
@@ -611,41 +653,42 @@ func buildData(fromChild json.RawMessage, status int, signal string, elapsed tim
 func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile string, elapsed time.Duration) (*runReport, error) {
 	status := ch.status
 	r.rep.ExitStatus = &status
-	cres, rerr := readChildResult(resultFile)
-	if rerr != nil {
-		r.logf("ignoring the command's result file: %v", rerr)
-		cres = nil
+	settlement := "fail"
+	if status == 0 && ch.signal == "" {
+		settlement = "complete"
 	}
-	baseData, _ := buildData(nil, status, ch.signal, elapsed)
+	// A result file that exists but cannot be used is never dropped: the
+	// runner does not settle without it (same path as a server rejection).
+	cres, raw, rerr := readChildResult(resultFile)
+	if rerr != nil {
+		return r.resultRejected(ctx, &rejectedResult{Settlement: settlement, Code: "result_file_unusable", Detail: rerr.Error(), Raw: reportRaw(raw)})
+	}
+	data, err := buildData(nil, status, ch.signal, elapsed)
+	if err != nil {
+		return &r.rep, err
+	}
 	evidence := append([]abby.Evidence(nil), r.opt.Evidence...)
 	summary := r.opt.Summary
-	data := baseData
 	if cres != nil {
-		evidence = append(evidence, cres.Evidence...)
+		evidence = append(evidence, r.normalizeEvidence(cres.Evidence)...)
 		if cres.Summary != "" {
 			summary = cres.Summary
 		}
-		if d, err := buildData(cres.Data, status, ch.signal, elapsed); err == nil {
-			data = d
-		} else {
-			r.logf("ignoring the command's result data: %v", err)
+		d, err := buildData(cres.Data, status, ch.signal, elapsed)
+		if err != nil {
+			return r.resultRejected(ctx, &rejectedResult{Settlement: settlement, Code: "result_file_unusable", Detail: err.Error(),
+				Summary: summary, Evidence: evidence, Raw: reportRaw(raw)})
 		}
+		data = d
 	}
 
-	if status == 0 && ch.signal == "" {
+	if settlement == "complete" {
 		res := abby.Result{Summary: summary, Evidence: evidence, Data: data}
 		t, err := r.settle(ctx, "complete", func(c context.Context, key string) (*abby.Task, error) {
 			return r.ops.Complete(c, r.taskID, r.proof, res, key)
 		})
-		if err != nil && cres != nil && isRejectedResult(err) {
-			// The command's result was refused (too large, bad evidence).
-			// Settle with the runner's own fields under a new key; a
-			// rejected request reserves no key (IDEM-004).
-			r.logf("server refused the command's result (%v); completing without it", err)
-			res = abby.Result{Summary: r.opt.Summary, Evidence: r.opt.Evidence, Data: baseData}
-			t, err = r.settle(ctx, "complete", func(c context.Context, key string) (*abby.Task, error) {
-				return r.ops.Complete(c, r.taskID, r.proof, res, key)
-			})
+		if isRejectedResult(err) {
+			return r.resultRejected(ctx, withProblem(err, &rejectedResult{Settlement: "complete", Summary: summary, Evidence: evidence, Data: data}))
 		}
 		if err != nil {
 			return r.settleFailed(err)
@@ -668,12 +711,8 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 	t, err := r.settle(ctx, "fail", func(c context.Context, key string) (*abby.Task, error) {
 		return r.ops.Fail(c, r.taskID, r.proof, fr, key)
 	})
-	if err != nil && cres != nil && isRejectedResult(err) {
-		r.logf("server refused the command's result (%v); failing without it", err)
-		fr = abby.FailRequest{Reason: reason, Evidence: r.opt.Evidence, Data: baseData}
-		t, err = r.settle(ctx, "fail", func(c context.Context, key string) (*abby.Task, error) {
-			return r.ops.Fail(c, r.taskID, r.proof, fr, key)
-		})
+	if isRejectedResult(err) {
+		return r.resultRejected(ctx, withProblem(err, &rejectedResult{Settlement: "fail", Reason: reason, Evidence: evidence, Data: data}))
 	}
 	if err != nil {
 		return r.settleFailed(err)
@@ -687,5 +726,109 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 
 func isRejectedResult(err error) bool {
 	var p *abby.Problem
-	return errors.As(err, &p) && (p.Status == 400 || p.Status == 413)
+	return err != nil && errors.As(err, &p) && (p.Status == 400 || p.Status == 413)
+}
+
+// normalizeEvidence maps evidence kinds the protocol does not accept
+// (CLAIM-031) to "other" and keeps the original kind at the start of the
+// note, so nothing the command reported is lost or rejected for its kind.
+func (r *runner) normalizeEvidence(in []abby.Evidence) []abby.Evidence {
+	out := make([]abby.Evidence, 0, len(in))
+	for _, ev := range in {
+		if !validEvidenceKind(ev.Kind) {
+			orig := ev.Kind
+			ev.Kind = "other"
+			switch {
+			case orig == "":
+				// No kind to keep.
+			case ev.Note == "":
+				ev.Note = orig
+			default:
+				ev.Note = orig + ": " + ev.Note
+			}
+			r.rep.EvidenceMapped = append(r.rep.EvidenceMapped, fmt.Sprintf("%q -> other (ref %s)", orig, ev.Ref))
+			r.logf("result evidence kind %q is not one of %s; recording it as other (ref %s)", orig, evidenceKindList, ev.Ref)
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+// withProblem copies the server's problem into rr.
+func withProblem(err error, rr *rejectedResult) *rejectedResult {
+	var p *abby.Problem
+	if errors.As(err, &p) {
+		rr.Status, rr.Code, rr.Detail = p.Status, p.Code, p.Detail
+	}
+	return rr
+}
+
+// maxReportRawBytes bounds the raw result file kept in the report.
+const maxReportRawBytes = 64 << 10
+
+// reportRaw returns the raw result file as valid UTF-8 text for the report.
+func reportRaw(raw []byte) string {
+	return truncateUTF8(strings.ToValidUTF8(string(raw), "�"), maxReportRawBytes)
+}
+
+// truncateUTF8 shortens s to at most n bytes (plus "…") on a rune
+// boundary, so valid UTF-8 stays valid.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// resultRejected handles a result the runner must not settle without:
+// the server refused the complete or fail with 400 or 413, or the
+// command's result file exists but cannot be used (code
+// result_file_unusable, status 0). The runner never settles without the
+// result it was given: it keeps the claim alive with a renewal, reports
+// the result, and releases the claim with a reason that names the
+// problem, so the task is ready for a corrected settlement. It exits 13,
+// also when the release itself fails.
+func (r *runner) resultRejected(ctx context.Context, rr *rejectedResult) (*runReport, error) {
+	what := fmt.Sprintf("server rejected the %s result (%d %s: %s)", rr.Settlement, rr.Status, rr.Code, rr.Detail)
+	if rr.Status == 0 {
+		what = fmt.Sprintf("the command's result file cannot be used to %s (%s: %s)", rr.Settlement, rr.Code, rr.Detail)
+	}
+	r.rep.RejectedResult = rr
+	r.rep.Outcome = "result_rejected"
+	r.rep.Detail = what
+	r.logf("%s; NOT settling without it. Evidence it carried:", what)
+	for _, ev := range rr.Evidence {
+		r.logf("  %s %s %s", ev.Kind, ev.Ref, ev.Note)
+	}
+
+	// Keep the claim alive until the release is confirmed.
+	_, deadline, _ := r.snapshot()
+	if rerr := r.renewUntil(ctx, deadline.Add(-r.margin())); rerr != nil {
+		rep, ee := r.renewFailed(rerr)
+		rep.RejectedResult = rr
+		return rep, ee
+	}
+
+	// The reason must be valid UTF-8 (the server rejects it otherwise), so
+	// cut the problem text on a rune boundary.
+	reason := "abby run: " + truncateUTF8(strings.ToValidUTF8(what, "�"), 600) +
+		"; claim released so the work can be settled again with a corrected result, not without its evidence"
+	t, rerr := r.settle(ctx, "release", func(c context.Context, key string) (*abby.Task, error) {
+		return r.ops.Release(c, r.taskID, r.proof, reason, key)
+	})
+	r.rep.Renewals = r.renewals
+	if rerr != nil {
+		// Still exit 13: nothing was settled. The claim stays held until it
+		// lapses at expiry.
+		r.rep.ReleaseError = rerr.Error()
+		r.logf("release failed: %v; the claim lapses at expiry", rerr)
+		return &r.rep, &exitErr{exitResultRejected, fmt.Errorf("%s; release failed (%v); nothing settled, result kept in the report", what, rerr)}
+	}
+	r.rep.Task = t
+	r.logf("claim %s released; task %s is ready for a corrected settlement", r.claimID, r.taskID)
+	return &r.rep, &exitErr{exitResultRejected, fmt.Errorf("%s; claim released, result kept in the report", what)}
 }

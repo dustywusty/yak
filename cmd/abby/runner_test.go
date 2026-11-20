@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/abby-protocol/abby/sdk/go/abby"
 )
@@ -52,6 +53,8 @@ type fakeServer struct {
 	claimNext func(n int) string
 	nexts     int
 	claimCode string // if set, the claim route fails with this 409 code
+	// settleDetail is the problem detail for other settle statuses.
+	settleDetail string
 }
 
 func newFakeServer(t *testing.T, lease int) *fakeServer {
@@ -156,6 +159,22 @@ func (f *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		prev, replay := f.committed[rc.Key]
 		f.mu.Unlock()
 		state := map[string]string{"complete": "completed", "fail": "failed", "release": "ready"}[op]
+		// Like the real server (CLAIM-031): unknown evidence kinds are a
+		// 400 and reserve no key.
+		evs, _ := body["evidence"].([]any)
+		if res, ok := body["result"].(map[string]any); ok {
+			evs, _ = res["evidence"].([]any)
+		}
+		for _, e := range evs {
+			if k, _ := e.(map[string]any)["kind"].(string); !validEvidenceKind(k) {
+				problem(w, 400, "validation_failed")
+				return
+			}
+		}
+		if reason, ok := body["reason"].(string); ok && !utf8.ValidString(reason) {
+			problem(w, 400, "validation_failed") // "reason must be valid UTF-8"
+			return
+		}
 		if replay && prev == op {
 			w.Header().Set("Idempotent-Replayed", "true")
 			writeJSON(w, 200, taskView(state))
@@ -182,6 +201,10 @@ func (f *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			f.mu.Unlock()
 			problem(w, 503, "temporarily_unavailable")
 		default:
+			if f.settleDetail != "" {
+				writeJSON(w, st, map[string]any{"status": st, "code": "limit_exceeded", "detail": f.settleDetail, "request_id": "req"})
+				return
+			}
 			problem(w, st, "error")
 		}
 	default:
@@ -568,6 +591,262 @@ func TestRunClaimLostOnSettlement(t *testing.T) {
 	}
 }
 
+// BOOT-03 regression: a result file with kinds branch/check was rejected
+// and the runner completed without any evidence. Unknown kinds now go out
+// as "other" with the original kind in the note, and the server accepts
+// them on the first attempt.
+func TestRunMapsUnknownEvidenceKinds(t *testing.T) {
+	f := newFakeServer(t, 30)
+	script := `cat > "$ABBY_RESULT_FILE" <<'EOF'
+{"summary":"fixed","evidence":[
+ {"kind":"commit","ref":"0123456789abcdef0123456789abcdef01234567"},
+ {"kind":"branch","ref":"fix/runner-evidence"},
+ {"kind":"check","ref":"go test ./...","note":"ok"}]}
+EOF`
+	r := testRunner(t, f, sh(script), nil)
+	rep, err := r.run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if rep.Outcome != "completed" {
+		t.Fatalf("outcome = %s", rep.Outcome)
+	}
+	cs := f.requests("/complete")
+	if len(cs) != 1 {
+		t.Fatalf("complete attempts = %d, want 1", len(cs))
+	}
+	got, _ := json.Marshal(cs[0].Body["result"].(map[string]any)["evidence"])
+	want := `[{"kind":"commit","ref":"0123456789abcdef0123456789abcdef01234567"},` +
+		`{"kind":"other","note":"branch","ref":"fix/runner-evidence"},` +
+		`{"kind":"other","note":"check: ok","ref":"go test ./..."}]`
+	if string(got) != want {
+		t.Errorf("evidence sent:\n got %s\nwant %s", got, want)
+	}
+	if len(rep.EvidenceMapped) != 2 {
+		t.Errorf("evidence_mapped = %v, want 2 entries", rep.EvidenceMapped)
+	}
+}
+
+// When the server still rejects the result, the runner must not settle
+// without it: it keeps the claim (renews), releases with a reason that
+// names the rejection, reports the refused result, and exits 13.
+func TestRunResultRejectedReleasesWithoutSettling(t *testing.T) {
+	for _, tc := range []struct {
+		name, op, script string
+		status           int
+	}{
+		{"complete-413", "complete", "exit 0", 413},
+		{"fail-400", "fail", "exit 3", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeServer(t, 30)
+			f.settle = func(op string, n int) int {
+				if op == tc.op {
+					return tc.status
+				}
+				return 200
+			}
+			script := `printf '{"summary":"s","evidence":[{"kind":"commit","ref":"abc123"},{"kind":"branch","ref":"fix/x"}]}' > "$ABBY_RESULT_FILE"; ` + tc.script
+			r := testRunner(t, f, sh(script), func(o *runOptions) {
+				o.Evidence = []abby.Evidence{{Kind: "url", Ref: "https://example.test/pr/1"}}
+			})
+			rep, err := r.run(context.Background())
+			if code(err) != exitResultRejected {
+				t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
+			}
+			if rep.Outcome != "result_rejected" {
+				t.Errorf("outcome = %s", rep.Outcome)
+			}
+			// Exactly one settlement attempt, and never one without the evidence.
+			ss := f.requests("/" + tc.op)
+			if len(ss) != 1 {
+				t.Fatalf("%s attempts = %d, want 1 (no re-settle without the result)", tc.op, len(ss))
+			}
+			for _, other := range []string{"/complete", "/fail"} {
+				if other != "/"+tc.op && len(f.requests(other)) != 0 {
+					t.Errorf("%s called after the rejection", other)
+				}
+			}
+			// The claim was kept alive after the rejection, then released.
+			rel := f.requests("/release")
+			if len(rel) != 1 || rel[0].Proof != testProof {
+				t.Fatalf("release calls = %+v", rel)
+			}
+			reason := fmt.Sprint(rel[0].Body["reason"])
+			if !strings.Contains(reason, "rejected") || !strings.Contains(reason, strconv.Itoa(tc.status)) || !strings.Contains(reason, tc.op) {
+				t.Errorf("release reason = %q", reason)
+			}
+			renewedBetween := false
+			for _, q := range f.requests("/renew") {
+				if q.At.After(ss[0].At) && q.At.Before(rel[0].At) {
+					renewedBetween = true
+				}
+			}
+			if !renewedBetween {
+				t.Error("no renewal between the rejection and the release")
+			}
+			if rep.Task == nil || rep.Task.State != "ready" {
+				t.Errorf("task after release = %+v", rep.Task)
+			}
+			// The refused result is in the report, evidence intact.
+			rr := rep.RejectedResult
+			if rr == nil || rr.Settlement != tc.op || rr.Status != tc.status {
+				t.Fatalf("rejected_result = %+v", rr)
+			}
+			ev := fmt.Sprint(rr.Evidence)
+			for _, s := range []string{"abc123", "fix/x", "example.test"} {
+				if !strings.Contains(ev, s) {
+					t.Errorf("rejected_result evidence %s lacks %s", ev, s)
+				}
+			}
+		})
+	}
+}
+
+// Review F1 of 7d760f6: a result file that exists but cannot be used was
+// ignored, and the runner completed with no evidence. Now the runner
+// never settles: it renews, releases with a reason that names the
+// problem, keeps the raw file in the report, and exits 13.
+func TestRunUnusableResultFileReleasesWithoutSettling(t *testing.T) {
+	oversize := `{"evidence":[{"kind":"commit","ref":"abc"}],"summary":"` + strings.Repeat("a", maxResultFileBytes) + `"}`
+	for _, tc := range []struct {
+		name, file, exit, wantDetail string
+	}{
+		{"unknown-evidence-field", `{"evidence":[{"kind":"commit","ref":"abc","sha":"abc"}]}`, "0", `unknown field "sha"`},
+		{"unknown-top-level-key", `{"summary":"s","branch":"fix/x","evidence":[{"kind":"commit","ref":"abc"}]}`, "0", `unknown field "branch"`},
+		{"trailing-comma", `{"evidence":[{"kind":"commit","ref":"abc"},]}`, "0", "invalid character"},
+		{"content-after-object", `{"evidence":[{"kind":"commit","ref":"abc"}]} {"x":1}`, "0", "content after the result object"},
+		{"oversize", oversize, "0", "larger than"},
+		{"non-object-data", `{"evidence":[{"kind":"commit","ref":"abc"}],"data":[1,2]}`, "0", "must be a JSON object"},
+		{"fail-path-trailing-comma", `{"reason":"r","evidence":[{"kind":"commit","ref":"abc"},]}`, "3", "invalid character"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeServer(t, 30)
+			fixture := filepath.Join(t.TempDir(), "result.json")
+			if err := os.WriteFile(fixture, []byte(tc.file), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r := testRunner(t, f, sh(`cp `+fixture+` "$ABBY_RESULT_FILE"; exit `+tc.exit), nil)
+			rep, err := r.run(context.Background())
+			if code(err) != exitResultRejected {
+				t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
+			}
+			if rep.Outcome != "result_rejected" {
+				t.Errorf("outcome = %s", rep.Outcome)
+			}
+			for _, op := range []string{"/complete", "/fail"} {
+				if n := len(f.requests(op)); n != 0 {
+					t.Errorf("%s called %d times; must not settle without the result file", op, n)
+				}
+			}
+			rel := f.requests("/release")
+			if len(rel) != 1 || rel[0].Proof != testProof {
+				t.Fatalf("release calls = %+v", rel)
+			}
+			reason := fmt.Sprint(rel[0].Body["reason"])
+			if !strings.Contains(reason, "result file") || !strings.Contains(reason, "result_file_unusable") || !utf8.ValidString(reason) {
+				t.Errorf("release reason = %q", reason)
+			}
+			rs := f.requests("/renew")
+			if len(rs) == 0 || !rs[len(rs)-1].At.Before(rel[0].At) {
+				t.Error("no renewal before the release")
+			}
+			if rep.Task == nil || rep.Task.State != "ready" {
+				t.Errorf("task after release = %+v", rep.Task)
+			}
+			rr := rep.RejectedResult
+			if rr == nil || rr.Code != "result_file_unusable" || rr.Status != 0 || !strings.Contains(rr.Detail, tc.wantDetail) {
+				t.Fatalf("rejected_result = %+v", rr)
+			}
+			wantSettlement := map[string]string{"0": "complete", "3": "fail"}[tc.exit]
+			if rr.Settlement != wantSettlement {
+				t.Errorf("settlement = %s, want %s", rr.Settlement, wantSettlement)
+			}
+			if !strings.Contains(rr.Raw, `"ref":"abc"`) || len(rr.Raw) > maxReportRawBytes+len("…") {
+				t.Errorf("raw in report: %d bytes, has ref: %v", len(rr.Raw), strings.Contains(rr.Raw, `"ref":"abc"`))
+			}
+		})
+	}
+}
+
+// Review R1: the release reason is cut on a rune boundary, so a
+// multi-byte problem detail cannot make the release fail.
+func TestRunRejectedReleaseReasonIsValidUTF8(t *testing.T) {
+	f := newFakeServer(t, 30)
+	f.settle = func(op string, n int) int {
+		if op == "complete" {
+			return 413
+		}
+		return 200
+	}
+	f.settleDetail = "x" + strings.Repeat("é", 600) // 1201 bytes, odd offsets split runes
+	r := testRunner(t, f, sh("exit 0"), nil)
+	rep, err := r.run(context.Background())
+	if code(err) != exitResultRejected {
+		t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
+	}
+	if rep.ReleaseError != "" || rep.Task == nil || rep.Task.State != "ready" {
+		t.Fatalf("release did not succeed: release_error=%q task=%+v", rep.ReleaseError, rep.Task)
+	}
+	rel := f.requests("/release")
+	reason := fmt.Sprint(rel[0].Body["reason"])
+	if !utf8.ValidString(reason) || !strings.Contains(reason, "…") || len(reason) > 800 {
+		t.Errorf("reason (%d bytes) = %q", len(reason), reason)
+	}
+}
+
+func TestTruncateUTF8(t *testing.T) {
+	s := "x" + strings.Repeat("é", 10) // é is 2 bytes: offsets 2, 4, … split a rune
+	for n := 0; n <= len(s)+1; n++ {
+		got := truncateUTF8(s, n)
+		if !utf8.ValidString(got) {
+			t.Fatalf("n=%d: invalid UTF-8 %q", n, got)
+		}
+		if n >= len(s) && got != s {
+			t.Fatalf("n=%d: changed a short string: %q", n, got)
+		}
+		if n < len(s) && len(strings.TrimSuffix(got, "…")) > n {
+			t.Fatalf("n=%d: kept %d bytes", n, len(strings.TrimSuffix(got, "…")))
+		}
+	}
+}
+
+// Review R2: if the release after a rejection fails, the runner still
+// exits 13 (nothing was settled) and reports the release error.
+func TestRunRejectedReleaseFailureStillExits13(t *testing.T) {
+	f := newFakeServer(t, 30)
+	f.settle = func(op string, n int) int {
+		switch op {
+		case "complete":
+			return 413
+		case "release":
+			return 400
+		}
+		return 200
+	}
+	script := `printf '{"evidence":[{"kind":"commit","ref":"abc123"}]}' > "$ABBY_RESULT_FILE"`
+	r := testRunner(t, f, sh(script), nil)
+	rep, err := r.run(context.Background())
+	if code(err) != exitResultRejected {
+		t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
+	}
+	if rep.Outcome != "result_rejected" || rep.ReleaseError == "" {
+		t.Errorf("outcome = %s, release_error = %q", rep.Outcome, rep.ReleaseError)
+	}
+	if !strings.Contains(err.Error(), "release failed") {
+		t.Errorf("error = %v", err)
+	}
+	if rep.RejectedResult == nil || !strings.Contains(fmt.Sprint(rep.RejectedResult.Evidence), "abc123") {
+		t.Errorf("rejected_result = %+v", rep.RejectedResult)
+	}
+	if n := len(f.requests("/complete")); n != 1 {
+		t.Errorf("complete attempts = %d, want 1", n)
+	}
+	if n := len(f.requests("/release")); n != 1 {
+		t.Errorf("release attempts = %d, want 1 (a 400 is final)", n)
+	}
+}
+
 func TestRunTaskClaimedByAnother(t *testing.T) {
 	f := newFakeServer(t, 30)
 	f.claimCode = "task_claimed"
@@ -673,8 +952,13 @@ func TestParseEvidence(t *testing.T) {
 	if ev[0] != (abby.Evidence{Kind: "commit", Ref: "abc", Note: "the fix"}) || ev[1].Ref != "https://x.test/a:b" || ev[2].Ref != "note" {
 		t.Fatalf("got %+v", ev)
 	}
-	if _, err := parseEvidence([]string{"bogus:x"}); err == nil {
-		t.Error("bad kind accepted")
+	for _, bad := range []string{"bogus:x", "branch:fix/x", "check:go test", "commit::note", "commit: "} {
+		if _, err := parseEvidence([]string{bad}); err == nil || !isUsageErr(err) {
+			t.Errorf("%q: err = %v, want a usage error", bad, err)
+		}
+	}
+	if _, err := commitEvidence([]string{"abc", ""}); err == nil || !isUsageErr(err) {
+		t.Errorf("empty --commit: err = %v, want a usage error", err)
 	}
 }
 

@@ -196,8 +196,57 @@ The command can write a result file to `$ABBY_RESULT_FILE`:
 `evidence` is added to `--evidence` and `--commit`. `summary` replaces
 `--summary`. `reason` is added to the fail reason. `data` must be an
 object; the runner adds `exit_status`, `signal` (if any), and
-`duration_ms`. If the server refuses the result with 400 or 413, the
-runner settles again without the result file content (new key).
+`duration_ms`.
+
+**Evidence kinds.** The protocol accepts the kinds `message`, `commit`,
+`url`, `artifact`, and `other` (CLAIM-031). The runner validates kinds
+before it sends them:
+
+- `--evidence` with another kind, or with an empty ref, and an empty
+  `--commit` are usage errors (exit 2). The runner claims nothing.
+- In the result file, the runner sends any other kind as `other` and
+  puts the original kind at the start of the note. For example,
+  `{"kind": "branch", "ref": "fix/x", "note": "pushed"}` becomes
+  `{"kind": "other", "ref": "fix/x", "note": "branch: pushed"}`. The
+  runner writes each change to stderr and to `evidence_mapped` in the
+  `--json` report.
+
+**Rejected result.** The runner never settles without the result that
+it was given. It does not settle in these two cases:
+
+- The server rejects `complete` or `fail` with 400 or 413. Examples are
+  too many evidence items, or `data` that is too large.
+- `$ABBY_RESULT_FILE` exists, but the runner cannot use it. The file is
+  unusable if one of these conditions is true:
+  - The runner cannot read the file.
+  - The file is larger than 1 MiB.
+  - The file is not exactly one JSON object. Examples are a syntax
+    error, a trailing comma, or more content after the object.
+  - The file has a field that is not in the format above, at the top
+    level or in an evidence item.
+  - `data` is not a JSON object (`null` is accepted as no data).
+
+  The problem code is `result_file_unusable`, and `status` is 0. A
+  missing result file is not an error.
+
+In both cases the runner does these steps:
+
+1. It writes the problem and the evidence of the result to stderr.
+2. It renews the claim, so the claim stays alive. If the renewal fails,
+   the runner exits 9 or 10 as usual.
+3. It releases the claim. The release reason names the settlement, the
+   problem code, and the problem (cut to 600 bytes on a UTF-8 character
+   boundary). The task goes back to `ready`, and a new claim can settle
+   it with a corrected result.
+4. It exits 13. In the `--json` report, `outcome` is `result_rejected`.
+   `rejected_result` holds the problem (`status`, `code`, `detail`) and
+   the result that was not settled (`summary` or `reason`, `evidence`,
+   `data`). For an unusable file, it also holds the file text in `raw`
+   (up to 64 KiB).
+
+If the release fails, the runner still exits 13, because nothing was
+settled. The report holds the release error in `release_error`, and the
+claim lapses at expiry.
 
 **Stopping the command.** The runner sends SIGTERM to the process group.
 After `--grace` (default 10 s) it sends SIGKILL. A second SIGINT or
@@ -212,13 +261,15 @@ SIGTERM to the runner sends SIGKILL at once.
 | Settlement not confirmed before the local deadline | Outcome unknown; read the task (`abby task show`). | 10 |
 | Command exits non-zero, `fail` confirmed | — | 11 |
 | SIGINT/SIGTERM to the runner | Stop the command (renewals continue), then `release` | 12 |
+| Server rejects the `complete` or `fail` result with 400 or 413, or the result file exists but is unusable | Do not settle without it. Renew, then `release` with a reason that names the problem. | 13 (also if the release fails) |
 
 After exit 10, do not continue from local belief (RUN-007). Keep notes
 and patches outside Abby, read the task, and claim again.
 
 With `--json`, stdout holds only the run report (`task_id`, `claim_id`,
 `execution_id`, `epoch`, `run_id`, `outcome`, `exit_status`, `renewals`,
-`task`); the command's stdout goes to stderr.
+`task`, `detail`, `evidence_mapped`, `rejected_result`, `release_error`); the command's
+stdout goes to stderr.
 
 The runner is for Unix (it uses process groups).
 
@@ -230,6 +281,7 @@ The runner is for Unix (it uses process groups).
 | 10 | `abby run`: renewal or settlement not confirmed before the local lease deadline |
 | 11 | `abby run`: the command failed; the task was failed |
 | 12 | `abby run`: interrupted; the claim was released if one was held |
+| 13 | `abby run`: the server rejected the result (400/413), or the result file was unusable; the task was not settled without the result, and the claim was released (`release_error` in the report if the release failed) |
 
 `task next` and `abby run` use exit 7 when there is no work.
 `claim_lost` and `task_claimed` used exit 5 before P2; they now use 9.

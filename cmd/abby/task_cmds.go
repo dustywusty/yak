@@ -87,10 +87,8 @@ func parseEvidence(items []string) ([]abby.Evidence, error) {
 		if !ok || rest == "" {
 			return nil, usage("--evidence expects kind:ref[:note], got %q", it)
 		}
-		switch kind {
-		case "message", "commit", "url", "artifact", "other":
-		default:
-			return nil, usage("--evidence kind must be message, commit, url, artifact, or other; got %q", kind)
+		if !validEvidenceKind(kind) {
+			return nil, usage("--evidence kind must be %s; got %q (use other:REF:NOTE for anything else)", evidenceKindList, kind)
 		}
 		ev := abby.Evidence{Kind: kind, Ref: rest}
 		// URLs contain ':'; only split a note off other kinds.
@@ -99,7 +97,33 @@ func parseEvidence(items []string) ([]abby.Evidence, error) {
 				ev.Ref, ev.Note = ref, note
 			}
 		}
+		if strings.TrimSpace(ev.Ref) == "" {
+			return nil, usage("--evidence ref must not be empty, got %q", it)
+		}
 		out = append(out, ev)
+	}
+	return out, nil
+}
+
+// Evidence kinds the protocol accepts (spec/p2-tasks.md CLAIM-031).
+const evidenceKindList = "message, commit, url, artifact, or other"
+
+func validEvidenceKind(kind string) bool {
+	switch kind {
+	case "message", "commit", "url", "artifact", "other":
+		return true
+	}
+	return false
+}
+
+// commitEvidence turns --commit values into evidence, refusing empty IDs.
+func commitEvidence(commits []string) ([]abby.Evidence, error) {
+	var out []abby.Evidence
+	for _, c := range commits {
+		if strings.TrimSpace(c) == "" {
+			return nil, usage("--commit must not be empty")
+		}
+		out = append(out, abby.Evidence{Kind: "commit", Ref: c})
 	}
 	return out, nil
 }
@@ -117,9 +141,11 @@ func evidenceFlags(cmd *cobra.Command) ([]abby.Evidence, json.RawMessage, error)
 		return nil, nil, err
 	}
 	commits, _ := cmd.Flags().GetStringArray("commit")
-	for _, c := range commits {
-		ev = append(ev, abby.Evidence{Kind: "commit", Ref: c})
+	cev, err := commitEvidence(commits)
+	if err != nil {
+		return nil, nil, err
 	}
+	ev = append(ev, cev...)
 	var data json.RawMessage
 	if d, _ := cmd.Flags().GetString("data"); d != "" {
 		var m map[string]any
@@ -889,9 +915,16 @@ ABBY_CLAIM_EPOCH, ABBY_RUN_ID, ABBY_BOARD, ABBY_BRIEF_REVISION, ABBY_BRIEF_FILE,
 and ABBY_RESULT_FILE in its environment. The claim proof is never passed.
 Exit 0 completes the task; other exits fail it. COMMAND may write
 {"summary", "reason", "evidence": [{kind, ref, note}], "data": {...}} to
-$ABBY_RESULT_FILE. Exit codes: 0 completed, 7 no work, 9 claim lost,
+$ABBY_RESULT_FILE. Evidence kinds are message, commit, url, artifact, or
+other; the runner records any other kind in the file as "other" with the
+original kind at the start of the note. If the server still rejects the
+result (400/413), or the result file exists but is unusable (unreadable,
+over 1 MiB, not one JSON object, unknown fields, non-object data), the
+runner never settles without it: it releases the claim with a reason that
+names the problem and exits 13 (also if the release fails).
+Exit codes: 0 completed, 7 no work, 9 claim lost,
 10 renewal not confirmed (command stopped), 11 command failed (task failed),
-12 interrupted (claim released).`,
+12 interrupted (claim released), 13 result rejected (claim released).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dash := cmd.ArgsLenAtDash()
 			if dash < 0 || dash >= len(args) {
@@ -901,6 +934,19 @@ $ABBY_RESULT_FILE. Exit codes: 0 completed, 7 no work, 9 claim lost,
 			if len(pre) > 1 {
 				return usage("at most one TASK_ID before --")
 			}
+			// Validate evidence before anything is claimed: a bad kind
+			// must never reach settlement.
+			evs, _ := cmd.Flags().GetStringArray("evidence")
+			evidence, err := parseEvidence(evs)
+			if err != nil {
+				return err
+			}
+			commits, _ := cmd.Flags().GetStringArray("commit")
+			cev, err := commitEvidence(commits)
+			if err != nil {
+				return err
+			}
+			evidence = append(evidence, cev...)
 			c, p, err := client()
 			if err != nil {
 				return err
@@ -937,14 +983,7 @@ $ABBY_RESULT_FILE. Exit codes: 0 completed, 7 no work, 9 claim lost,
 			opt.Summary, _ = cmd.Flags().GetString("summary")
 			opt.ReleaseReason, _ = cmd.Flags().GetString("release-reason")
 			opt.Dir, _ = cmd.Flags().GetString("dir")
-			evs, _ := cmd.Flags().GetStringArray("evidence")
-			if opt.Evidence, err = parseEvidence(evs); err != nil {
-				return err
-			}
-			commits, _ := cmd.Flags().GetStringArray("commit")
-			for _, s := range commits {
-				opt.Evidence = append(opt.Evidence, abby.Evidence{Kind: "commit", Ref: s})
-			}
+			opt.Evidence = evidence
 			sigs := make(chan os.Signal, 2)
 			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 			defer signal.Stop(sigs)
