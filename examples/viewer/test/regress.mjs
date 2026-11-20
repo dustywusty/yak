@@ -60,7 +60,7 @@ const FAKE = () => {
   }
   threads.find((t) => t.id === 'thr_review').labels.kind = 'review';
   threads.find((t) => t.id === 'thr_deploy').labels.needs = 'owner';
-  const T = window.__fake = { channels: ['ops', 'ops/deploy', 'review', 'activity'], queue: [], calls: {}, posts: 0, deletes: 0, slowSnapshot: 0, resync: false, tasks, disconnected: false, taskReads: 0 };
+  const T = window.__fake = { channels: ['ops', 'ops/deploy', 'review', 'activity'], queue: [], calls: {}, posts: 0, deletes: 0, slowSnapshot: 0, resync: false, tasks, disconnected: false, taskReads: 0, holdTask: null, heldTasks: [] };
   const json = (body, status = 200) => new Response(body == null ? null : JSON.stringify(body), { status, headers: { 'Content-Type': status >= 400 ? 'application/problem+json' : 'application/json' } });
   const count = (k) => { T.calls[k] = (T.calls[k] || 0) + 1; };
   window.fetch = async (url, opts = {}) => {
@@ -82,7 +82,16 @@ const FAKE = () => {
       items.push(...T.tasks.map((t) => ({ type: 'task', id: t.id, data: t })));
       return json({ snapshot: { id: 'snp' }, items, next_page_token: null, continuation_cursor: 'c1.store' });
     }
-    if (/\/tasks\/task_\w+$/.test(p)) { T.taskReads++; return json(T.tasks.find((t) => p.endsWith(t.id))); }
+    if (/\/tasks\/task_\w+$/.test(p)) {
+      T.taskReads++;
+      const body = structuredClone(T.tasks.find((t) => p.endsWith(t.id)));
+      // Hold an already-produced response; deliberately ignore a later abort.
+      // This also exercises callers when response parsing outlives cancellation.
+      if (p.endsWith(T.holdTask || '!')) return new Promise((resolve, reject) => {
+        T.heldTasks.push({ release: (status = 200) => resolve(json(status === 200 ? body : { code: 'unauthenticated' }, status)), reject });
+      });
+      return json(body);
+    }
     if (p.endsWith('/events')) {
       if (T.disconnected) throw new TypeError('synthetic disconnect');
       if (T.resync && u.searchParams.get('cursor') !== 'c1.feed') { T.resync = false; return json({ code: 'cursor_expired' }, 410); }
@@ -221,6 +230,88 @@ try {
   await ev(`window.__fake.resync = true; 1`);
   await sleep(900);
   check('resnapshot restores authoritative activity', await ev(`window.__fake.posts > ${snapshotsBeforeResync}`) && (await activity()).includes('0 claimed tasks') && !(await activity()).includes('Last known'), await activity());
+  // Hold a valid renewal response across an authoritative snapshot that
+  // removes the task. A revision cannot order a response against absence.
+  const until = async (expr) => {
+    for (let n = 0; n < 50; n++) { if (await ev(expr)) return; await sleep(100); }
+    throw new Error(`condition not reached: ${expr}`);
+  };
+  await go('#/boards');
+  await go('#/b/brd_test?v=activity');
+  await ev(`window.__fake.holdTask = 'task_work'; window.__fake.heldTasks = [];
+    window.__taskEvent('task_work', { state: 'claimed', current_claim: { id: 'clm_race', actor_id: 'act_bot', status: 'active', acquired_at: new Date(Date.now()-60000).toISOString(), expires_at: new Date(Date.now()-1000).toISOString() } });
+    window.__fake.tasks[0] = { ...window.__fake.tasks[0], revision: window.__fake.tasks[0].revision+1, current_claim: { ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now()+120000).toISOString() } }; 1`);
+  await until(`window.__fake.heldTasks.length === 1`);
+  const racePosts = await ev(`window.__fake.posts`);
+  await ev(`window.__removedWork = window.__fake.tasks.shift(); window.__fake.resync = true; 1`);
+  await until(`window.__fake.posts > ${racePosts} && !document.querySelector('[data-activity-task="task_work"]')`);
+  await ev(`window.__fake.holdTask = null; window.__fake.heldTasks[0].release(); 1`);
+  await sleep(700);
+  check('old expiry success cannot resurrect a task removed by resnapshot', await ev(`!document.querySelector('[data-activity-task="task_work"]')`) && (await activity()).includes('0 claimed tasks'), await activity());
+
+  // An old 401 must not forget the current token after view disposal.
+  await ev(`window.__fake.tasks.unshift({ ...window.__removedWork, revision: 150, current_claim: { ...window.__removedWork.current_claim, expires_at: new Date(Date.now()-1000).toISOString() } }); window.__fake.holdTask='task_work'; window.__fake.heldTasks=[]; window.__fake.resync=true; 1`);
+  await until(`window.__fake.heldTasks.length===1`);
+  await go('#/boards');
+  await ev(`window.__fake.tasks.shift(); window.__fake.holdTask=null; window.__fake.heldTasks[0].release(401); 1`);
+  await sleep(300);
+  check('disposed expiry HTTP error cannot forget current token', await ev(`sessionStorage.getItem('yak-viewer-token')==='yak.test.token' && !document.getElementById('boards').hidden`));
+
+  // Test lifecycle and bookkeeping directly through the same synthetic API.
+  // Stop the mounted store so the harness owns the board's event queue.
+  await go('#/boards');
+  const lifecycle = await ev(`(async () => {
+    const {createStore, clock} = await import('/skin-kit.js');
+    const T = window.__fake, results = {};
+    const wait = async (fn) => { for(let n=0;n<60;n++){ if(fn()) return; await new Promise(r=>setTimeout(r,100)); } throw Error('lifecycle condition timed out'); };
+    const api = async (method,path,params={},signal) => {
+      const url = new URL(path,location.href); for(const [k,v] of Object.entries(params)) if(v!=null) url.searchParams.set(k,v);
+      const r = await fetch(url,{method,signal,headers:{Authorization:'Bearer yak.test.token'}});
+      const body = r.status===204 ? null : await r.json();
+      if(!r.ok) throw Object.assign(Error('synthetic HTTP error'),{status:r.status,problem:body});
+      return body;
+    };
+    let changes=0, unauthorized=0, live=0;
+    T.tasks.unshift({...window.__removedWork,state:'claimed',revision:200,current_claim:{...window.__removedWork.current_claim,expires_at:new Date(Date.now()-1000).toISOString()}});
+    T.holdTask='task_work'; T.heldTasks=[];
+    const st=createStore({api,boardId:'brd_test',onChange:()=>changes++,onUnauthorized:()=>unauthorized++,onStatus:s=>{if(s==='live')live++;}});
+    await wait(()=>T.heldTasks.length===1);
+    T.resync=true; const posts=T.posts; await wait(()=>T.posts>posts && T.heldTasks.length===2);
+    // The old request errors after a new-generation request for the same ID
+    // starts. Its catch must not log out, nor its finally clear the new read.
+    T.heldTasks[0].release(401); await new Promise(r=>setTimeout(r,100));
+    const offset=clock.offset; clock.offset+=11000;
+    await new Promise(r=>setTimeout(r,1200)); clock.offset=offset;
+    results.oldErrorIgnored=unauthorized===0;
+    results.oldFinalizerIgnored=T.heldTasks.length===2;
+    // Current-generation stale revisions must still lose to newer events.
+    window.__taskEvent('task_work',{state:'ready',current_claim:null,revision:250});
+    await wait(()=>st.S.tasks.get('task_work')?.state==='ready');
+    T.heldTasks[1].release(); await new Promise(r=>setTimeout(r,100));
+    results.revisionProtected=st.S.tasks.get('task_work').state==='ready';
+    // Queue another read, dispose the store, then deliver a late success.
+    window.__taskEvent('task_work',{state:'claimed',current_claim:{...window.__removedWork.current_claim,expires_at:new Date(Date.now()-1000).toISOString()}});
+    await wait(()=>st.S.tasks.get('task_work')?.state==='claimed');
+    // A new snapshot clears retry delay, so no real 10-second wait is needed.
+    T.resync=true; const p2=T.posts; await wait(()=>T.posts>p2 && T.heldTasks.length===3);
+    const before=JSON.stringify(st.S.tasks.get('task_work')); st.stop(); const beforeChanges=changes, beforeLive=live;
+    T.heldTasks[2].release(); await new Promise(r=>setTimeout(r,400));
+    results.disposedSuccessIgnored=JSON.stringify(st.S.tasks.get('task_work'))===before && changes===beforeChanges && live===beforeLive;
+    // The same rule applies to errors after disposal.
+    T.heldTasks=[];
+    const st2=createStore({api,boardId:'brd_test',onUnauthorized:()=>unauthorized++});
+    await wait(()=>T.heldTasks.length===1); st2.stop(); T.heldTasks[0].release(401);
+    await new Promise(r=>setTimeout(r,100)); results.disposedErrorIgnored=unauthorized===0;
+    T.heldTasks=[];
+    const st3=createStore({api,boardId:'brd_test',onUnauthorized:()=>unauthorized++});
+    await wait(()=>T.heldTasks.length===1); T.heldTasks[0].release(401);
+    await wait(()=>unauthorized===1); st3.stop(); results.currentErrorDelivered=unauthorized===1;
+    T.holdTask=null; T.tasks[0]={...T.tasks[0],state:'ready',current_claim:null,revision:300};
+    return results;
+  })()`);
+  for (const [name, ok] of Object.entries(lifecycle)) check(`expiry lifecycle: ${name}`, ok, JSON.stringify(lifecycle));
+  await go('#/b/brd_test?v=activity');
+
   const clockCases = await ev(`import('/agent-activity.js').then(({elapsed}) => [elapsed('bad', Date.now()), elapsed(new Date(60000).toISOString(), 0), elapsed(new Date(0).toISOString(), 3660000), elapsed(new Date(0).toISOString(), 90000000)])`);
   check('duration formatting handles unknown, future, hours and days', JSON.stringify(clockCases) === JSON.stringify(['Time unknown', '0s', '1h 1m', '1d 1h']), JSON.stringify(clockCases));
   check('claim absence never calls an agent idle or offline', (await activity()).includes('No active claimed task') && !/idle|offline/i.test(await activity()), await activity());

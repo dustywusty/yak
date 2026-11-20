@@ -125,8 +125,18 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const S = { board: null, actors: new Map(), channels: [], threads: new Map(), msgs: new Map(), tasks: new Map(),
     order: [], me: null, cursor: null, seen: new Set(), events: 0, lastSync: null };
   const abort = new AbortController();
+  // Each replacement snapshot owns its refresh requests and bookkeeping.
+  // A task revision orders rows only within one snapshot generation.
+  const newRefresh = () => ({ abort: new AbortController(), reads: new Set(), retry: new Map(), ready: false });
+  let refresh = newRefresh();
+  const currentRefresh = (generation) => generation === refresh && !abort.signal.aborted;
+  const invalidateRefresh = () => { refresh.abort.abort(); refresh = newRefresh(); };
   const B = `/v1/boards/${enc(boardId)}`;
-  const get = (path, params) => api('GET', path, params, abort.signal);
+  const get = async (path, params) => {
+    const result = await api('GET', path, params, abort.signal);
+    if (abort.signal.aborted) throw new DOMException('Store stopped', 'AbortError');
+    return result;
+  };
   // PAGE-001: follow next_page_token until it is null.
   const all = async (path, key) => {
     const out = [];
@@ -146,7 +156,9 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   };
 
   async function snapshot() {
+    invalidateRefresh();
     const [board, actors, channels, me] = await Promise.all([get(B), get(`${B}/actors`), get(`${B}/channels`), get('/v1/me')]);
+    if (abort.signal.aborted) throw new DOMException('Store stopped', 'AbortError');
     Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.actors.map((a) => [a.id, a])),
       threads: new Map(), msgs: new Map(), tasks: new Map(), order: [] });
     let info;
@@ -226,12 +238,15 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
         if (!S.cursor) {
           onStatus('resyncing');
           await snapshot();
+          if (abort.signal.aborted) return;
+          refresh.ready = true;
           S.lastSync = now();
           onStatus('live');
           onChange();
         }
         const wait = backoff > 1000 ? 0 : Math.min(25000, clock.limits.max_wait_ms);
         const page = await get(`${B}/events`, { cursor: S.cursor, wait_ms: wait, limit: clock.limits.max_page_size });
+        if (abort.signal.aborted) return;
         let changed = false;
         for (const ev of page.events) changed = apply(ev) || changed;
         S.cursor = page.next_cursor;
@@ -244,6 +259,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
         if (e.status === 401) return onUnauthorized();
         const code = e.problem?.code;
         if (code === 'resync_required' || code === 'cursor_expired' || code === 'snapshot_expired' || e.status === 400) {
+          invalidateRefresh();
           S.cursor = null;
           if (e.status === 400) await sleep(backoff);
           continue;
@@ -257,18 +273,19 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
 
   // Once display time passes expiry, ask for the effective server view.
   // Do not invent a release from the browser clock (TASK-023..025).
-  const expiryReads = new Set(), expiryRetry = new Map();
   const expiryTimer = setInterval(() => {
-    if (!S.cursor || abort.signal.aborted) return;
+    const generation = refresh;
+    if (!generation.ready || !S.cursor || !currentRefresh(generation)) return;
     for (const t of S.tasks.values()) {
-      if (expiryReads.size >= 4) break;
+      if (generation.reads.size >= 4) break;
       if (t.state !== 'claimed' || !t.current_claim || Date.parse(t.current_claim.expires_at) > now()
-        || expiryReads.has(t.id) || (expiryRetry.get(t.id) || 0) > now()) continue;
-      expiryReads.add(t.id);
-      expiryRetry.set(t.id, now() + 10000);
-      get(`${B}/tasks/${enc(t.id)}`).then((r) => { putTask(r); onChange(); })
-        .catch((e) => { if (e.status === 401) onUnauthorized(); })
-        .finally(() => { expiryReads.delete(t.id); });
+        || generation.reads.has(t.id) || (generation.retry.get(t.id) || 0) > now()) continue;
+      generation.reads.add(t.id);
+      generation.retry.set(t.id, now() + 10000);
+      api('GET', `${B}/tasks/${enc(t.id)}`, {}, generation.abort.signal)
+        .then((r) => { if (currentRefresh(generation)) { putTask(r); onChange(); } })
+        .catch((e) => { if (currentRefresh(generation) && e.status === 401) onUnauthorized(); })
+        .finally(() => { if (currentRefresh(generation)) generation.reads.delete(t.id); });
     }
   }, 1000);
 
@@ -291,6 +308,6 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const clockTimer = setInterval(syncClock, 60000);
   return {
     S, actor, handle, via, num, tasks, thread, messages, latest, labels, gated, blockers, settled,
-    stop: () => { abort.abort(); clearInterval(clockTimer); clearInterval(expiryTimer); },
+    stop: () => { abort.abort(); refresh.abort.abort(); clearInterval(clockTimer); clearInterval(expiryTimer); },
   };
 }
