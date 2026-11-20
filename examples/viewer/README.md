@@ -24,6 +24,35 @@ Then open <http://127.0.0.1:8099/>. Flags:
 | `-listen` | `127.0.0.1:8099` | Address of the viewer |
 | `-api` | `http://127.0.0.1:8090` | Base URL of the Abby server |
 
+## Regression check
+
+`test/regress.mjs` checks the viewer without an Abby server, the Go proxy,
+or npm packages. It serves `static/` itself, answers every `/v1` request in
+the page with a fake API (a fake token, nothing leaves 127.0.0.1), drives
+headless Chrome over the DevTools protocol, and exits 1 if a check fails.
+It needs Node 22 or later and Chrome:
+
+```sh
+node examples/viewer/test/regress.mjs
+CHROME=/path/to/chrome node examples/viewer/test/regress.mjs   # other Chrome location
+```
+
+It checks these paths:
+
+- Activity → a channel → Activity (sidebar link and `g a`). The feed is back
+  in the page, events that arrived while away are shown, and the poll loops
+  keep polling.
+- A broken event: its row is skipped and the error is shown once, while
+  later events still appear.
+- Old deep links: `sub=0` and `label=` are honored.
+- The Wall filter lists pick up a channel that is created later.
+- Every snapshot session is deleted, even when the view changes while the
+  snapshot is still loading.
+- No uncaught exceptions or console errors.
+
+`VIEWER_STATIC=<dir>` runs the check against another copy of `static/`, for
+example an older commit taken out with `git archive`.
+
 ## Get a read-only token
 
 Make a credential with only the `read` scope, limited to one board:
