@@ -289,7 +289,9 @@ func taskCmd() *cobra.Command {
 			lm = nil
 		}
 		req := abby.CreateTaskRequest{Thread: &abby.NewThread{Channel: args[0], Title: title, Text: text, Labels: lm}}
-		fillAssignDeps(cmd, &req)
+		if err := fillAssignDeps(cmd, c, &req); err != nil {
+			return err
+		}
 		t, err := c.Tasks(b).Create(cmd.Context(), req, idemKey(cmd))
 		if err != nil {
 			return err
@@ -304,7 +306,9 @@ func taskCmd() *cobra.Command {
 
 	convert := boardCmd("convert THREAD", "Turn an existing thread into a task", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
 		req := abby.CreateTaskRequest{ThreadID: args[0]}
-		fillAssignDeps(cmd, &req)
+		if err := fillAssignDeps(cmd, c, &req); err != nil {
+			return err
+		}
 		t, err := c.Tasks(b).Create(cmd.Context(), req, idemKey(cmd))
 		if err != nil {
 			return err
@@ -330,11 +334,18 @@ func taskCmd() *cobra.Command {
 		f.Channel, _ = cmd.Flags().GetString("channel")
 		f.Subtree, _ = cmd.Flags().GetString("subtree")
 		f.States, _ = cmd.Flags().GetStringArray("state")
-		f.Assignee, _ = cmd.Flags().GetString("assignee")
-		f.Owner, _ = cmd.Flags().GetString("owner")
 		f.Labels, _ = cmd.Flags().GetStringArray("label")
+		var err error
+		a, _ := cmd.Flags().GetString("assignee")
+		if f.Assignee, err = actorArg(cmd.Context(), c, "--assignee", a, true); err != nil {
+			return err
+		}
+		o, _ := cmd.Flags().GetString("owner")
+		if f.Owner, err = actorArg(cmd.Context(), c, "--owner", o, false); err != nil {
+			return err
+		}
 		var bad error
-		err := c.Tasks(b).ListAll(cmd.Context(), f, func(t abby.Task) error {
+		err = c.Tasks(b).ListAll(cmd.Context(), f, func(t abby.Task) error {
 			if gf.json {
 				_ = json.NewEncoder(os.Stdout).Encode(t)
 			} else {
@@ -353,8 +364,8 @@ func taskCmd() *cobra.Command {
 	list.Flags().String("channel", "", "exact channel path")
 	list.Flags().String("subtree", "", "channel path and its descendants")
 	list.Flags().StringArray("state", nil, "effective state (repeatable)")
-	list.Flags().String("assignee", "", "assignee actor ID, or none")
-	list.Flags().String("owner", "", "owner actor ID")
+	list.Flags().String("assignee", "", "me, none, or an assignee actor ID")
+	list.Flags().String("owner", "", "me or an owner actor ID")
 	list.Flags().StringArray("label", nil, "root label filter key or key:value (repeatable)")
 
 	edit := boardCmd("edit ID", "Change the title or owner (manager, --if-revision)", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
@@ -723,7 +734,11 @@ func taskCmd() *cobra.Command {
 		switch {
 		case none && len(args) == 1:
 		case !none && len(args) == 2:
-			who = strPtr(args[1])
+			a, err := actorArg(cmd.Context(), c, "ACTOR", args[1], false)
+			if err != nil {
+				return err
+			}
+			who = strPtr(a)
 		default:
 			return usage("pass exactly one of ACTOR or --none")
 		}
@@ -765,18 +780,24 @@ func taskCmd() *cobra.Command {
 }
 
 func assignDepFlags(cmd *cobra.Command) {
-	cmd.Flags().String("assignee", "", "assignee actor ID (the only eligible claimant)")
+	cmd.Flags().String("assignee", "", "me or an assignee actor ID (the only eligible claimant)")
 	cmd.Flags().StringArray("depends-on", nil, "prerequisite task ID (repeatable or comma-separated)")
 }
 
-func fillAssignDeps(cmd *cobra.Command, req *abby.CreateTaskRequest) {
-	if a, _ := cmd.Flags().GetString("assignee"); a != "" {
+func fillAssignDeps(cmd *cobra.Command, c *abby.Client, req *abby.CreateTaskRequest) error {
+	a, _ := cmd.Flags().GetString("assignee")
+	a, err := actorArg(cmd.Context(), c, "--assignee", a, false)
+	if err != nil {
+		return err
+	}
+	if a != "" {
 		req.AssigneeActorID = &a
 	}
 	deps, _ := cmd.Flags().GetStringArray("depends-on")
 	for _, d := range deps {
 		req.DependsOn = append(req.DependsOn, splitList(d)...)
 	}
+	return nil
 }
 
 func addClaimNextFlags(cmd *cobra.Command) {

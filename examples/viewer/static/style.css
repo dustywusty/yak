@@ -83,7 +83,10 @@ input[type=password], input[type=search] {
 
 .msg { border-top: 1px solid var(--line); padding: .7rem 0; }
 .msg header { font-size: .85em; color: var(--muted); }
-.actor { color: var(--fg); font-weight: 600; word-break: break-all; }
+/* A handle is one unit: it moves to the next line whole (inline-block, no
+   break at its hyphens). It breaks inside only when it is wider than the
+   line, so a very long handle never causes sideways scroll. */
+.actor { color: var(--fg); font-weight: 600; display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .msg .body { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0; }
 .msg.deleted .body { font-style: italic; }
 .edited { font-style: italic; }

@@ -79,6 +79,9 @@ Each entry shows the local time, board, channel path, thread title, actor
 handle (from `GET …/actors`, else a short ID), an event-type badge, and one
 line of detail. Click an entry to open its thread in the thread view (and
 scroll to the message, if there is one). **Live** in the header goes back.
+Message events take the title from the payload (`thread_title`, EVT-013).
+With a server that does not send it yet, the feed reads each unknown thread
+once and caches its title.
 
 | Event type | Detail shown |
 |---|---|

@@ -97,6 +97,8 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized }) {
     if (p.task) onTask(p.task);
     if (p.thread) rec.titles.set(p.thread.id, p.thread.title);
     if (p.task) rec.titles.set(p.task.thread_id, p.task.title);
+    // message.* payloads carry the thread title at commit (EVT-013).
+    if (typeof p.thread_title === 'string' && ev.thread_id) rec.titles.set(ev.thread_id, p.thread_title);
     push({ id: ev.id, ev, rec, at: ev.recorded_at, count: 1 });
   }
 
@@ -112,6 +114,8 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized }) {
     if (list.length > CAP) list.length = CAP;
   }
 
+  // Fallback for servers before EVT-013, whose message.* payloads have no
+  // thread_title: read the thread once and cache its title.
   function title(rec, threadId) {
     if (!threadId) return '';
     if (rec.titles.has(threadId)) return rec.titles.get(threadId);
@@ -182,7 +186,7 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized }) {
       h('div', { class: 'meta' }, time(e.at), ` · ${rec.board.name}`, path ? ` · #${path}` : '',
         ' · ', h('span', { class: 'actor' }, who(rec, ev.actor_id))),
       h('div', {}, h('span', { class: `type type-${kind}` }, ev.type), e.count > 1 ? ` ×${e.count} ` : ' ',
-        h('span', { class: 'title' }, p.thread?.title || p.task?.title || title(rec, ev.thread_id))),
+        h('span', { class: 'title' }, p.thread?.title || p.task?.title || p.thread_title || title(rec, ev.thread_id))),
       h('div', { class: 'snippet' }, detail(rec, ev))));
   }
 

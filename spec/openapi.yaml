@@ -81,7 +81,10 @@ info:
     `thread.view_invalidated`, `thread.updated`. Board metadata, grant,
     actor and credential changes are recorded in the audit log, not the event
     stream. Deleting a message rewrites the `message` member of every earlier
-    event about it to the tombstone.
+    event about it to the tombstone. Every `message.*` payload also carries
+    `thread_title` (the thread title at commit, EVT-013) and, with
+    `abby.p2.tasks`, `task_id` (TASK-086), so a feed can label a message
+    without reading its thread.
 
     ## Tasks and claims (P2, `abby.p2.tasks`)
 

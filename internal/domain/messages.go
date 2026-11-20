@@ -74,6 +74,17 @@ type ThreadWithRoot struct {
 	Root   MessageView `json:"root_message"`
 }
 
+// messageEventPayload is the payload of a message.* event: the message
+// plus its thread context at commit (EVT-013, TASK-086). The context is
+// thread metadata, not message content, so scrubMessage (RED-001) leaves it.
+func messageEventPayload(m MessageView, t ThreadView, extra map[string]any) map[string]any {
+	p := map[string]any{"message": m, "thread_title": t.Title, "task_id": t.TaskID}
+	for k, v := range extra {
+		p[k] = v
+	}
+	return p
+}
+
 func (m *MessageView) facet(rootLabels map[string]string) events.Facet {
 	f := events.Facet{ChannelPath: m.ChannelPath, ThreadID: m.ThreadID, AuthorID: m.AuthorActorID, Mentions: m.Mentions, Labels: m.Labels, RootLabels: rootLabels}
 	if m.Text != nil {
@@ -564,7 +575,7 @@ func (s *Service) Reply(ctx context.Context, p *Principal, boardID, threadID str
 			return nil, err
 		}
 		if _, err := b.emit(PendingEvent{Type: "message.created", ChannelID: ch.ID, ThreadID: threadID, ResourceType: "message", ResourceID: m.ID, Revision: 1,
-			Payload: map[string]any{"message": m}, Facets: []events.Facet{m.facet(t.Labels)}}); err != nil {
+			Payload: messageEventPayload(m, t, nil), Facets: []events.Facet{m.facet(t.Labels)}}); err != nil {
 			return nil, err
 		}
 		return &Result{Status: 201, ResourceType: "message", ResourceID: m.ID, Body: m}, nil
@@ -680,7 +691,7 @@ func (s *Service) EditMessage(ctx context.Context, p *Principal, boardID, messag
 			}
 		}
 		if _, err := b.emit(PendingEvent{Type: "message.edited", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
-			Revision: m.Revision, Payload: map[string]any{"message": m}, Facets: []events.Facet{before.facet(t.Labels), m.facet(t.Labels)}}); err != nil {
+			Revision: m.Revision, Payload: messageEventPayload(m, t, nil), Facets: []events.Facet{before.facet(t.Labels), m.facet(t.Labels)}}); err != nil {
 			return nil, err
 		}
 		out = m
@@ -765,7 +776,7 @@ func (b *btx) tombstoneMessage(m MessageView, kind, reason string) (MessageView,
 	}
 	inval := events.Facet{Invalidation: true, ChannelPath: m.ChannelPath, ThreadID: m.ThreadID}
 	if _, err := b.emit(PendingEvent{Type: "message.deleted", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
-		Revision: m.Revision, Payload: map[string]any{"message": m}, Facets: []events.Facet{inval}}); err != nil {
+		Revision: m.Revision, Payload: messageEventPayload(m, t, nil), Facets: []events.Facet{inval}}); err != nil {
 		return m, err
 	}
 	return m, nil
@@ -966,7 +977,7 @@ func (s *Service) MutateLabels(ctx context.Context, p *Principal, boardID, messa
 		bm.Labels = before
 		m.Labels = after
 		if _, err := b.emit(PendingEvent{Type: "message.labels_changed", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
-			Revision: m.Revision, Payload: map[string]any{"message": m, "labels_before": before, "labels_after": after},
+			Revision: m.Revision, Payload: messageEventPayload(m, t, map[string]any{"labels_before": before, "labels_after": after}),
 			Facets: []events.Facet{bm.facet(rootBefore), m.facet(rootAfter)}}); err != nil {
 			return nil, err
 		}

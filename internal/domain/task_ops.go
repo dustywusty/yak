@@ -1065,7 +1065,7 @@ func (s *Service) UpdateBrief(ctx context.Context, p *Principal, boardID, taskID
 			return nil, err
 		}
 		if _, err := b.emit(PendingEvent{Type: "message.created", ChannelID: t.ChannelID, ThreadID: t.ThreadID, ResourceType: "message", ResourceID: m.ID, Revision: 1,
-			Payload: map[string]any{"message": m}, Facets: []events.Facet{m.facet(th.Labels)}}); err != nil {
+			Payload: messageEventPayload(m, th, nil), Facets: []events.Facet{m.facet(th.Labels)}}); err != nil {
 			return nil, err
 		}
 		if _, err := b.Exec(b.ctx, `INSERT INTO task_briefs(board_id, task_id, revision, text, source_kind, source_message_id, source_message_revision, reason, created_by, created_at)

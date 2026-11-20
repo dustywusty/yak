@@ -589,21 +589,35 @@
       }
     },
     "MessagePayload": {
-      "description": "The message after the change. Deleting a message replaces message in every earlier event about it with the tombstone.",
+      "description": "The message after the change, with its thread context (EVT-013). Deleting a message replaces message in every earlier event about it with the tombstone; thread_title and task_id stay.",
       "type": "object",
       "required": [
-        "message"
+        "message",
+        "thread_title"
       ],
       "properties": {
         "message": {
           "$ref": "Message.schema.json"
+        },
+        "thread_title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Title of the message's thread when the event was committed (EVT-013). Thread metadata, not message content: deletion and redaction leave it. Later title changes arrive as thread.updated (P2: task.updated) and do not rewrite it."
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "P2 (abby.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
         }
       }
     },
     "MessageDeletedPayload": {
       "type": "object",
       "required": [
-        "message"
+        "message",
+        "thread_title"
       ],
       "properties": {
         "message": {
@@ -627,6 +641,18 @@
               }
             }
           ]
+        },
+        "thread_title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Title of the message's thread when the event was committed (EVT-013). Thread metadata, not message content: deletion and redaction leave it. Later title changes arrive as thread.updated (P2: task.updated) and do not rewrite it."
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "P2 (abby.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
         }
       }
     },
@@ -634,12 +660,25 @@
       "type": "object",
       "required": [
         "message",
+        "thread_title",
         "labels_before",
         "labels_after"
       ],
       "properties": {
         "message": {
           "$ref": "Message.schema.json"
+        },
+        "thread_title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Title of the message's thread when the event was committed (EVT-013). Thread metadata, not message content: deletion and redaction leave it. Later title changes arrive as thread.updated (P2: task.updated) and do not rewrite it."
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "P2 (abby.p2.tasks): the thread's task when the event was committed, or null (TASK-086). Earlier events of a thread converted later keep null; task.created carries the link."
         },
         "labels_before": {
           "$ref": "Labels.schema.json"

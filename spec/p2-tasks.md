@@ -579,6 +579,15 @@ projection of `dependencies`). Additional fields:
   thread (L1) does not need it: its `thread.created` already shows the
   label.
 
+### 15.3 Thread context in message events
+
+- **TASK-086** With this profile, the payload of every `message.*` event
+  MUST also include `task_id`: the ID of the thread's task when the event
+  was committed, or null (EVT-013 adds `thread_title`). Earlier events of
+  a thread that becomes a task later keep null; `task.created` links the
+  thread to the task. A task title change (L19) arrives as `task.updated`
+  and does not rewrite `thread_title` in earlier events.
+
 ## 16 Interaction with P1 cursors, snapshots, and filters
 
 - **TASK-090** Task events share the board stream, cursors, retention,
@@ -792,6 +801,7 @@ script. New scenario IDs CT-029..CT-038 extend design §14.1.
 | TASK-060..061 | CT TestCT035MessagesCannotDriveTasks |
 | TASK-070..072 | CT TestCT009LostResponses; CT TestTaskConditions |
 | TASK-080..085 | CT TestCT029LifecycleWalk (event sequences); REF TestEventPositionsContiguousUnderConcurrency extended to task commands |
+| TASK-086 | CT TestEVT013MessageEventsCarryThreadTitle (task thread, brief update, root redaction); TestSpecLiveResponsesP2 (schema) |
 | TASK-090..093 | CT TestCT036TaskSnapshotThenReplay; CT TestCT016 extended (revocation during claim-next wait) |
 | CLAIM-001..003 | CT TestCT007ClaimRace (N parallel claimers, one winner, epochs strictly increase) |
 | CLAIM-004..005 | CT TestClaimFields; CT TestCT026BriefUpdateVsTerminal (expect_brief_revision) |
