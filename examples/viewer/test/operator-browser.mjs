@@ -584,6 +584,66 @@ async function cosmeticReceiptCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-019 executed ${assertions} assertions across ${fixtures} fresh cosmetic receipt fixtures`);
 }
+async function op17031ConditionalLabelsCase() {
+ let assertions=0, fixtures=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-031: ${name}`,ok);};
+ const set=(expect,value='approved')=>({op:'set',key:'gate',value,expect});
+ const unset=expect=>({op:'unset',key:'gate',expect});
+ const variants=[
+  ['set stale value','changes_requested',[set({value:'pending'})],412,'changes_requested'],
+  ['unset stale value','changes_requested',[unset({value:'pending'})],412,'changes_requested'],
+  ['unset matching value','pending',[unset({value:'pending'})],200,null],
+  ['set matching value','pending',[set({value:'pending'})],200,'approved'],
+  ['absent rejects existing','pending',[set({absent:true})],412,'pending'],
+  ['absent rejects empty','',[set({absent:true})],412,''],
+  ['absent matches missing',null,[set({absent:true})],200,'approved'],
+  ['unset absent missing',null,[unset({absent:true})],200,null],
+  ['value rejects missing',null,[unset({value:'pending'})],412,null],
+  ['present rejects missing',null,[set({present:true})],412,null],
+  ['present matches existing','pending',[set({present:true})],200,'approved'],
+  ['atomic mismatch','changes_requested',[{op:'set',key:'priority',value:'high'},set({value:'pending'})],412,'changes_requested'],
+  ['expectations read before mutation','pending',[set({value:'pending'},'changes_requested'),set({value:'pending'})],200,'approved'],
+  ['invalid opcode','pending',[{op:'remove',key:'gate'}],400,'pending'],
+  ['set requires value','pending',[{op:'set',key:'gate'}],400,'pending'],
+  ['unset rejects value','pending',[{op:'unset',key:'gate',value:'approved'}],400,'pending'],
+  ['invalid expectation','pending',[set({absent:'true'})],400,'pending'],
+  ['validation is atomic','pending',[{op:'set',key:'priority',value:'high'},{op:'set',key:'gate'}],400,'pending'],
+ ];
+ for(const [name,current,operations,status,after] of variants) {
+  await freshIdentityFixture(); fixtures++;
+  try {
+   const result=await ev(`(async()=>{const T=window.__op;${current===null?'delete T.root.labels.gate':`T.root.labels.gate=${JSON.stringify(current)}`};const r=await fetch('/v1/boards/brd_test/messages/root/labels',{method:'PATCH',body:JSON.stringify({operations:${JSON.stringify(operations)}})});return {status:r.status,body:await r.json(),labels:T.root.labels,writes:T.writes};})()`);
+   assert(`${name}: status ${status}`,result.status===status);
+   assert(`${name}: resulting labels`,(after===null?!Object.hasOwn(result.labels,'gate'):result.labels.gate===after) && !Object.hasOwn(result.labels,'priority'));
+   assert(`${name}: captures exactly one request`,result.writes.length===1 && JSON.stringify(result.writes[0].body.operations)===JSON.stringify(operations));
+   if(status===412) assert(`${name}: current key/value`,result.body.code==='revision_conflict' && result.body.key==='gate' && result.body.current===current);
+  } finally { await cmd('Page.navigate',{url:'about:blank'}); }
+ }
+ for(const current of ['approved','changes_requested','pending']) {
+  await freshIdentityFixture(`window.__op.root.labels.gate=${JSON.stringify(current)};window.__op.failLabel=${current==='pending'?1:0};`); fixtures++;
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-conditional-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'"); await open();
+   await click('Approve and unblock'); await confirm('Approve and unblock');
+   assert(`${current}: unblock then conditional label`,await ev("window.__op.writes.length===2 && window.__op.writes[0].path.endsWith('/unblock') && window.__op.writes[1].body.operations[0].expect.value==='pending' && window.__op.task.state==='ready'"));
+   if(current==='approved') {
+    assert('approved conflict is done',await ev("document.querySelector('.op-receipts').textContent.includes('Saved.') && !document.querySelector('.op-receipts button') && window.__op.root.labels.gate==='approved'"));
+   } else {
+    assert(`${current}: partial receipt`,await ev("document.querySelector('.op-receipts').textContent.includes('Approved; label not updated') && !![...document.querySelectorAll('.op-receipts button')].find(b=>b.textContent==='Retry label only')"));
+    if(await ev("!![...document.querySelectorAll('.op-receipts button')].find(b=>b.textContent==='Retry label only')")) {
+     await click('Retry label only');
+     assert(`${current}: retry sends only original label`,await ev("window.__op.writes.length===3 && JSON.stringify(window.__op.writes[1])===JSON.stringify(window.__op.writes[2])"));
+     assert(`${current}: retry outcome`,await ev(current==='pending'?"window.__op.root.labels.gate==='approved' && !document.querySelector('.op-receipts button')":"window.__op.root.labels.gate==='changes_requested' && document.querySelector('.op-receipts').textContent.includes('Approved; label not updated') && !!document.querySelector('.op-receipts button')"));
+    }
+   }
+  } finally {
+   await ev("document.querySelector('#operator-logout')?.click()"); await until('!document.body.dataset.operator');
+  }
+ }
+ assert('all variants execute nonzero assertions',fixtures===21 && assertions>=65);
+ assert('no browser exceptions',errors.length===0);
+ console.log(`OP17-031 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
+}
 async function labelOpcodeCase() {
  let assertions = 0, fixtures = 0;
  const assert = (name, ok) => { assertions++; check(`OP17-035: ${name}`, ok); };
@@ -1170,7 +1230,7 @@ async function op17044WireCase() {
  if(assertions!==10)throw new Error(`OP17-044 executed ${assertions}, expected 10`);
  console.log(`OP17-044 executed ${assertions} assertions across two fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
@@ -1206,7 +1266,7 @@ try {
  await matrix('Require my approval');
  await matrix('Request changes','Request changes',"document.querySelector('textarea[aria-label=\"Gate note t\"]').value='Please change this'");
  check('A12 reply before label with expect, task stays blocked',await ev("window.__op.writes.at(-2).path.endsWith('/messages') && window.__op.writes.at(-1).body.operations[0].expect.value==='pending' && window.__op.task.state==='blocked' && window.__op.task.direct_action_required"));
- await ev("window.__op.failLabel=1");await matrix('Approve and unblock');
+ await ev("window.__op.task.state='blocked';window.__op.root.labels.gate='pending';window.__op.failLabel=1");await click('Refresh permissions and state');await sleep(100);await matrix('Approve and unblock');
  check('A6 cosmetic failure is explicit',await ev("document.querySelector('.op-receipts').textContent.includes('Approved; label not updated')"));
  const unblocks=await ev("window.__op.writes.filter(x=>x.path.endsWith('/unblock')).length");await click('Retry label only');await sleep(150);
  check('A6 cosmetic retry never repeats unblock',await ev(`window.__op.writes.filter(x=>x.path.endsWith('/unblock')).length===${unblocks} && window.__op.task.direct_action_required`));

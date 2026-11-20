@@ -94,13 +94,28 @@ export function operatorFixture() {
     }
     if(p===`/v1/boards/${B}/messages/root/labels`) {
       if(m!=='PATCH')return json({},405);
+      // Validate the whole request and compare against pre-request labels before mutation.
+      if(!only(body,['operations']) || !Array.isArray(body.operations) || !body.operations.length)return invalid();
+      for(const op of body.operations) {
+        if(!only(op,['op','key','value','expect']) || !['set','unset'].includes(op.op) ||
+          typeof op.key!=='string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(op.key) || /^(yak|abby)\./i.test(op.key) ||
+          (op.op==='set'?typeof op.value!=='string':Object.hasOwn(op,'value')))return invalid();
+        if(Object.hasOwn(op,'expect') && (!only(op.expect,['absent','present','value']) ||
+          Object.entries(op.expect).some(([key,value])=>typeof value!==(key==='value'?'string':'boolean'))))return invalid();
+      }
+      for(const op of body.operations) {
+        const key=op.key.toLowerCase(),present=Object.hasOwn(root.labels,key),expect=op.expect || {};
+        if((expect.absent===true && present) || (expect.present===true && !present) ||
+          (Object.hasOwn(expect,'value') && (!present || root.labels[key]!==expect.value)))
+          return json({code:'revision_conflict',key,current:present?root.labels[key]:null},412);
+      }
       if(T.labelFault) {
         if(T.deferLabel) await new Promise(resolve=>T.resolveLabel=resolve);
         if(T.labelFault.status===0) throw new TypeError('synthetic label network uncertainty');
         return json({code:'revision_conflict',key:'gate',current:T.labelFault.current || 'changes_requested'},T.labelFault.status);
       }
-      if(T.failLabel){T.failLabel--;return json({code:'revision_conflict',current:'changes_requested'},412)}
-      for(const op of body.operations) {if(op.op==='unset')delete root.labels[op.key];else root.labels[op.key]=op.value;}return json(root);
+      if(T.failLabel){T.failLabel--;return json({code:'revision_conflict',key:'gate',current:root.labels.gate ?? null},412)}
+      for(const op of body.operations) {const key=op.key.toLowerCase();if(op.op==='unset')delete root.labels[key];else root.labels[key]=op.value;}return json(root);
     }
     if(p===`/v1/boards/${B}/tasks/t/claims`){if(m!=='POST')return json({},405);if(!only(body,['lease_seconds','expect_brief_revision'])||!lease())return invalid();task.state='claimed';task.current_claim={id:T.claimId || 'q',actor_id:'a',lease_seconds:T.testLease || 300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:'fake-secret-proof',task,brief:{revision:1}})}
     if(p===`/v1/boards/${B}/tasks/t/claims/${encodeURIComponent(T.claimId || 'q')}/renew`) {

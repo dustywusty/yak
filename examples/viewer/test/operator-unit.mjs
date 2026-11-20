@@ -521,13 +521,14 @@ test('OP17-044 fixture validates captured production wire artifacts',async()=>{
  const {operatorFixture}=await import('./operator-fixture.mjs');
  const {emitOperatorWire}=await import('./emit-operator-wire.mjs');
  const {runInNewContext}=await import('node:vm');
- const window={};runInNewContext(`(${operatorFixture})()`,{window,location:{href:'http://synthetic/'},Response,URL,Date,setTimeout,DOMException});
+ const freshFixture=()=>{const window={};runInNewContext(`(${operatorFixture})()`,{window,location:{href:'http://synthetic/'},Response,URL,Date,setTimeout,DOMException});return window;};
  const requests=await emitOperatorWire();assert.equal(requests.length,13);
- for(const r of requests){const response=await window.fetch(r.path,{method:r.method,body:JSON.stringify(r.body),headers:r.headers});assert.ok(response.ok,`${r.method} ${r.path}: ${response.status}`);
+ for(const r of requests){const window=freshFixture();const response=await window.fetch(r.path,{method:r.method,body:JSON.stringify(r.body),headers:r.headers});assert.ok(response.ok,`${r.method} ${r.path}: ${response.status}`);
   const data=await response.json();
   if(r.path.endsWith('/tasks')){assert.equal(data.title,'Wire task');assert.equal(data.direct_action_required,r.body.direct_action_required);assert.equal(data.assignee_actor_id,r.body.assignee_actor_id);assert.equal(window.__op.created.thread.channel_path,'ops');assert.equal(window.__op.created.root.text,'Wire brief');}
   if(r.path.endsWith('/renew')){assert.equal(data.status,'active');assert.equal(data.lease_seconds,300);assert.ok(data.expires_at);}
  }
+ const window=freshFixture();
  const create=requests[0], release=requests.at(-1), renew=requests.at(-2);
  const rejected=[
   [{...create,body:{...create.body,invalid_thread:create.body.thread,thread:undefined}},400],
