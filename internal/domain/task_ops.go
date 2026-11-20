@@ -352,13 +352,17 @@ func (s *Service) ReplayClaim(ctx context.Context, p *Principal, boardID, claimI
 	return resp, nil
 }
 
-// RenewClaim is L4 (CLAIM-023).
+// RenewClaim is L4 (CLAIM-023). Without lease_seconds the renewal keeps the
+// claim's current lease length (CLAIM-020), so the fingerprint records the
+// request as sent (null = keep the current lease). The task revision goes
+// up by one; epoch, execution, and state do not change.
 func (s *Service) RenewClaim(ctx context.Context, p *Principal, boardID, taskID, claimID string, proof *ClaimProof, idem *Idem, req RenewRequest) (*Result, error) {
-	lease, err := s.leaseSeconds(req.LeaseSeconds)
-	if err != nil {
-		return nil, err
+	if req.LeaseSeconds != nil {
+		if _, err := s.leaseSeconds(req.LeaseSeconds); err != nil {
+			return nil, err
+		}
 	}
-	idem.Request = proofRequest{Body: map[string]any{"lease_seconds": lease, "claim_id": claimID}, ClaimID: proof.ClaimID}
+	idem.Request = proofRequest{Body: map[string]any{"lease_seconds": req.LeaseSeconds, "claim_id": claimID}, ClaimID: proof.ClaimID}
 	return s.boardMutation(ctx, p, boardID, idem, func(b *btx) (*Result, error) {
 		t, err := b.lockTask(taskID)
 		if err != nil {
@@ -371,28 +375,25 @@ func (s *Service) RenewClaim(ctx context.Context, p *Principal, boardID, taskID,
 		if c.ID != claimID {
 			return nil, claimLost(t)
 		}
+		lease := c.LeaseSeconds
+		if req.LeaseSeconds != nil {
+			lease = *req.LeaseSeconds
+		}
 		c.ExpiresAt = b.now.Add(time.Duration(lease) * time.Second)
 		c.Revision++
 		c.LeaseSeconds = lease
 		if _, err := b.Exec(b.ctx, `UPDATE claims SET expires_at=$2, revision=$3, lease_seconds=$4 WHERE id=$1`, c.ID, c.ExpiresAt, c.Revision, lease); err != nil {
 			return nil, err
 		}
+		// The task view shows current_claim.expires_at, so a renewal is a
+		// task change: task revision +1, and the event carries the task
+		// resource like every other task event (TASK-082, ADR-0004 §4).
 		t.ClaimExpiresAt = &c.ExpiresAt
+		b.touch(t, false)
 		if err := b.saveTask(t); err != nil {
 			return nil, err
 		}
-		view, err := b.storedView(t, nil)
-		if err != nil {
-			return nil, err
-		}
-		stored, err := b.storedRootLabels(t.RootMessageID)
-		if err != nil {
-			return nil, err
-		}
-		stored[TaskStateLabel] = t.State
-		if _, err := b.emit(PendingEvent{Type: "task.claim_renewed", ChannelID: t.ChannelID, ThreadID: t.ThreadID, ResourceType: "claim", ResourceID: c.ID,
-			Revision: c.Revision, Payload: map[string]any{"task": view, "claim": c.ClaimView},
-			Facets: []events.Facet{{ThreadScope: true, ChannelPath: b.chanOf(t).Path, ThreadID: t.ThreadID, RootLabels: stored}}}); err != nil {
+		if err := b.emitTask(t, taskEvent{Type: "task.claim_renewed", StateBefore: t.State, Extra: map[string]any{"claim": c.ClaimView}}); err != nil {
 			return nil, err
 		}
 		return &Result{Status: 200, ResourceType: "claim_renewal", ResourceID: c.ID, Body: c.ClaimView}, nil
@@ -1064,7 +1065,7 @@ func (s *Service) UpdateBrief(ctx context.Context, p *Principal, boardID, taskID
 			return nil, err
 		}
 		if _, err := b.emit(PendingEvent{Type: "message.created", ChannelID: t.ChannelID, ThreadID: t.ThreadID, ResourceType: "message", ResourceID: m.ID, Revision: 1,
-			Payload: map[string]any{"message": m}, Facets: []events.Facet{m.facet(th.Labels)}}); err != nil {
+			Payload: messageEventPayload(m, th, nil), Facets: []events.Facet{m.facet(th.Labels)}}); err != nil {
 			return nil, err
 		}
 		if _, err := b.Exec(b.ctx, `INSERT INTO task_briefs(board_id, task_id, revision, text, source_kind, source_message_id, source_message_revision, reason, created_by, created_at)

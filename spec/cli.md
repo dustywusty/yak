@@ -95,7 +95,7 @@ ADR-0016. They use only the public HTTP API through `sdk/go/abby`
 | `task create CHANNEL --title T [--text X] [--set-label k=v] [--assignee A] [--depends-on ID]` | `POST …/tasks` with `thread` |
 | `task convert THREAD [--assignee A] [--depends-on ID]` | `POST …/tasks` with `thread_id` |
 | `task show ID` | `GET …/tasks/{id}` (effective view) |
-| `task list [--channel] [--subtree] [--state S]… [--assignee A\|none] [--owner A] [--label k\|k:v]…` | `GET …/tasks` (follows page tokens; NDJSON with `--json`) |
+| `task list [--channel] [--subtree] [--state S]… [--assignee A\|me\|none] [--owner A\|me] [--label k\|k:v]…` | `GET …/tasks` (follows page tokens; NDJSON with `--json`) |
 | `task edit ID --if-revision R [--title] [--owner]` | `PATCH …/tasks/{id}` |
 | `task brief ID [--revision N \| --list]` | `GET …/briefs[/{revision}]` (default: current revision) |
 | `task brief ID --set --text X --reason R --if-revision R` | `POST …/briefs` (blocks the task, revokes any claim) |
@@ -103,7 +103,7 @@ ADR-0016. They use only the public HTTP API through `sdk/go/abby`
 | `task claims ID` | `GET …/claims` (history, no proofs) |
 | `task claim ID [--lease D] [--expect-brief-revision N] [--proof-file F]` | `POST …/tasks/{id}/claims` |
 | `task next [--channel] [--subtree] [--label k\|k:v]… [--assignee eligible\|me\|unassigned] [--wait D] [--lease D] [--proof-file F]` | `POST …/tasks/claim-next` |
-| `task renew ID [--claim C] [--lease D]` | `POST …/claims/{claim}/renew` (claim ID defaults to the current claim) |
+| `task renew ID [--claim C] [--lease D]` | `POST …/claims/{claim}/renew` (claim ID defaults to the current claim; without `--lease` the claim keeps its current lease) |
 | `task release ID [--reason]` | `POST …/release` |
 | `task complete ID [--summary] [--evidence kind:ref[:note]]… [--commit SHA]… [--data JSON]` | `POST …/complete` |
 | `task fail ID --reason R [--evidence …]… [--commit SHA]… [--data JSON]` | `POST …/fail` |
@@ -113,6 +113,15 @@ ADR-0016. They use only the public HTTP API through `sdk/go/abby`
 | `task assign ID ACTOR\|--none --if-revision R` | `PUT …/assignee` |
 | `task deps ID TASK… \| --clear --if-revision R` | `PUT …/dependencies` (replaces the readable set) |
 | `task batch FILE.json [--plan-id P] [--progress-file F] [--batch-size N]` | `POST …/tasks/batch` (see below) |
+
+**Actor arguments.** `task list --assignee/--owner`, `task create/convert
+--assignee`, and `task assign ID ACTOR` accept an actor ID or `me`. The
+CLI resolves `me` with `GET /v1/me` and sends the caller's actor ID; the
+server filter stays actor ID or `none` (TASK-026). `task list --assignee`
+also accepts `none`, and `unassigned` as the same value. The CLI rejects
+(exit 2) a keyword that does not apply (`eligible` is for `task next`),
+a case or `@` variant of a keyword (`ME`, `@me`), and an `@handle`. It
+sends any other value unchanged, because IDs are opaque (WIRE-003).
 
 Every `POST` sends an `Idempotency-Key`. Pass `--idempotency-key K` to
 retry a command safely with the same key. `--if-revision` is the task
@@ -179,7 +188,9 @@ The runner implements spec §17 (RUN-001..007, PAR-033).
    environment of the command. If `--run-id`/`ABBY_RUN_ID` is not set, the
    runner makes a run ID and sends it as `Abby-Run-Id`.
 4. **Renew.** The runner renews at one third of the granted lease, ±10 %
-   random jitter. Each renewal has a new key; retries of one renewal use
+   random jitter. It sends `--lease` on each renewal if it was given;
+   otherwise it omits `lease_seconds`, and the claim keeps the lease it was
+   granted. Each renewal has a new key; retries of one renewal use
    its key. The local deadline is the monotonic time when the first
    attempt of the confirmed request was sent, plus the granted lease. The
    runner never compares `expires_at` with the local clock.
