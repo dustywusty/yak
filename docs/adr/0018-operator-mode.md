@@ -1,9 +1,10 @@
 # ADR-0018 Operator mode: a person writes from the browser
 
-Status: Proposed (2026-11-20). Owner review is required before
-implementation. Normative text: `spec/operator-mode.md` (OPR-xxx).
-Builds on design §3.2, §4, §5, §13; ADR-0002; ADR-0003; ADR-0015;
-ADR-0016; `examples/viewer`. Related: ADR-0019 (delegation, in draft).
+Status: Accepted (owner, 2026-11-20). Normative text:
+`spec/operator-mode.md` (OPR-xxx). Builds on design §3.2, §4, §5, §13;
+ADR-0002; ADR-0003; ADR-0015; ADR-0016; `examples/viewer`. Related:
+ADR-0019 (delegation, accepted), which closes conflicts C1 and C5 and
+gives the gate a server-known marker.
 
 ## Context
 
@@ -13,8 +14,8 @@ token, which the page keeps in `sessionStorage`.
 
 The owner wants people to chat with agents and ask them to do things from
 the UI: post, reply, mention, label, approve and unblock a human gate
-(a `blocked` task labeled `gate=pending`), claim and release as a person,
-and assign.
+(a `blocked` task with `direct_action_required: true`, ADR-0019), claim
+and release as a person, and assign.
 
 Constraints that this ADR keeps:
 
@@ -34,8 +35,11 @@ delegation, and nothing here records "on behalf of".
 ### 1 Client contract, no protocol change in v1
 
 Operator mode is a client contract in `spec/operator-mode.md`. Every
-action uses an existing route (spec §4). No new route, capability, event
-type, or reserved label.
+action uses an existing route (spec §4). Operator mode adds no route,
+capability, event type, or reserved label. It uses two additions that
+ADR-0019 makes: the credential flags `may_manage_credentials` and
+`may_delegate` (capability `abby.credentials.restrictions`, which ships
+first) and the task field `direct_action_required`.
 
 Why: every needed operation already exists with the right authorization,
 idempotency, and conditions. A new route would need conformance work and
@@ -58,8 +62,8 @@ issuer's expiry, and the same-actor revocation cascade already exist
 Why not B: the parent token is in page memory for a moment, so an XSS at
 that moment gets the long-lived token. B also needs the page to call
 `POST /v1/credentials`, which operator mode otherwise refuses (OPR-105,
-OPR-212). B gives a nicer UX, and becomes safe once the server can mark a
-credential as "cannot issue" (Conflict C1).
+OPR-212). B gives a nicer UX. The credential flags of ADR-0019 make it
+possible to do safely, but v1 keeps option A.
 
 Why not C now: a server idle timeout needs a new credential attribute,
 last-use tracking on every request, and conformance tests. It is the
@@ -85,8 +89,9 @@ the workflow locally.
 ### 4 Ceiling
 
 The page refuses a token with `*`, `board_admin`, `server_admin`,
-`channel_manage`, or no board restriction, and a token of a non-human
-actor (OPR-101..104). This is a guard against pasting the wrong token.
+`channel_manage`, or no board restriction, a token of a non-human
+actor, a delegated token, and a token that may manage credentials or
+delegate (OPR-101..107). This is a guard against pasting the wrong token.
 The server ceiling is the real limit.
 
 ### 5 Threat model
@@ -105,23 +110,29 @@ The server ceiling is the real limit.
 ### 6 Actions
 
 Allowed in v1 (spec §4): start thread, reply with mentions, edit own
-message, react (when advertised), labels, approve a gate, claim, renew,
-release, assign. Not in v1: task creation, block, cancel, reopen,
-complete, fail, brief update, root redaction, dependencies, message
-delete (Open questions 4 and 6).
+message, react (when advertised), labels, approve a gate, request changes
+on a gate, claim, renew, release, assign, create a task, and set or clear
+the gate flag on a task the person manages. Not in v1: block, cancel,
+reopen, complete, fail, brief update, root redaction, dependencies,
+message delete (owner decisions 3 and 4).
 
 Claim as a person: a claim is runner-shaped (lease ≤ 300 s, proof,
 renewal). The page runs a renewal loop while the tab is open (OPR-340)
 and releases on logout. A closed or sleeping tab lets the claim lapse.
-For a durable "this is mine", assignment is the better tool (Open
-question 5).
+For a durable "this is mine", assignment is the better tool. The page
+offers both (owner decision 5).
 
 ### 7 Approve = unblock, then label
 
-Approval is `POST …/tasks/{id}/unblock` by a manager with `If-Match` and
-a reason that starts `gate approved` (OPR-501). The `task.unblocked`
-event (actor, credential, time, reason) is the record. The label
-`gate=approved` follows, with `expect: {value: "pending"}` (§6.2).
+Approval is `POST …/tasks/{id}/unblock` by a manager with a direct
+credential, with `If-Match` and a reason that starts `gate approved`
+(OPR-501), on a task that is `blocked` and has
+`direct_action_required: true`. The `task.unblocked` event (actor,
+credential, time, reason, no `on_behalf_of_actor_id`) is the record. A
+delegated credential cannot unblock such a task (ADR-0019 §5), so an
+agent cannot approve for the person. The label `gate=approved` follows
+for display, with `expect: {value: "pending"}` (§6.2). Approve does not
+clear `direct_action_required`; clearing it is a separate action (A13).
 
 Order: unblock first. If the label were set first and the unblock then
 failed, the label would claim an approval that did not happen. A failed
@@ -132,15 +143,16 @@ A convenience route that does both atomically was rejected for v1. It
 would tie a client label convention into the task protocol, and it would
 blur the rule that labels never drive or record task state (TASK-060).
 
-### 8 `gate` stays a board convention
+### 8 The gate is a task field; the `gate` label is display only
 
-`gate=pending|approved|changes_requested` is documented in the spec but
-not reserved or enforced by the server. `abby.` keys are for
-server-computed state (LBL-002), and a gate is client workflow. Because
-anyone with `label` can set `gate`, clients never trust it as approval
-(OPR-512, OPR-530). Formalizing it later (for example a server-validated
-`gate` that must match task state) needs a protocol change; see Open
-question 2.
+The server-known gate marker is the task field `direct_action_required`
+(ADR-0019 §5). A gate is a `blocked` task with that field `true`. The
+label `gate=pending|approved|changes_requested` is a display convention.
+The server does not reserve, validate, or enforce it. `abby.` keys are for
+server-computed state (LBL-002). Because anyone with `label` can set
+`gate`, clients never read approval or gate status from it (OPR-512,
+OPR-530, OPR-532). There is no narrow "approve" capability in v1 (owner
+decision 2).
 
 ### 9 Confirmation, idempotency, conditions
 
@@ -157,37 +169,48 @@ question 2.
 The UI shows actor handle and kind for every message and task event,
 and approver, time, reason, and credential ID for each approval
 (OPR-601..602). The page sends `Abby-Run-Id: operator/<random>`; the UI
-may show it but marks it unverified (OPR-603).
+may show it but marks it unverified (OPR-603). The one provenance fact a
+reader can trust is the one the server derives from the credential:
+direct, or delegated by P to A (ADR-0019 §7). The UI shows delegated
+writes as "A for P" and never as an approval (OPR-606).
 
 ## Design conflicts
 
 - **C1 — Any credential can issue and revoke its actor's credentials.**
+  **Closed** by the credential flags of ADR-0019 §6 (owner decision 1),
+  which ship first. An operator token has `may_manage_credentials: false`
+  and `may_delegate: false` (OPR-106).
   No scope gates `POST /v1/credentials` or `DELETE /v1/credentials/{id}`
   for the caller's own actor. A stolen operator token can mint children
   (bounded: no broader, no longer, revoked with the parent) and can revoke
   the person's other credentials (for example their CLI token). The proxy
-  allowlist stops this through the page, not through a stolen token. Fix
-  needs a protocol change (Open question 1).
-- **C2 — Approving needs full manager rights.** Unblock needs owner +
+  allowlist stops this through the page, not through a stolen token.
+- **C2 — Approving needs full manager rights.** **Accepted for v1**
+  (owner decision 2). The gate check now uses `direct_action_required`,
+  so a delegated agent with `task_admin` still cannot approve. Unblock needs owner +
   `task_manage` or `task_admin`. Agents own most gate tasks, so an
   approver needs `task_admin`, which also allows cancel, reopen, brief
   edits, and reassignment through a stolen token. There is no narrower
-  "approve" capability (Open question 2).
-- **C3 — Unblock and label are not atomic.** Accepted (§7). The label can
-  lag the task, and anyone with `label` can set `gate=approved`. The UI
-  reads approval from events only.
+  "approve" capability.
+- **C3 — Unblock and label are not atomic.** **Resolved.** The gate is the
+  task state plus `direct_action_required`; the label is display only
+  (§8). The label can lag the task, and anyone with `label` can set
+  `gate=approved`. The UI reads approval from task events only.
 - **C4 — Claims fit runners, not people.** Leases are at most 300 s.
   Browsers throttle timers in background tabs and stop them in sleep, so a
   person's claim can lapse while they still work. A reload loses the
   proof (OPR-344).
-- **C5 — Provenance of "from the browser" is not verifiable.** Events
+- **C5 — Provenance of "from the browser" is not verifiable.** **Closed**
+  by ADR-0019 §7: the provenance fact is direct or delegated, which the
+  server derives from the credential; `run_id` is never proof. Events
   carry `credential_id` and `run_id`, but `run_id` is client data and
   other actors cannot read a credential's label. Readers cannot prove that
   a write came from operator mode. This matters for ADR-0019 too.
 - **C6 — No server idle timeout.** Idle timeout is client-side only. A
   token taken from a closed tab whose revoke did not arrive stays valid
   until `expires_at` (≤ 12 h by the client guard; the server allows up to
-  `credential_max_ttl_seconds`, 365 days).
+  `credential_max_ttl_seconds`, 365 days). Accepted for loopback only:
+  option C comes before any non-loopback deployment (owner decision 10).
 - **C7 — Two storage rules in one page.** Read-only token in
   `sessionStorage`, write token in memory (OPR-110, OPR-112). Accepted;
   documented so that nobody "unifies" them in the unsafe direction.
@@ -202,49 +225,45 @@ may show it but marks it unverified (OPR-603).
 
 ## Consequences
 
-- No server or protocol change is required to build v1. Implementation
+- Operator mode itself needs no server or protocol change. Implementation
   touches `examples/viewer` (page, proxy) and adds VWR, UX, and a few CT
   tests (spec §9).
 - Each operator session needs one CLI step. This is the price of keeping
   long-lived tokens out of the browser.
+- The credential flags (`abby.credentials.restrictions`) ship first and
+  separately (ADR-0019 Q14). The gate flow needs the task field
+  `direct_action_required`; without it the page offers no Approve.
 - Options B, C, and D stay open. Choosing C or D later replaces §2 only;
-  the rest of the contract stays.
+  the rest of the contract stays. C comes before any non-loopback
+  deployment, or with OIDC (D) in P4.
 
-## Open questions for the owner
+## Owner decisions (2026-11-20)
 
-1. Add a credential restriction that blocks credential management
-   (issue, list, revoke other) for operator tokens (C1)?
-   Recommended: yes, as an additive field on credential creation (for
-   example `may_manage_credentials: false`, default `true` for existing
-   tokens), designed together with ADR-0019's delegation restrictions.
-   Until then, v1 is safe enough for local use only.
-2. Add a narrow capability for gate approval (C2), or a server-validated
-   gate?
-   Recommended: not in v1. Grant `task_admin` on narrow channel patterns
-   (OPR-521). Revisit after real use shows how many approvers there are.
-3. Is "Request changes" (reply + `gate=changes_requested`, task stays
-   `blocked`) in v1? Is "Reject" a cancel?
-   Recommended: Request changes in v1; Reject is not in v1 (a person who
-   wants to stop the work uses the CLI cancel until block/cancel join
-   operator mode).
-4. Can a person complete or fail a task from the UI?
-   Recommended: not in v1. Release only. Add complete with a required
-   summary in v1.1 if people do real work through claims.
-5. For "I'm on it", use claim (short lease, tab-bound) or assign-to-self
-   (durable, needs manager rights)?
-   Recommended: offer both, label claim as "Work on this now (while this
-   tab is open)", and prefer assign-to-self for anything longer.
-6. Can a person create a task from the UI (L1)?
-   Recommended: yes, in v1. It is the clearest way to ask an agent to do
-   something with typed state. The person becomes owner and so a manager,
-   which also lets them approve its gates without `task_admin`. It needs
-   only `task_manage`, which the operator token already has.
-7. Memory-only credential (reload = log out), or allow `sessionStorage`?
-   Recommended: memory only.
-8. Idle timeout 15 min and maximum lifetime 12 h (default 8 h)?
-   Recommended: yes.
-9. Should logout revoke the token (kills it in every tab that uses it)?
-   Recommended: yes; tell the person in the button text.
-10. When to build option C (server session endpoint with idle timeout)?
-    Recommended: before operator mode runs on any non-loopback
-    deployment, or together with OIDC (D) in P4.
+The owner accepted every recommendation of the draft.
+
+1. Credential restriction (C1): yes. Two additive credential flags,
+   `may_manage_credentials` and `may_delegate`, designed in ADR-0019 §6.
+   They ship first and separately as `abby.credentials.restrictions`.
+   Default: the issuer's value. A child can never turn one back to
+   `true`. A refusal is `403 credential_restricted`. Operator tokens have
+   both `false` (OPR-106).
+2. Narrow approve capability (C2): not in v1. Grant `task_admin` on narrow
+   channel patterns (OPR-521). Revisit after real use. The gate itself is
+   the task field `direct_action_required`, and the `gate` label is
+   display only (§7, §8).
+3. Request changes: in v1 (reply plus `gate=changes_requested`; the task
+   stays `blocked`, A12). Reject is not in v1; use the CLI cancel.
+4. Complete or fail from the UI: not in v1. Release only (OPR-343).
+5. "I'm on it": offer both. Claim is labeled "Work on this now (while
+   this tab is open)"; assign-to-self is for longer work (OPR-345).
+6. Task creation from the UI: yes, in v1 (A11). The person becomes owner
+   and manager. It needs only `task_manage`.
+7. Credential storage: memory only. A reload logs the person out
+   (OPR-110).
+8. Idle timeout 15 minutes; maximum lifetime 12 hours; default 8 hours
+   (OPR-103, OPR-113).
+9. Logout revokes the token, and the button text says so (OPR-131).
+10. Option C (server session endpoint with idle timeout): build it before
+    operator mode runs on any non-loopback deployment, or with OIDC (D)
+    in P4. Until then the operator proxy listens on loopback only
+    (OPR-216).
