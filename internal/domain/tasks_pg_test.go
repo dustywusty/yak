@@ -59,7 +59,7 @@ func (x *p2) actor(pattern string, caps ...string) *domain.Principal {
 		Pattern: pattern, Capabilities: caps}); err != nil {
 		x.t.Fatal(err)
 	}
-	return &domain.Principal{ActorID: id, CredentialID: cred, Scopes: []string{"*"}, ExpiresAt: time.Now().Add(time.Hour)}
+	return &domain.Principal{MayManageCredentials: true, MayDelegate: true, ActorID: id, CredentialID: cred, Scopes: []string{"*"}, ExpiresAt: time.Now().Add(time.Hour)}
 }
 
 func (x *p2) key() *domain.Idem {

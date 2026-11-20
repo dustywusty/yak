@@ -53,7 +53,7 @@ func setup(t *testing.T) (*domain.Service, *domain.Principal, string) {
 	if err := pool.QueryRow(ctx, `INSERT INTO credentials(id, actor_id, label, scopes, verifier, expires_at) VALUES ('cred_'||$1,$2,'t','{*}','\x00', now()+interval '1 day') RETURNING id`, h, adminID).Scan(&credID); err != nil {
 		t.Fatal(err)
 	}
-	p := &domain.Principal{ActorID: adminID, CredentialID: credID, ServerAdmin: true, Scopes: []string{"*"}, ExpiresAt: time.Now().Add(time.Hour)}
+	p := &domain.Principal{MayManageCredentials: true, MayDelegate: true, ActorID: adminID, CredentialID: credID, ServerAdmin: true, Scopes: []string{"*"}, ExpiresAt: time.Now().Add(time.Hour)}
 	res, err := svc.CreateBoard(ctx, p, &domain.Idem{Key: h, Namespace: "server", Method: "POST", Path: "/v1/boards"}, domain.CreateBoardRequest{Name: h})
 	if err != nil {
 		t.Fatal(err)

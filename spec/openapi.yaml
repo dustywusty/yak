@@ -317,6 +317,10 @@ paths:
         The bearer token (`yak.<credential_id>.<secret>`) is returned exactly
         once. An idempotent replay returns the credential with
         `token_unavailable: true` and no token.
+        Both restriction flags default to the issuer value. Neither can be
+        enabled when disabled on the issuer, including cross-actor admin issue.
+        A caller with may_manage_credentials false gets 403 credential_restricted.
+        Attempting to enable a disabled flag also returns 403 credential_restricted.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -326,6 +330,7 @@ paths:
             schema: { $ref: "#/components/schemas/CreateCredentialRequest" }
             examples:
               board_restricted: { externalValue: ./examples/CreateCredentialRequest.board_restricted.json }
+              operator: { externalValue: ./examples/CreateCredentialRequest.operator.json }
       responses:
         "201":
           description: Issued (or replayed).
@@ -356,8 +361,9 @@ paths:
           caller is board-restricted, expiry clamped to the caller's expiry).
           A self-issued credential stops authenticating once any credential in
           its same-actor issuance chain is revoked. A server administrator may
-          issue for other actors; those credentials are independent of the
-          issuing credential.
+          issue for other actors; their validity is independent of the
+          issuing credential, but both restriction flags still inherit and
+          cannot widen. Issue requires may_manage_credentials true.
         events: []
         audit: [credential.issue]
     get:
@@ -386,7 +392,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/Unavailable" }
       x-yak:
-        authorization: Own credentials; any actor's for a server administrator.
+        authorization: Own credentials; any actor's for a server administrator. Requires may_manage_credentials true; otherwise 403 credential_restricted.
 
   /v1/credentials/{credential_id}:
     parameters:
@@ -408,12 +414,13 @@ paths:
                 revoked: { externalValue: ./examples/Credential.revoked.json }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
       x-yak:
         idempotency: not_applicable
         precondition: none
-        authorization: The credential's own actor, or a server administrator. Others get 404. Effective for every authorization check after commit, including in-progress long polls.
+        authorization: The credential's own actor, or a server administrator. With may_manage_credentials false, only revoke-self is allowed; any other target returns 403 credential_restricted. Others get 404. Effective for every authorization check after commit, including in-progress long polls.
         events: []
         audit: [credential.revoke]
 

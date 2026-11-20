@@ -22,6 +22,7 @@
     "yak.grants",
     "yak.actors",
     "yak.credentials",
+    "yak.credentials.restrictions",
     "yak.threads",
     "yak.messages",
     "yak.messages.guarded_reply",

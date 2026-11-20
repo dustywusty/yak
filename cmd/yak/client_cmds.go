@@ -229,6 +229,12 @@ func clientCmds() []*cobra.Command {
 		if boards != "" {
 			body["board_ids"] = splitList(boards)
 		}
+		for _, flag := range []string{"may-manage-credentials", "may-delegate"} {
+			if cmd.Flags().Changed(flag) {
+				value, _ := cmd.Flags().GetBool(flag)
+				body[strings.ReplaceAll(flag, "-", "_")] = value
+			}
+		}
 		out, err := call(cmd, yak.Request{Method: "POST", Path: "/v1/credentials", IdempotencyKey: idemKey(cmd), Body: body})
 		if err != nil {
 			return err
@@ -245,6 +251,8 @@ func clientCmds() []*cobra.Command {
 		}
 		return nil
 	}}
+	credCreate.Flags().Bool("may-manage-credentials", true, "allow credential issue, list and revoke-other (default: inherit issuer)")
+	credCreate.Flags().Bool("may-delegate", true, "allow delegation management (default: inherit issuer)")
 	credCreate.Flags().String("actor", "", "actor ID (default: yourself)")
 	credCreate.Flags().String("scopes", "", "comma-separated scopes, e.g. read,post or *")
 	credCreate.Flags().String("boards", "", "comma-separated board IDs to restrict to")

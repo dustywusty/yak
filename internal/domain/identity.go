@@ -30,14 +30,16 @@ type ActorView struct {
 
 // CredentialView never includes the secret or verifier.
 type CredentialView struct {
-	ID        string     `json:"id"`
-	ActorID   string     `json:"actor_id"`
-	Label     string     `json:"label"`
-	Scopes    []string   `json:"scopes"`
-	BoardIDs  []string   `json:"board_ids"`
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	RevokedAt *time.Time `json:"revoked_at"`
+	MayManageCredentials bool       `json:"may_manage_credentials"`
+	MayDelegate          bool       `json:"may_delegate"`
+	ID                   string     `json:"id"`
+	ActorID              string     `json:"actor_id"`
+	Label                string     `json:"label"`
+	Scopes               []string   `json:"scopes"`
+	BoardIDs             []string   `json:"board_ids"`
+	CreatedAt            time.Time  `json:"created_at"`
+	ExpiresAt            time.Time  `json:"expires_at"`
+	RevokedAt            *time.Time `json:"revoked_at"`
 }
 
 // IssuedCredential is returned exactly once, on first issuance.
@@ -76,9 +78,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		disabled *time.Time
 		actorAdm bool
 	)
-	err := s.DB.QueryRow(ctx, `SELECT c.id, c.actor_id, a.handle, a.server_admin, c.scopes, c.board_ids, c.verifier, c.expires_at, c.revoked_at, a.disabled_at
+	err := s.DB.QueryRow(ctx, `SELECT c.id, c.actor_id, a.handle, a.server_admin, c.scopes, c.board_ids, c.verifier, c.expires_at, c.revoked_at, a.disabled_at, c.may_manage_credentials, c.may_delegate
 		FROM credentials c JOIN actors a ON a.id=c.actor_id WHERE c.id=$1`, credID).
-		Scan(&p.CredentialID, &p.ActorID, &p.Handle, &actorAdm, &p.Scopes, &p.BoardIDs, &ver, &p.ExpiresAt, &revoked, &disabled)
+		Scan(&p.CredentialID, &p.ActorID, &p.Handle, &actorAdm, &p.Scopes, &p.BoardIDs, &ver, &p.ExpiresAt, &revoked, &disabled, &p.MayManageCredentials, &p.MayDelegate)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errUnauthenticated
@@ -146,7 +148,7 @@ func (s *Service) Bootstrap(ctx context.Context, handle, displayName string, ttl
 			return err
 		}
 		var err error
-		ic, err = insertCredential(ctx, tx, now, a.ID, nil, "bootstrap", []string{authz.AllScopes}, nil, now.Add(ttl))
+		ic, err = insertCredential(ctx, tx, now, a.ID, nil, "bootstrap", []string{authz.AllScopes}, nil, now.Add(ttl), true, true)
 		if err != nil {
 			return err
 		}
@@ -157,15 +159,15 @@ func (s *Service) Bootstrap(ctx context.Context, handle, displayName string, ttl
 	return av, ic, err
 }
 
-func insertCredential(ctx context.Context, tx pgx.Tx, now time.Time, actorID string, issuer *string, label string, scopes, boardIDs []string, exp time.Time) (*IssuedCredential, error) {
+func insertCredential(ctx context.Context, tx pgx.Tx, now time.Time, actorID string, issuer *string, label string, scopes, boardIDs []string, exp time.Time, mayManageCredentials, mayDelegate bool) (*IssuedCredential, error) {
 	id := ids.New("cred")
 	secret := ids.Secret()
-	if _, err := tx.Exec(ctx, `INSERT INTO credentials(id, actor_id, issued_by_credential_id, label, scopes, board_ids, verifier, created_at, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, actorID, issuer, label, scopes, boardIDs, verifier(secret), now, exp); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO credentials(id, actor_id, issued_by_credential_id, label, scopes, board_ids, verifier, created_at, expires_at, may_manage_credentials, may_delegate)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, id, actorID, issuer, label, scopes, boardIDs, verifier(secret), now, exp, mayManageCredentials, mayDelegate); err != nil {
 		return nil, err
 	}
 	return &IssuedCredential{
-		Credential: CredentialView{ID: id, ActorID: actorID, Label: label, Scopes: scopes, BoardIDs: boardIDs, CreatedAt: now, ExpiresAt: exp},
+		Credential: CredentialView{MayManageCredentials: mayManageCredentials, MayDelegate: mayDelegate, ID: id, ActorID: actorID, Label: label, Scopes: scopes, BoardIDs: boardIDs, CreatedAt: now, ExpiresAt: exp},
 		Token:      tokenPrefix + id + "." + secret,
 	}, nil
 }
@@ -276,8 +278,8 @@ func (s *Service) Me(ctx context.Context, p *Principal) (*MeView, error) {
 
 func getCredential(ctx context.Context, q querier, id string) (*CredentialView, error) {
 	var c CredentialView
-	err := q.QueryRow(ctx, `SELECT id, actor_id, label, scopes, board_ids, created_at, expires_at, revoked_at FROM credentials WHERE id=$1`, id).
-		Scan(&c.ID, &c.ActorID, &c.Label, &c.Scopes, &c.BoardIDs, &c.CreatedAt, &c.ExpiresAt, &c.RevokedAt)
+	err := q.QueryRow(ctx, `SELECT id, actor_id, label, scopes, board_ids, created_at, expires_at, revoked_at, may_manage_credentials, may_delegate FROM credentials WHERE id=$1`, id).
+		Scan(&c.ID, &c.ActorID, &c.Label, &c.Scopes, &c.BoardIDs, &c.CreatedAt, &c.ExpiresAt, &c.RevokedAt, &c.MayManageCredentials, &c.MayDelegate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, NotFound("credential")
 	}
@@ -298,17 +300,36 @@ func (s *Service) GetCredential(ctx context.Context, p *Principal, id string) (*
 
 // CreateCredentialRequest is the normalized body of POST /v1/credentials.
 type CreateCredentialRequest struct {
-	ActorID          string   `json:"actor_id"`
-	Label            string   `json:"label"`
-	Scopes           []string `json:"scopes"`
-	BoardIDs         []string `json:"board_ids"`
-	ExpiresInSeconds int64    `json:"expires_in_seconds"`
+	MayManageCredentials *bool    `json:"may_manage_credentials"`
+	MayDelegate          *bool    `json:"may_delegate"`
+	ActorID              string   `json:"actor_id"`
+	Label                string   `json:"label"`
+	Scopes               []string `json:"scopes"`
+	BoardIDs             []string `json:"board_ids"`
+	ExpiresInSeconds     int64    `json:"expires_in_seconds"`
 }
 
 // CreateCredential issues a credential. An actor may issue credentials for
 // itself whose scopes, boards and expiry are within the calling credential's
 // ceiling. A server administrator may issue for any actor.
 func (s *Service) CreateCredential(ctx context.Context, p *Principal, idem *Idem, req CreateCredentialRequest) (*Result, error) {
+	if !p.MayManageCredentials {
+		return nil, E(403, "credential_restricted", "credential management is restricted")
+	}
+	// Both flags inherit from the issuer even when an administrator issues
+	// for another actor. Administrator status does not lift these ceilings.
+	if req.MayManageCredentials == nil {
+		v := p.MayManageCredentials
+		req.MayManageCredentials = &v
+	}
+	if req.MayDelegate == nil {
+		v := p.MayDelegate
+		req.MayDelegate = &v
+	}
+	if (*req.MayManageCredentials && !p.MayManageCredentials) || (*req.MayDelegate && !p.MayDelegate) {
+		return nil, E(403, "credential_restricted", "credential restriction flags exceed the calling credential's ceiling")
+	}
+
 	if req.ActorID == "" {
 		req.ActorID = p.ActorID
 	}
@@ -367,7 +388,7 @@ func (s *Service) CreateCredential(ctx context.Context, p *Principal, idem *Idem
 			exp = p.ExpiresAt
 		}
 		issuer := p.CredentialID
-		ic, err := insertCredential(ctx, tx, now, req.ActorID, &issuer, req.Label, req.Scopes, req.BoardIDs, exp)
+		ic, err := insertCredential(ctx, tx, now, req.ActorID, &issuer, req.Label, req.Scopes, req.BoardIDs, exp, *req.MayManageCredentials, *req.MayDelegate)
 		if err != nil {
 			return nil, err
 		}
@@ -382,6 +403,9 @@ func (s *Service) CreateCredential(ctx context.Context, p *Principal, idem *Idem
 // ListCredentials returns one page of an actor's credentials in
 // (created_at, id) order.
 func (s *Service) ListCredentials(ctx context.Context, p *Principal, actorID string, pg PageRequest) ([]CredentialView, *string, error) {
+	if !p.MayManageCredentials {
+		return nil, nil, E(403, "credential_restricted", "credential management is restricted")
+	}
 	after, err := pg.after()
 	if err != nil {
 		return nil, nil, err
@@ -393,14 +417,14 @@ func (s *Service) ListCredentials(ctx context.Context, p *Principal, actorID str
 	if actorID != p.ActorID && !p.ServerAdmin {
 		return nil, nil, Forbidden("server administration required")
 	}
-	rows, err := s.DB.Query(ctx, `SELECT id, actor_id, label, scopes, board_ids, created_at, expires_at, revoked_at FROM credentials
+	rows, err := s.DB.Query(ctx, `SELECT id, actor_id, label, scopes, board_ids, created_at, expires_at, revoked_at, may_manage_credentials, may_delegate FROM credentials
 		WHERE actor_id=$1 AND (NOT $2 OR (created_at, id) > ($3, $4)) ORDER BY created_at, id LIMIT $5`, actorID, has, t, id, pg.Limit+1)
 	if err != nil {
 		return nil, nil, err
 	}
 	l, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (CredentialView, error) {
 		var c CredentialView
-		err := r.Scan(&c.ID, &c.ActorID, &c.Label, &c.Scopes, &c.BoardIDs, &c.CreatedAt, &c.ExpiresAt, &c.RevokedAt)
+		err := r.Scan(&c.ID, &c.ActorID, &c.Label, &c.Scopes, &c.BoardIDs, &c.CreatedAt, &c.ExpiresAt, &c.RevokedAt, &c.MayManageCredentials, &c.MayDelegate)
 		return c, err
 	})
 	if err != nil {
@@ -414,6 +438,9 @@ func (s *Service) ListCredentials(ctx context.Context, p *Principal, actorID str
 // administrator, any credential. Revocation is effective for every
 // authorization check after commit. Repeating it is idempotent.
 func (s *Service) RevokeCredential(ctx context.Context, p *Principal, id string) (*CredentialView, error) {
+	if !p.MayManageCredentials && id != p.CredentialID {
+		return nil, E(403, "credential_restricted", "credential management is restricted")
+	}
 	var out *CredentialView
 	_, err := s.serverMutation(ctx, p, nil, func(tx pgx.Tx, now time.Time) (*Result, error) {
 		c, err := getCredential(ctx, tx, id)
