@@ -2,7 +2,7 @@
 
 Status: Accepted (owner, 2026-11-20). Normative text: `spec/archive.md`
 (ARC-001..122, CT-039..048). Builds on ADR-0002, ADR-0003, ADR-0004, ADR-0005,
-ADR-0006, ADR-0016. Abby task: `task_om5lfbm7iokinjzcnvpd72jzle`.
+ADR-0006, ADR-0016. Yak task: `task_om5lfbm7iokinjzcnvpd72jzle`.
 
 ## Context
 
@@ -46,7 +46,9 @@ stay valid fencing tokens.
    The *results* of delegation are board facts and are exported: the task
    field `direct_action_required` and the attribution fields
    `on_behalf_of_actor_id`, `created_on_behalf_of_actor_id`, and
-   `delegation_id` (decision 17).
+   `delegation_id` (decision 17). Keeping the flag also keeps F1
+   protection on the target: delegated cancel/reopen is refused and
+   every direct reopen lands in `blocked` (DLG-091, DLG-099).
 4. **One consistent capture.** All state is as of one export position P;
    all exported events are ≤ P. Reference: one `REPEATABLE READ READ ONLY`
    transaction, no board lock. Commit order = position order (ADR-0006)
@@ -100,16 +102,16 @@ stay valid fencing tokens.
     the redaction rules before it creates anything. Unknown major →
     `422 archive_unsupported`. Size limits stop decompression bombs.
     Integrity is not authenticity; signing is deferred.
-15. **Discovery.** Capabilities `abby.archive.export`,
-    `abby.archive.import`, `abby.archive.v1`; profile `abby.archive`;
+15. **Discovery.** Capabilities `yak.archive.export`,
+    `yak.archive.import`, `yak.archive.v1`; profile `yak.archive`;
     limits `archive_max_bytes`, `archive_max_uncompressed_bytes`,
     `archive_max_line_bytes`; `retention.archive_seconds`.
-16. **CLI.** `abby board export -o FILE`, `abby board import FILE`, and an
-    offline `abby board verify-archive FILE`.
+16. **CLI.** `yak board export -o FILE`, `yak board import FILE`, and an
+    offline `yak board verify-archive FILE`.
 17. **Delegation fields (ADR-0019).** When the source lists
-    `abby.delegation`, the manifest lists it and the records keep
+    `yak.delegation`, the manifest lists it and the records keep
     `direct_action_required` and the delegation attribution fields
-    (spec ARC-031..033). An importer without `abby.delegation` rejects
+    (spec ARC-031..033). An importer without `yak.delegation` rejects
     such an archive, because it would drop a human gate and lose who acted
     for whom. `delegation_id` is an external ID: copied unchanged, never
     remapped, never resolved on the target.
@@ -188,7 +190,7 @@ The owner accepted every recommendation of the draft.
 6. Retention clock of imported events: from import time (ARC-099).
 7. Conformance: the suite takes a second server and a server-admin
    credential for that server, as test configuration (CT-039).
-8. Export file storage: a local directory now (`ABBY_ARCHIVE_DIR`);
+8. Export file storage: a local directory now (`YAK_ARCHIVE_DIR`);
    shared storage with the attachment store (ADR-009) later, for the
    shared profile.
 9. Enabling placeholder actors: an audited server-admin API. It is a

@@ -1,23 +1,23 @@
-# Abby board archive, format 1 — optional profile `abby.archive`
+# Yak board archive, format 1 — optional profile `yak.archive`
 
 Status: accepted (owner, 2026-11-20). The decisions, the owner's answers,
 and the alternatives are in ADR-0017. This document extends
-`spec/protocol.md` (`abby.p1.core`) and `spec/p2-tasks.md`
-(`abby.p2.tasks`). Every P1 and P2 requirement still applies unless a
+`spec/protocol.md` (`yak.p1.core`) and `spec/p2-tasks.md`
+(`yak.p2.tasks`). Every P1 and P2 requirement still applies unless a
 requirement here amends it by ID. The wire shapes in §11 move into
 `spec/openapi.yaml` and `spec/schemas/` with the implementation.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are used as in RFC 2119.
 Every MUST maps to a check in the traceability table (§15).
 
-Design baseline: `docs/design/Abby_Design.md` §3, §4.1, §4.2, §5.1, §6.1,
+Design baseline: `docs/design/Yak_Design.md` §3, §4.1, §4.2, §5.1, §6.1,
 §7.2, §8, §12.1, §13.2, §14. Points of tension are in §16.
 
 ## 0 Purpose and limits
 
 A board archive is a portable file that holds one board: its policy, its
 conversations, its tasks, its retained events, and its audit metadata. One
-Abby server exports it. Another Abby server, from any implementation,
+Yak server exports it. Another Yak server, from any implementation,
 imports it as a new board.
 
 An archive is not a backup:
@@ -50,10 +50,10 @@ conformance tests between implementations.
 ## 2 Discovery
 
 - **ARC-001** A server that implements export MUST list
-  `abby.archive.export` in `capabilities`. A server that implements import
-  MUST list `abby.archive.import`. A server MAY implement only one of them.
-  A server that lists either MUST list `abby.archive` in
-  `protocol.profiles`, and MUST list `abby.archive.v1` for each archive
+  `yak.archive.export` in `capabilities`. A server that implements import
+  MUST list `yak.archive.import`. A server MAY implement only one of them.
+  A server that lists either MUST list `yak.archive` in
+  `protocol.profiles`, and MUST list `yak.archive.v1` for each archive
   format major it reads or writes (only `v1` in this document).
 - **ARC-002** A server that lists either capability MUST add these
   `limits`: `archive_max_bytes` (compressed archive; reference 268435456),
@@ -66,7 +66,7 @@ conformance tests between implementations.
 
 - **ARC-010** An archive MUST be one gzip stream (RFC 1952) that holds one
   POSIX tar stream (ustar or pax). Media type: `application/gzip`. File
-  extension: `.abby.tar.gz`.
+  extension: `.yak.tar.gz`.
 - **ARC-011** Every tar entry MUST be a regular file. Entry names MUST be
   names from the file list (§4) with no directory part. Directories,
   links, device files, absolute names, names with `/` or `..`, and
@@ -93,17 +93,17 @@ conformance tests between implementations.
 
 ```json
 {
-  "format": "abby.board_archive",
+  "format": "yak.board_archive",
   "format_version": "1.0",
   "protocol": {
-    "name": "abby",
+    "name": "yak",
     "version": "1",
-    "profiles": ["abby.p1.core", "abby.p2.tasks"]
+    "profiles": ["yak.p1.core", "yak.p2.tasks"]
   },
   "source": {
-    "implementation": {"name": "abby-reference", "version": "0.9.0", "schema_version": 3},
+    "implementation": {"name": "yak-reference", "version": "0.9.0", "schema_version": 3},
     "board_id": "brd_src",
-    "board_name": "abby-dev",
+    "board_name": "yak-dev",
     "history_epoch": "ep_7q2…",
     "position": 18342,
     "continuation_cursor": "c1.…"
@@ -124,13 +124,13 @@ conformance tests between implementations.
 }
 ```
 
-- **ARC-020** `format` MUST be `abby.board_archive`. `format_version` is
+- **ARC-020** `format` MUST be `yak.board_archive`. `format_version` is
   `MAJOR.MINOR`. An importer MUST reject an archive whose major it does not
   support (`422 archive_unsupported`). A higher minor of a supported major
   only adds optional record fields and optional files. The importer MUST
   ignore unknown optional record fields and MUST ignore a file whose
   manifest entry has `"optional": true` and whose name it does not know. It
-  MUST reject any other unknown file. This is the one place where Abby
+  MUST reject any other unknown file. This is the one place where Yak
   accepts unknown input fields (amends WIRE-001 for archive records only;
   request bodies are unchanged).
 - **ARC-021** `files` MUST list every entry except `manifest.json`, exactly
@@ -226,7 +226,7 @@ The public `Grant` schema, unchanged. Revoked grants are included with
 ### 4.5 `archive/Thread`
 
 `Thread` with these changes: no `channel_path` (derive it from the
-channel); `labels` holds root labels without any `abby.*` key (those are
+channel); `labels` holds root labels without any `yak.*` key (those are
 computed, LBL-002); `task_id` as in P2.
 
 ### 4.6 `archive/Message`
@@ -234,7 +234,7 @@ computed, LBL-002); `task_id` as in P2.
 `Message` with these changes: no `channel_id`, `channel_path`, `is_root`
 (all derivable); `attribution.credential_id` is always `null` (§5). A
 tombstone has `text: null`, `mentions: []`, and `deleted` set (MSG-003).
-`labels` holds the message's own labels without `abby.*` keys.
+`labels` holds the message's own labels without `yak.*` keys.
 
 ### 4.7 `archive/TaskBatch`
 
@@ -302,12 +302,12 @@ values that the importer does not recognize as resource IDs, and every
 
 ### 4.15 Delegation fields (ADR-0019)
 
-A source that implements `abby.delegation` (ADR-0019, `spec/delegation.md`)
+A source that implements `yak.delegation` (ADR-0019, `spec/delegation.md`)
 adds a task field and attribution fields to its records. They are board
 facts: they say which tasks need a direct credential and who acted for
 whom. The archive keeps them.
 
-- **ARC-031** If the source lists `abby.delegation`, the manifest MUST
+- **ARC-031** If the source lists `yak.delegation`, the manifest MUST
   list it in `protocol.profiles`, and the records MUST carry these fields
   as the source holds them:
 
@@ -323,15 +323,17 @@ whom. The archive keeps them.
   Each `on_behalf_of_actor_id` names an exported actor (§4.2).
   Each `delegation_id` is an external ID (§4.14). The delegation itself is
   never exported (ARC-040).
-- **ARC-032** An importer that does not implement `abby.delegation` MUST
+- **ARC-032** An importer that does not implement `yak.delegation` MUST
   reject an archive whose manifest lists it, with `422
   archive_unsupported`. (It would drop a human gate, DLG-091, and lose
   who acted for whom, DLG-100.)
-- **ARC-033** An importer that implements `abby.delegation` MUST keep
+- **ARC-033** An importer that implements `yak.delegation` MUST keep
   these fields: map each actor ID by §9.3, copy each `delegation_id`
   unchanged in every `id_mode`, and keep `direct_action_required` as it
-  is. An imported `delegation_id` MUST NOT authorize anything on the
-  target, and the target MUST NOT resolve it to a target delegation.
+  is. The target applies DLG-091 and DLG-099 to that flag: delegated
+  cancel or reopen returns `403 direct_action_required`, and a direct
+  reopen lands in `blocked`, regardless of prerequisites. An imported
+  `delegation_id` MUST NOT authorize anything on the target, and the target MUST NOT resolve it to a target delegation.
 
 ## 5 Never exported
 
@@ -713,11 +715,11 @@ request bodies.
 ## 12 CLI
 
 ```
-abby board export [--board B] -o FILE [--wait DURATION] [--require-complete] [--json]
-abby board import FILE [--id-mode auto|keep|remap] [--match-actors-by-handle]
+yak board export [--board B] -o FILE [--wait DURATION] [--require-complete] [--json]
+yak board import FILE [--id-mode auto|keep|remap] [--match-actors-by-handle]
                        [--actor-map FILE] [--owner ACTOR] [--name NAME]
                        [--keep-any-actor-grants] [--mapping-out FILE] [--json]
-abby board verify-archive FILE [--json]
+yak board verify-archive FILE [--json]
 ```
 
 - **ARC-120** `board export` creates the job, polls, downloads, checks the
@@ -740,7 +742,7 @@ abby board verify-archive FILE [--json]
 
 - Capture: one `REPEATABLE READ READ ONLY` transaction; read
   `board_heads.head_position` first; write JSON Lines to a temporary file
-  in `ABBY_ARCHIVE_DIR`; compute hashes while writing; write the manifest
+  in `YAK_ARCHIVE_DIR`; compute hashes while writing; write the manifest
   last, then build the tar with the manifest first. The capture
   transaction ends before tar assembly.
 - Storage of export files: a local directory for the single-host profile.
@@ -761,7 +763,7 @@ abby board verify-archive FILE [--json]
   server epoch and the board epoch (ARC-098).
 - Retention: add `events.imported_at`; the sweeper uses
   `GREATEST(recorded_at, imported_at)` (ARC-099).
-- `abby admin rotate-epoch` is not needed after an import.
+- `yak admin rotate-epoch` is not needed after an import.
 
 ## 14 Migration cutover (guidance)
 
@@ -806,7 +808,7 @@ a second base URL and a server-admin credential on it (ADR-0017 decision
 | ARC-020..025 | CT TestCT043ArchiveIntegrity; CT TestCT042PartialExport (manifest); REF TestManifestMinorVersionTolerance |
 | ARC-030 | CT TestCT043ArchiveIntegrity (dangling ID) |
 | ARC-034 | CT TestCT042PartialExport (dense order values) |
-| ARC-031..033 | CT TestCT039 (delegated attribution and `direct_action_required` round trip, on servers with `abby.delegation`); CT TestCT048ArchiveNoSecrets (no delegation records, no restriction flags); REF TestImportRejectsMissingDelegationProfile |
+| ARC-031..033 | CT TestCT039 (delegated attribution and `direct_action_required` round trip, on servers with `yak.delegation`; imported canceled or failed gate reopened directly lands in `blocked`, flag kept; delegated cancel/reopen returns `403 direct_action_required`, CT-DLG-12); CT TestCT048ArchiveNoSecrets (no delegation records, no restriction flags); REF TestImportRejectsMissingDelegationProfile |
 | ARC-040..041 | CT TestCT048ArchiveNoSecrets |
 | ARC-050..053 | CT TestCT047WritesDuringCapture; REF TestCaptureSingleSnapshot; REF TestCaptureHoldsNoBoardLock |
 | ARC-060..063 | CT TestArchiveExportAuthorization (no admin → 403/404; admin without read → partial; revocation before download → 409); CT TestCT042 (audit `board.export`) |
