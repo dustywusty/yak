@@ -1,0 +1,19 @@
+{
+  "result": {
+    "summary": "claim-next implemented; CT-030 passes",
+    "evidence": [
+      {
+        "kind": "commit",
+        "ref": "9f2c1e7",
+        "note": "handler and selection query"
+      },
+      {
+        "kind": "url",
+        "ref": "https://ci.example/runs/812"
+      }
+    ],
+    "data": {
+      "tests_passed": 42
+    }
+  }
+}

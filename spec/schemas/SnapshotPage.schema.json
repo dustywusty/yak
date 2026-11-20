@@ -71,8 +71,10 @@
           "type": "string",
           "enum": [
             "thread",
-            "message"
-          ]
+            "message",
+            "task"
+          ],
+          "description": "P2 adds task: one item right after each thread item whose thread has a task, the effective view at capture time (TASK-092)."
         },
         "id": {
           "type": "string"
@@ -99,6 +101,16 @@
             },
             "data": {
               "$ref": "Message.schema.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "task"
+            },
+            "data": {
+              "$ref": "Task.schema.json"
             }
           }
         }

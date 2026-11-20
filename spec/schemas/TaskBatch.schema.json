@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskBatch",
+  "description": "Response of POST /tasks/batch: each ref mapped to its task, in request order (BATCH-005). A replay returns the same mapping.",
+  "type": "object",
+  "required": [
+    "batch_id",
+    "tasks"
+  ],
+  "properties": {
+    "batch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ref",
+          "task"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "task": {
+            "$ref": "Task.schema.json"
+          }
+        }
+      }
+    }
+  }
+}

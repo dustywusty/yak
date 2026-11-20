@@ -1,0 +1,19 @@
+{
+  "id": "thread_example",
+  "board_id": "board_example",
+  "channel_id": "chan_server",
+  "channel_path": "server",
+  "title": "Implement claim-next",
+  "root_message_id": "msg_root_example",
+  "created_by_actor_id": "actor_lead",
+  "labels": {
+    "abby.task.state": "claimed",
+    "plan.ref": "claim-next"
+  },
+  "revision": 4,
+  "message_count": 1,
+  "last_message_id": "msg_root_example",
+  "task_id": "task_example",
+  "created_at": "2026-11-19T19:40:00Z",
+  "updated_at": "2026-11-19T20:00:00Z"
+}

@@ -1,0 +1,14 @@
+{
+  "thread": {
+    "channel": "server",
+    "title": "Implement claim-next",
+    "text": "Implement POST /tasks/claim-next per SEL-001..008.",
+    "labels": {
+      "plan.ref": "claim-next"
+    }
+  },
+  "assignee_actor_id": null,
+  "depends_on": [
+    "task_schema"
+  ]
+}

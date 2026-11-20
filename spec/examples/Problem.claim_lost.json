@@ -1,0 +1,10 @@
+{
+  "type": "urn:abby:problem:claim_lost",
+  "title": "Conflict",
+  "status": 409,
+  "code": "claim_lost",
+  "detail": "the proof is not the active claim of this task",
+  "request_id": "req_example01",
+  "state": "ready",
+  "epoch": 2
+}

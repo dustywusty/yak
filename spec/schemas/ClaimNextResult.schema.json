@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClaimNextResult",
+  "description": "Result of POST /tasks/claim-next, selected by outcome: claimed (201, a ClaimResponse) or no_work (200) (SEL-007).",
+  "type": "object",
+  "required": [
+    "outcome"
+  ],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "claimed",
+        "no_work"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "ClaimResponse.schema.json"
+    },
+    {
+      "$ref": "#/$defs/NoWork"
+    }
+  ],
+  "$defs": {
+    "NoWork": {
+      "type": "object",
+      "required": [
+        "outcome",
+        "timed_out"
+      ],
+      "properties": {
+        "outcome": {
+          "const": "no_work"
+        },
+        "timed_out": {
+          "type": "boolean",
+          "description": "true when a positive wait_ms elapsed without a candidate."
+        }
+      }
+    }
+  }
+}

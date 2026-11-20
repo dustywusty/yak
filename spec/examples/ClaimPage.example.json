@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "id": "claim_example",
+      "task_id": "task_example",
+      "actor_id": "actor_worker",
+      "execution_id": "exec_example",
+      "run_id": "run_example",
+      "epoch": 2,
+      "brief_revision": 1,
+      "status": "active",
+      "revision": 3,
+      "lease_seconds": 120,
+      "acquired_at": "2026-11-19T20:00:00Z",
+      "expires_at": "2026-11-19T20:02:00Z",
+      "ended_at": null,
+      "end_recorded_at": null
+    },
+    {
+      "id": "claim_earlier",
+      "task_id": "task_example",
+      "actor_id": "actor_worker_2",
+      "execution_id": "exec_earlier",
+      "run_id": null,
+      "epoch": 1,
+      "brief_revision": 1,
+      "status": "expired",
+      "revision": 1,
+      "lease_seconds": 120,
+      "acquired_at": "2026-11-19T19:50:00Z",
+      "expires_at": "2026-11-19T19:52:00Z",
+      "ended_at": "2026-11-19T19:52:00Z",
+      "end_recorded_at": "2026-11-19T19:52:11Z"
+    }
+  ],
+  "next_page_token": null
+}

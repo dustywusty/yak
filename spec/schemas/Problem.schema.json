@@ -29,7 +29,7 @@
     "code": {
       "type": "string",
       "pattern": "^[a-z0-9_]+$",
-      "description": "Stable Abby error code (design §5.3). Known P1 codes: validation_failed, unauthenticated, forbidden, not_found, already_exists, idempotency_conflict, invalid_transition, newer_message, resync_required, cursor_expired, snapshot_expired, revision_conflict, limit_exceeded, method_not_allowed, precondition_required, temporarily_unavailable."
+      "description": "Stable Abby error code (design §5.3). Known P1 codes: validation_failed, unauthenticated, forbidden, not_found, already_exists, idempotency_conflict, invalid_transition, newer_message, resync_required, cursor_expired, snapshot_expired, revision_conflict, limit_exceeded, method_not_allowed, precondition_required, temporarily_unavailable. Added by P2 (spec/p2-tasks.md §18): task_claimed, claim_lost, task_claim_active, dependency_cycle, task_root_protected."
     },
     "detail": {
       "type": "string"
@@ -41,7 +41,7 @@
     },
     "header": {
       "type": "string",
-      "description": "validation_failed: the missing request header."
+      "description": "validation_failed: the missing request header. precondition_required (P2): the missing header, If-Match or Abby-Claim-Proof."
     },
     "latest_message_id": {
       "type": "string",
@@ -51,9 +51,12 @@
       "type": "string",
       "enum": [
         "policy_changed",
-        "history_reset"
+        "history_reset",
+        "not_assignee",
+        "proof_actor_mismatch",
+        "missing_capability"
       ],
-      "description": "resync_required: why the read position is no longer valid."
+      "description": "resync_required: why the read position is no longer valid (policy_changed, history_reset). forbidden (P2): not_assignee, proof_actor_mismatch or missing_capability."
     },
     "key": {
       "type": "string",
@@ -69,6 +72,79 @@
     "retained_from_position_available": {
       "type": "boolean",
       "description": "cursor_expired: retained history exists after a snapshot."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "P2. already_exists: the thread's existing task (only if readable). task_root_protected: the thread's task. not_found: the offending prerequisite."
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "P2. task_claimed, claim_lost: the task's current epoch."
+    },
+    "state": {
+      "$ref": "TaskState.schema.json",
+      "description": "P2. claim_lost: the task's current effective state."
+    },
+    "current_state": {
+      "$ref": "TaskState.schema.json",
+      "description": "P2. invalid_transition on a task: the current effective state."
+    },
+    "hint": {
+      "type": "string",
+      "description": "P2. invalid_transition: what to do instead, e.g. reopen first."
+    },
+    "claim_expires_at": {
+      "$ref": "Timestamp.schema.json",
+      "description": "P2. task_claim_active: when the active claim lapses unless renewed."
+    },
+    "cycle": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "P2. dependency_cycle: the cycle path, readable task IDs only (may be partial or empty)."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "P2. revision_conflict from a stale If-Match or expect_brief_revision: the current revision."
+    },
+    "limit": {
+      "type": "string",
+      "description": "P2. limit_exceeded: name of the exceeded member of Discovery limits, e.g. max_batch_tasks."
+    },
+    "errors": {
+      "type": "array",
+      "description": "P2. Batch rejection (BATCH-003): one entry per failing item; readable IDs only.",
+      "items": {
+        "type": "object",
+        "required": [
+          "index",
+          "ref",
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

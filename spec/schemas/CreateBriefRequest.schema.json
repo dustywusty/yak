@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateBriefRequest",
+  "description": "Body of POST /tasks/{task_id}/briefs (L17, BRIEF-002).",
+  "type": "object",
+  "required": [
+    "text",
+    "reason"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The new brief; at most limits.max_text_bytes. Stored only in the brief record, never in the notice reply."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Why the brief changed; stated in the notice reply."
+    }
+  },
+  "additionalProperties": false
+}

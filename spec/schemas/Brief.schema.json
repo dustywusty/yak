@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Brief",
+  "description": "One immutable brief version (BRIEF-001). After root redaction text is null and redacted is true (BRIEF-021).",
+  "type": "object",
+  "required": [
+    "task_id",
+    "revision",
+    "text",
+    "redacted",
+    "source",
+    "reason",
+    "created_by_actor_id",
+    "created_at"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "text": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Brief text; null once redacted."
+    },
+    "redacted": {
+      "type": "boolean"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "kind",
+        "message_id",
+        "message_revision"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "root",
+            "brief_update"
+          ]
+        },
+        "message_id": {
+          "type": "string",
+          "description": "root: the root message; brief_update: the notice reply (which does not carry the text)."
+        },
+        "message_revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Reason given for a brief update; null for revision 1."
+    },
+    "created_by_actor_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    }
+  },
+  "if": {
+    "properties": {
+      "redacted": {
+        "const": true
+      }
+    },
+    "required": [
+      "redacted"
+    ]
+  },
+  "then": {
+    "properties": {
+      "text": {
+        "type": "null"
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    }
+  }
+}

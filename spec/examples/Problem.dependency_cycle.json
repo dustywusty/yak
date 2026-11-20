@@ -1,0 +1,13 @@
+{
+  "type": "urn:abby:problem:dependency_cycle",
+  "title": "Conflict",
+  "status": 409,
+  "code": "dependency_cycle",
+  "detail": "the change would create a dependency cycle",
+  "request_id": "req_example01",
+  "cycle": [
+    "task_example",
+    "task_schema",
+    "task_example"
+  ]
+}

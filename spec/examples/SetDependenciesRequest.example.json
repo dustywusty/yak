@@ -1,0 +1,6 @@
+{
+  "task_ids": [
+    "task_schema",
+    "task_migrations"
+  ]
+}

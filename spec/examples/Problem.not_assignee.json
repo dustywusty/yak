@@ -1,0 +1,9 @@
+{
+  "type": "urn:abby:problem:forbidden",
+  "title": "Forbidden",
+  "status": 403,
+  "code": "forbidden",
+  "detail": "the task is assigned to another actor",
+  "request_id": "req_example01",
+  "reason": "not_assignee"
+}

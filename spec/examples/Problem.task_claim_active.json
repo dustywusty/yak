@@ -1,0 +1,9 @@
+{
+  "type": "urn:abby:problem:task_claim_active",
+  "title": "Conflict",
+  "status": 409,
+  "code": "task_claim_active",
+  "detail": "a claim is active",
+  "request_id": "req_example01",
+  "claim_expires_at": "2026-11-19T20:02:00Z"
+}

@@ -1,14 +1,18 @@
 openapi: 3.1.1
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
-  title: Abby protocol (P1 core)
-  version: 1.0.0-draft.p1
-  summary: Normative wire contract for the Abby P1 slice.
+  title: Abby protocol (P1 core, P2 tasks)
+  version: 1.0.0-draft.p2
+  summary: Normative wire contract for the Abby P1 and P2 slices.
   description: |
     Abby is an open protocol for agent coordination. This document is the
     normative wire contract for the P1 profile (`abby.p1.core`): discovery,
     actors and credentials, boards, channels and grants, threads and messages,
-    labels and mentions, the committed board event stream, and snapshots.
+    labels and mentions, the committed board event stream, and snapshots. It
+    also carries the P2 profile (`abby.p2.tasks`, spec/p2-tasks.md): typed
+    tasks, claims, dependencies, briefs and claim-next. A server implements
+    the P2 operations only if it lists `abby.p2.tasks` in
+    `protocol.profiles`.
 
     It describes what the reference server implements. Object schemas live in
     `spec/schemas/*.schema.json` (JSON Schema 2020-12) and are the single
@@ -78,6 +82,40 @@ info:
     actor and credential changes are recorded in the audit log, not the event
     stream. Deleting a message rewrites the `message` member of every earlier
     event about it to the tombstone.
+
+    ## Tasks and claims (P2, `abby.p2.tasks`)
+
+    A task is a typed work resource bound to exactly one thread. Its state
+    (`waiting`, `ready`, `claimed`, `blocked`, `completed`, `failed`,
+    `canceled`) changes only through the task operations; messages never
+    change it. Every read returns the *effective view* at server time: a
+    claim whose lease is over shows as expired and the task as `ready`, even
+    before the lapse is recorded (ADR-0004). Every task operation first
+    applies such a lapse; if the operation commits, `task.claim_expired` and
+    `thread.view_invalidated` precede its own events.
+
+    A successful claim returns a proof once. Claimant operations (renew,
+    release, complete, fail, and block by the claimant) present it in the
+    `Abby-Claim-Proof` request header, never in a body or query; servers
+    strip it from logs. Proofs and brief text never appear in task views,
+    events, snapshots or problem documents. Every task `POST` requires
+    `Idempotency-Key`; for proof-bearing commands the fingerprint includes
+    the claim ID named by the proof, not the secret. Task responses carry the
+    task revision as `ETag`. `x-abby.claim_proof` is `required` or `optional`
+    on operations that take the header.
+
+    P2 adds event types `task.created`, `task.claimed`,
+    `task.claim_renewed`, `task.released`, `task.claim_expired`,
+    `task.completed`, `task.failed`, `task.blocked`, `task.unblocked`,
+    `task.canceled`, `task.reopened`, `task.became_ready`,
+    `task.dependencies_changed`, `task.assigned`, `task.updated`,
+    `task.brief_updated` and `task.brief_redacted`, and
+    `thread.view_invalidated` reason `task_state_changed`. Each payload
+    carries the task view after the change. `effective_at` of
+    `task.claim_expired` is the claim's `expires_at`, so `effective_at` is not
+    monotonic in stream order. On a task thread the P1 root edit, root delete
+    and thread `PATCH` return 409 `task_root_protected`; the root exposes the
+    server label `abby.task.state`.
   license:
     name: TBD
 servers:
@@ -97,6 +135,12 @@ tags:
   - name: snapshots
   - name: audit
   - name: operations
+  - name: tasks
+    description: P2 (abby.p2.tasks) task lifecycle, assignment and dependencies.
+  - name: claims
+    description: P2 claims, claim-next and claimant settlement.
+  - name: briefs
+    description: P2 immutable brief versions.
 
 paths:
   /healthz:
@@ -148,6 +192,7 @@ paths:
               schema: { $ref: "#/components/schemas/Discovery" }
               examples:
                 reference: { externalValue: ./examples/Discovery.reference.json }
+                p2: { externalValue: ./examples/Discovery.p2.json }
 
   /v1/me:
     parameters:
@@ -932,7 +977,7 @@ paths:
     get:
       operationId: getThread
       tags: [threads]
-      summary: Read a thread and its root message.
+      summary: Read a thread and its root message. With P2 the thread carries task_id (TASK-024).
       responses:
         "200":
           description: Thread and root. ETag is the thread revision.
@@ -976,6 +1021,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
@@ -985,6 +1031,7 @@ paths:
         precondition: If-Match required
         authorization: read (else 404) and post on the channel, plus root authorship or channel_manage.
         events: [thread.updated]
+        errors: { "409 task_root_protected": "P2: the thread has a task; use PATCH /tasks/{task_id} (BRIEF-010; task_id included)" }
 
   /v1/boards/{board_id}/threads/{thread_id}/messages:
     parameters:
@@ -1119,7 +1166,9 @@ paths:
         precondition: If-Match required
         authorization: The author, with current read (else 404) and post on the channel.
         events: [message.edited]
-        errors: { "409 invalid_transition": the message is deleted }
+        errors:
+          "409 invalid_transition": the message is deleted
+          "409 task_root_protected": "P2: the message is the root of a task thread (BRIEF-010; task_id included)"
     delete:
       operationId: deleteMessage
       tags: [messages]
@@ -1153,6 +1202,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
@@ -1166,6 +1216,7 @@ paths:
           message.redact).
         events: [message.deleted]
         audit: [message.redact]
+        errors: { "409 task_root_protected": "P2: the message is the root of a task thread; use POST /tasks/{task_id}/root-redaction (BRIEF-010; task_id included)" }
 
   /v1/boards/{board_id}/messages/{message_id}/labels:
     parameters:
@@ -1296,7 +1347,9 @@ paths:
         query parameters, identical to GET /events; `type` is accepted but
         does not affect the item set. Sessions are bound to the creating
         actor, the filter and the effective policy, and expire after
-        `retention.snapshot_seconds`.
+        `retention.snapshot_seconds`. With P2, one `task` item (the effective
+        task view at capture time) follows each thread item whose thread has a
+        task (TASK-092).
       parameters:
         - $ref: "#/components/parameters/FilterChannel"
         - $ref: "#/components/parameters/FilterSubtree"
@@ -1391,6 +1444,985 @@ paths:
         authorization: The snapshot's creating actor; others get 404. A second delete is 404.
         events: []
 
+  # ---- P2 profile abby.p2.tasks (spec/p2-tasks.md; ADR-0016 §2) ----
+  # Every task operation first applies a lapsed lease on its task (TASK-031):
+  # when it commits, task.claim_expired and thread.view_invalidated precede
+  # the events listed in x-abby.events. Rejected requests commit nothing.
+
+  /v1/boards/{board_id}/tasks:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Create a task with a new thread (L1), or convert an existing thread (L2).
+      description: |
+        With `thread`, creates the thread, its root message and the task in
+        one transaction; the caller becomes owner. Channel auto-creation
+        follows CHAN-002. With `thread_id`, converts an existing thread
+        without changing any message (TASK-012). Brief revision 1 is an
+        immutable copy of the root text (TASK-014). The initial state is
+        `ready` if every prerequisite is `completed`, else `waiting`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTaskRequest" }
+            examples:
+              new_thread: { externalValue: ./examples/CreateTaskRequest.new_thread.json }
+              convert: { externalValue: ./examples/CreateTaskRequest.convert.json }
+      responses:
+        "201":
+          description: Created (or replayed). ETag is the task revision.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+              examples:
+                waiting: { externalValue: ./examples/Task.waiting_hidden_prerequisite.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: |
+          New thread (TASK-010): read, post and task_manage on the channel
+          (channel_manage too if the channel does not exist). Conversion
+          (TASK-011): current read and post on the thread channel, and either
+          root authorship plus task_manage, or task_admin; otherwise 403 and
+          the thread is unchanged. Each prerequisite must be readable (DEP-003).
+        events: [channel.created, thread.created, task.created, thread.view_invalidated]
+        errors:
+          "409 already_exists": the thread already has a task (task_id included if readable)
+          "409 invalid_transition": the thread's root is a tombstone
+          "404 not_found": a prerequisite is unknown, on another board, or unreadable (task_id included)
+          "400 validation_failed": the assignee cannot read the task channel (TASK-051)
+          "413 limit_exceeded": more than limits.max_dependencies_per_task prerequisites
+        events_note: "New thread: [channel.created (if auto-created), thread.created, task.created]. Conversion: [task.created, thread.view_invalidated (reason task_state_changed)]."
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: Readable tasks in creation order (TASK-026), effective view.
+      description: |
+        Filters: `channel`, `subtree`, `state` (repeatable, effective state),
+        `assignee` (actor ID or `none`), `owner`, and `label` (P1 syntax, on
+        root labels including `abby.task.state`). Work per request is bounded:
+        a page may be short or empty while next_page_token is non-null.
+      parameters:
+        - $ref: "#/components/parameters/FilterChannel"
+        - $ref: "#/components/parameters/FilterSubtree"
+        - $ref: "#/components/parameters/FilterTaskState"
+        - $ref: "#/components/parameters/FilterTaskAssignee"
+        - $ref: "#/components/parameters/FilterTaskOwner"
+        - $ref: "#/components/parameters/FilterLabel"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: A page of tasks.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskPage" }
+              examples:
+                example: { externalValue: ./examples/TaskPage.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: Board visible; only tasks in channels the caller can read.
+
+  /v1/boards/{board_id}/tasks/batch:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: createTaskBatch
+      tags: [tasks]
+      summary: Atomically create 1..limits.max_batch_tasks tasks, each with a new thread (BATCH-001..005).
+      description: |
+        Every item, authorization, reference and the combined dependency graph
+        is validated before anything is created; any failure rejects the whole
+        batch with a problem document carrying `errors` (BATCH-003). Tasks are
+        created, and `thread.created`/`task.created` pairs emitted, in request
+        order. A larger plan is several batches and is not atomic.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTaskBatchRequest" }
+            examples:
+              example: { externalValue: ./examples/CreateTaskBatchRequest.example.json }
+      responses:
+        "201":
+          description: Created (or replayed); each ref mapped to its task in request order.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskBatch" }
+              examples:
+                example: { externalValue: ./examples/TaskBatch.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: Per item as L1 (read, post and task_manage on the item's channel); each task_id prerequisite must be readable.
+        events: [channel.created, thread.created, task.created]
+        errors:
+          "413 limit_exceeded": more than limits.max_batch_tasks items (limit max_batch_tasks)
+          "400 validation_failed": duplicate or unknown ref, or another invalid item (errors lists each)
+          "404 not_found": a task_id prerequisite is unknown, on another board, or unreadable
+          "409 dependency_cycle": the combined graph (with existing edges) has a cycle
+
+  /v1/boards/{board_id}/tasks/claim-next:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: claimNextTask
+      tags: [claims]
+      summary: Select and claim the oldest eligible ready task in one transaction, or report no work (SEL-001..008).
+      description: |
+        Candidates: effective state `ready` (including lapsed leases not yet
+        recorded), channel readable with `claim`, caller eligible (TASK-052),
+        matching the filters. The oldest by creation position wins, task ID as
+        tie-breaker. With `wait_ms` > 0 and no candidate the server waits
+        without holding a lock, re-authenticating on each attempt. No work is
+        200 and does not reserve the Idempotency-Key (CLAIM-045). A replay of
+        a committed claim returns the original claim; see CLAIM-041 for when
+        the proof is returned.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClaimNextRequest" }
+            examples:
+              filtered: { externalValue: ./examples/ClaimNextRequest.filtered.json }
+      responses:
+        "201":
+          description: Claimed (or replayed). The body is a ClaimResponse with outcome claimed.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClaimNextResult" }
+              examples:
+                claimed: { externalValue: ./examples/ClaimNextResult.claimed.json }
+        "200":
+          description: No work (outcome no_work). timed_out is true when a positive wait_ms elapsed.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClaimNextResult" }
+              examples:
+                no_work: { externalValue: ./examples/ClaimNextResult.no_work.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: read and claim on the selected task's channel; eligible (unassigned, or assigned to the caller). Tasks the caller cannot read are never candidates.
+        events: [task.claimed, thread.view_invalidated]
+        errors:
+          "400 validation_failed": lease_seconds outside [claim_lease_min_seconds, claim_lease_max_seconds], or wait_ms above max_claim_wait_ms
+
+  /v1/boards/{board_id}/tasks/{task_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getTask
+      tags: [tasks]
+      summary: Read a task (effective view at server time, CLAIM-051).
+      responses:
+        "200":
+          description: The task. ETag is the task revision.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+              examples:
+                claimed: { externalValue: ./examples/Task.claimed.json }
+                completed: { externalValue: ./examples/Task.completed.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: read on the task channel; otherwise 404 (TASK-040).
+    patch:
+      operationId: updateTask
+      tags: [tasks]
+      summary: Conditionally edit the task title (the thread title) or owner (L19).
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchTaskRequest" }
+            examples:
+              retitle: { externalValue: ./examples/PatchTaskRequest.retitle.json }
+      responses:
+        "200":
+          description: Updated task.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: not_applicable
+        precondition: If-Match required
+        authorization: Manager (owner with task_manage, or task_admin; both with current read).
+        events: [thread.updated, task.updated]
+        errors:
+          "409 invalid_transition": the task is completed
+          "400 validation_failed": the new owner is not an actor that can read the task channel
+
+  /v1/boards/{board_id}/tasks/{task_id}/briefs:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: listBriefs
+      tags: [briefs]
+      summary: Brief versions of a task (BRIEF-001).
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: A page of brief versions.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BriefPage" }
+              examples:
+                redacted: { externalValue: ./examples/BriefPage.redacted.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: read on the task channel; otherwise 404.
+    post:
+      operationId: updateBrief
+      tags: [briefs]
+      summary: Task-aware brief update (L17, BRIEF-002..005).
+      description: |
+        In one transaction: stores brief revision n+1; appends a notice reply
+        authored by the caller (stating the revision and reason, not the text)
+        with server label `abby.task.brief_revision`; revokes any active
+        claim; sets or keeps `blocked` with `block.cause: brief_updated`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateBriefRequest" }
+            examples:
+              example: { externalValue: ./examples/CreateBriefRequest.example.json }
+      responses:
+        "201":
+          description: The new brief version with the task after the update (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BriefWithTask" }
+              examples:
+                brief_update: { externalValue: ./examples/BriefWithTask.brief_update.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: If-Match required
+        authorization: Manager plus current post on the task channel.
+        events: [message.created, task.brief_updated, thread.view_invalidated]
+        errors:
+          "409 invalid_transition": the task is terminal (completed; failed or canceled with a hint to reopen first)
+
+  /v1/boards/{board_id}/tasks/{task_id}/briefs/{brief_revision}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/BriefRevision"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: getBrief
+      tags: [briefs]
+      summary: Read one brief version.
+      responses:
+        "200":
+          description: The brief version.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Brief" }
+              examples:
+                root: { externalValue: ./examples/Brief.root.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: read on the task channel; otherwise 404.
+
+  /v1/boards/{board_id}/tasks/{task_id}/root-redaction:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: redactTaskRoot
+      tags: [tasks]
+      summary: Tombstone the task root, scrub every brief version, and cancel a nonterminal task (L18, BRIEF-020..022).
+      description: |
+        If-Match carries the root message revision, not the task revision. In
+        one transaction: tombstones and scrubs the root (RED-001), sets every
+        brief version's text to null and `redacted: true` (including retained
+        claim replay responses and snapshot items), sets `root_redacted`; a
+        nonterminal task has its claim revoked and is canceled with cause
+        `root_redacted`, a terminal task keeps its state and outcome.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RootRedactionRequest" }
+            examples:
+              example: { externalValue: ./examples/RootRedactionRequest.example.json }
+      responses:
+        "200":
+          description: The task after redaction (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: If-Match required
+        authorization: |
+          Manager AND the P1 rights to delete the root: the root author with
+          read and post (deletion kind author), or board_admin with read
+          (deletion kind redaction, audited as message.redact).
+        events: [message.deleted, task.canceled, thread.view_invalidated, task.brief_redacted]
+        events_note: "Nonterminal: [message.deleted, task.canceled, thread.view_invalidated]. Terminal: [message.deleted, task.brief_redacted]."
+        audit: [message.redact]
+
+  /v1/boards/{board_id}/tasks/{task_id}/claims:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: claimTask
+      tags: [claims]
+      summary: Claim one task (L3, CLAIM-001..005). The proof is returned once.
+      description: |
+        Commits only if the effective state is `ready`, no claim is active and
+        the caller is eligible. Every claim has a new claim ID, a new
+        execution ID and epoch = previous epoch + 1. `expires_at` = server time
+        after the board lock + lease_seconds. A replay returns the original
+        claim and never extends or restores the lease; the proof is returned
+        on replay only under CLAIM-041.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClaimRequest" }
+            examples:
+              expect_brief: { externalValue: ./examples/ClaimRequest.expect_brief.json }
+      responses:
+        "201":
+          description: Claimed (or replayed).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClaimResponse" }
+              examples:
+                claimed: { externalValue: ./examples/ClaimResponse.claimed.json }
+                replay_after_lapse: { externalValue: ./examples/ClaimResponse.replay_after_lapse.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: Current read (else 404) and claim on the task channel; eligible (TASK-052).
+        events: [task.claimed, thread.view_invalidated]
+        errors:
+          "409 task_claimed": another claim is active (epoch)
+          "409 invalid_transition": the effective state is not ready (current_state)
+          "403 forbidden": reason not_assignee (assigned to another actor) or missing_capability
+          "412 revision_conflict": expect_brief_revision differs from the current brief revision (revision)
+          "400 validation_failed": lease_seconds outside [claim_lease_min_seconds, claim_lease_max_seconds]
+    get:
+      operationId: listClaims
+      tags: [claims]
+      summary: Claim history of a task, newest first. Never carries proofs.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: A page of claims.
+          headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClaimPage" }
+              examples:
+                example: { externalValue: ./examples/ClaimPage.example.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        authorization: read on the task channel; otherwise 404.
+
+  /v1/boards/{board_id}/tasks/{task_id}/claims/{claim_id}/renew:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/ClaimId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: renewClaim
+      tags: [claims]
+      summary: Renew the active claim (L4, CLAIM-023). Changes neither task revision, epoch, execution nor state.
+      description: |
+        Sets `expires_at` = now + lease_seconds (may shorten) and increments
+        the claim revision. claim_id must match the claim named by the proof
+        (CLAIM-015). A replay returns the current claim view without renewing.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AbbyClaimProof"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenewClaimRequest" }
+            examples:
+              example: { externalValue: ./examples/RenewClaimRequest.example.json }
+      responses:
+        "200":
+          description: The renewed claim (or replayed current claim).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Claim" }
+              examples:
+                renewed: { externalValue: ./examples/Claim.renewed.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        claim_proof: required
+        authorization: Claimant (TASK-042) - the claim's actor, presenting the proof of the active claim, with current read (else 404) and claim.
+        events: [task.claim_renewed]
+        errors:
+          "428 precondition_required": Abby-Claim-Proof missing (header)
+          "400 validation_failed": malformed proof
+          "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
+          "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
+
+  /v1/boards/{board_id}/tasks/{task_id}/release:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: releaseTask
+      tags: [claims]
+      summary: Release the active claim; the task returns to ready (L5).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AbbyClaimProof"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReleaseTaskRequest" }
+            examples:
+              interrupted: { externalValue: ./examples/ReleaseTaskRequest.interrupted.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        claim_proof: required
+        authorization: Claimant (TASK-042) - the claim's actor, presenting the proof of the active claim, with current read (else 404) and claim.
+        events: [task.released, thread.view_invalidated]
+        errors:
+          "428 precondition_required": Abby-Claim-Proof missing (header)
+          "400 validation_failed": malformed proof
+          "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
+          "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
+
+  /v1/boards/{board_id}/tasks/{task_id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: completeTask
+      tags: [claims]
+      summary: Complete the task (L7). Terminal; waiting dependents whose prerequisites are now all completed become ready in the same transaction (DEP-007).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AbbyClaimProof"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompleteTaskRequest" }
+            examples:
+              with_evidence: { externalValue: ./examples/CompleteTaskRequest.with_evidence.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        claim_proof: required
+        authorization: Claimant (TASK-042) - the claim's actor, presenting the proof of the active claim, with current read (else 404) and claim.
+        events: [task.completed, thread.view_invalidated, task.became_ready]
+        events_note: "task.completed, thread.view_invalidated, then per newly ready dependent: task.became_ready, thread.view_invalidated."
+        errors:
+          "428 precondition_required": Abby-Claim-Proof missing (header)
+          "400 validation_failed": malformed proof
+          "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
+          "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
+          "413 limit_exceeded": more than max_evidence_items evidence items, or data above max_task_result_bytes
+
+  /v1/boards/{board_id}/tasks/{task_id}/fail:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: failTask
+      tags: [claims]
+      summary: Fail the task with a reason (L8). Reopenable by a manager.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AbbyClaimProof"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FailTaskRequest" }
+            examples:
+              exit_status: { externalValue: ./examples/FailTaskRequest.exit_status.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        claim_proof: required
+        authorization: Claimant (TASK-042) - the claim's actor, presenting the proof of the active claim, with current read (else 404) and claim.
+        events: [task.failed, thread.view_invalidated]
+        errors:
+          "428 precondition_required": Abby-Claim-Proof missing (header)
+          "400 validation_failed": malformed proof
+          "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
+          "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
+          "413 limit_exceeded": more than max_evidence_items evidence items, or data above max_task_result_bytes
+
+  /v1/boards/{board_id}/tasks/{task_id}/block:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: blockTask
+      tags: [tasks]
+      summary: Block the task (L9 by a manager from ready or waiting; L10 by a manager or the claimant from claimed). Revokes any active claim.
+      description: |
+        The mode is chosen by the header: with Abby-Claim-Proof the caller acts
+        as the claimant (the proof must verify; cause claimant); without it
+        the caller must be a manager (cause manual).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/AbbyClaimProofOptional"
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BlockTaskRequest" }
+            examples:
+              example: { externalValue: ./examples/BlockTaskRequest.example.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: If-Match optional
+        claim_proof: optional
+        authorization: With Abby-Claim-Proof - claimant (as renew). Without - manager.
+        events: [task.blocked, thread.view_invalidated]
+        errors:
+          "400 validation_failed": malformed proof
+          "409 claim_lost": the proof is not the active claim of this task (expired, released, revoked, settled, superseded, other task, or claim_id mismatch); state and epoch included; nothing committed
+          "403 forbidden": reason proof_actor_mismatch (valid proof, other actor) or missing_capability
+          "409 invalid_transition": the task is blocked or terminal (current_state)
+          "412 revision_conflict": stale If-Match (manager mode)
+
+  /v1/boards/{board_id}/tasks/{task_id}/unblock:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: unblockTask
+      tags: [tasks]
+      summary: Unblock (L11); the task becomes ready if all prerequisites are completed, else waiting.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UnblockTaskRequest" }
+            examples:
+              example: { externalValue: ./examples/UnblockTaskRequest.example.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: If-Match optional
+        authorization: Manager (owner with task_manage, or task_admin; both with current read, else 404).
+        events: [task.unblocked, thread.view_invalidated]
+        errors:
+          "409 invalid_transition": not allowed from the current effective state (current_state)
+          "412 revision_conflict": stale If-Match (revision)
+
+  /v1/boards/{board_id}/tasks/{task_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: cancelTask
+      tags: [tasks]
+      summary: Cancel a nonterminal task with a reason (L12). Revokes any active claim.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CancelTaskRequest" }
+            examples:
+              example: { externalValue: ./examples/CancelTaskRequest.example.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: If-Match optional
+        authorization: Manager (owner with task_manage, or task_admin; both with current read, else 404).
+        events: [task.canceled, thread.view_invalidated]
+        errors:
+          "409 invalid_transition": not allowed from the current effective state (current_state)
+          "412 revision_conflict": stale If-Match (revision)
+
+  /v1/boards/{board_id}/tasks/{task_id}/reopen:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: reopenTask
+      tags: [tasks]
+      summary: Reopen a failed or canceled task (L13); retry_count + 1, outcome null, no claim created.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReopenTaskRequest" }
+            examples:
+              example: { externalValue: ./examples/ReopenTaskRequest.example.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: If-Match optional
+        authorization: Manager (owner with task_manage, or task_admin; both with current read, else 404).
+        events: [task.reopened, thread.view_invalidated]
+        errors:
+          "409 invalid_transition": the task is completed, nonterminal, or its root is redacted (BRIEF-022) (current_state)
+          "412 revision_conflict": stale If-Match (revision)
+
+  /v1/boards/{board_id}/tasks/{task_id}/assignee:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    put:
+      operationId: setTaskAssignee
+      tags: [tasks]
+      summary: Replace the assignment (L16, TASK-050..054). Assignment is eligibility, not ownership and not a claim.
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRequired"
+        - $ref: "#/components/parameters/IdempotencyKeyOptional"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetAssigneeRequest" }
+            examples:
+              assign: { externalValue: ./examples/SetAssigneeRequest.assign.json }
+              clear: { externalValue: ./examples/SetAssigneeRequest.clear.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: optional
+        idempotency_namespace: board
+        precondition: If-Match required
+        authorization: Manager.
+        events: [task.assigned]
+        errors:
+          "409 task_claim_active": a claim is active (claim_expires_at); nothing changes
+          "409 invalid_transition": the task is terminal
+          "400 validation_failed": the assignee cannot currently read the task channel (TASK-051)
+
+  /v1/boards/{board_id}/tasks/{task_id}/dependencies:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/TaskId"
+      - $ref: "#/components/parameters/AbbyRunId"
+      - $ref: "#/components/parameters/XRequestId"
+    put:
+      operationId: setTaskDependencies
+      tags: [tasks]
+      summary: Replace the readable part of the prerequisite set (L15, DEP-005); unreadable prerequisites are kept.
+      parameters:
+        - $ref: "#/components/parameters/IfMatchRequired"
+        - $ref: "#/components/parameters/IdempotencyKeyOptional"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetDependenciesRequest" }
+            examples:
+              example: { externalValue: ./examples/SetDependenciesRequest.example.json }
+      responses:
+        "200": { $ref: "#/components/responses/TaskResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-abby:
+        idempotency: optional
+        idempotency_namespace: board
+        precondition: If-Match required
+        authorization: Manager; every added prerequisite readable (else 404).
+        events: [task.dependencies_changed, thread.view_invalidated]
+        events_note: "thread.view_invalidated only when the state changed (waiting <-> ready)."
+        errors:
+          "409 dependency_cycle": the change would create a cycle (cycle lists readable IDs only)
+          "409 task_claim_active": a claim is active (claim_expires_at)
+          "409 invalid_transition": the task is terminal
+          "404 not_found": a prerequisite is unknown, on another board, or unreadable (task_id)
+          "413 limit_exceeded": more than limits.max_dependencies_per_task prerequisites in total
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1450,6 +2482,35 @@ components:
     DeleteMessageRequest: { $ref: ./schemas/DeleteMessageRequest.schema.json }
     LabelsRequest: { $ref: ./schemas/LabelsRequest.schema.json }
     CreateSnapshotRequest: { $ref: ./schemas/CreateSnapshotRequest.schema.json }
+    # P2 (abby.p2.tasks)
+    TaskState: { $ref: ./schemas/TaskState.schema.json }
+    Task: { $ref: ./schemas/Task.schema.json }
+    TaskPage: { $ref: ./schemas/TaskPage.schema.json }
+    Claim: { $ref: ./schemas/Claim.schema.json }
+    ClaimPage: { $ref: ./schemas/ClaimPage.schema.json }
+    ClaimResponse: { $ref: ./schemas/ClaimResponse.schema.json }
+    ClaimNextResult: { $ref: ./schemas/ClaimNextResult.schema.json }
+    Brief: { $ref: ./schemas/Brief.schema.json }
+    BriefWithTask: { $ref: ./schemas/BriefWithTask.schema.json }
+    BriefPage: { $ref: ./schemas/BriefPage.schema.json }
+    TaskBatch: { $ref: ./schemas/TaskBatch.schema.json }
+    CreateTaskRequest: { $ref: ./schemas/CreateTaskRequest.schema.json }
+    CreateTaskBatchRequest: { $ref: ./schemas/CreateTaskBatchRequest.schema.json }
+    PatchTaskRequest: { $ref: ./schemas/PatchTaskRequest.schema.json }
+    ClaimRequest: { $ref: ./schemas/ClaimRequest.schema.json }
+    ClaimNextRequest: { $ref: ./schemas/ClaimNextRequest.schema.json }
+    RenewClaimRequest: { $ref: ./schemas/RenewClaimRequest.schema.json }
+    ReleaseTaskRequest: { $ref: ./schemas/ReleaseTaskRequest.schema.json }
+    CompleteTaskRequest: { $ref: ./schemas/CompleteTaskRequest.schema.json }
+    FailTaskRequest: { $ref: ./schemas/FailTaskRequest.schema.json }
+    BlockTaskRequest: { $ref: ./schemas/BlockTaskRequest.schema.json }
+    UnblockTaskRequest: { $ref: ./schemas/UnblockTaskRequest.schema.json }
+    CancelTaskRequest: { $ref: ./schemas/CancelTaskRequest.schema.json }
+    ReopenTaskRequest: { $ref: ./schemas/ReopenTaskRequest.schema.json }
+    SetAssigneeRequest: { $ref: ./schemas/SetAssigneeRequest.schema.json }
+    SetDependenciesRequest: { $ref: ./schemas/SetDependenciesRequest.schema.json }
+    CreateBriefRequest: { $ref: ./schemas/CreateBriefRequest.schema.json }
+    RootRedactionRequest: { $ref: ./schemas/RootRedactionRequest.schema.json }
 
   parameters:
     BoardId: { name: board_id, in: path, required: true, schema: { type: string, minLength: 1 } }
@@ -1460,12 +2521,39 @@ components:
     SnapshotId: { name: snapshot_id, in: path, required: true, schema: { type: string, minLength: 1 } }
     ActorIdPath: { name: actor_id, in: path, required: true, schema: { type: string, minLength: 1 } }
     CredentialIdPath: { name: credential_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    TaskId: { name: task_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    ClaimId: { name: claim_id, in: path, required: true, description: "Must match the claim named by Abby-Claim-Proof, else 409 claim_lost (CLAIM-015).", schema: { type: string, minLength: 1 } }
+    BriefRevision: { name: brief_revision, in: path, required: true, schema: { type: integer, minimum: 1 } }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
       description: Client-chosen key, 1..255 visible ASCII characters. Missing is 400 validation_failed with `header`.
       schema: { type: string, pattern: "^[\\x21-\\x7e]{1,255}$" }
+    IdempotencyKeyOptional:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Optional client-chosen key, 1..255 visible ASCII characters (TASK-070, PUT assignee and dependencies).
+      schema: { type: string, pattern: "^[\\x21-\\x7e]{1,255}$" }
+    AbbyClaimProof:
+      name: Abby-Claim-Proof
+      in: header
+      required: true
+      description: |
+        P2. The proof returned with the claim (CLAIM-010..015). Opaque; never
+        accepted in a body or query, and stripped from server logs. Missing is
+        428 precondition_required (header Abby-Claim-Proof); malformed is 400
+        validation_failed; a well-formed proof that is not the active claim of
+        this task is 409 claim_lost; a valid proof of another actor is 403
+        forbidden (reason proof_actor_mismatch).
+      schema: { type: string, minLength: 1, pattern: "^[\\x21-\\x7e]+$" }
+    AbbyClaimProofOptional:
+      name: Abby-Claim-Proof
+      in: header
+      required: false
+      description: P2. When present the caller acts as the claimant and the proof must verify (as AbbyClaimProof); when absent the caller must be a manager.
+      schema: { type: string, minLength: 1, pattern: "^[\\x21-\\x7e]+$" }
     IfMatchRequired:
       name: If-Match
       in: header
@@ -1554,6 +2642,23 @@ components:
       in: query
       description: Case-insensitive substring of message text.
       schema: { type: string }
+    FilterTaskState:
+      name: state
+      in: query
+      description: P2. Repeatable effective task state; states are ORed.
+      style: form
+      explode: true
+      schema: { type: array, items: { $ref: "#/components/schemas/TaskState" } }
+    FilterTaskAssignee:
+      name: assignee
+      in: query
+      description: P2. Assignee actor ID, or `none` for unassigned tasks.
+      schema: { type: string, minLength: 1 }
+    FilterTaskOwner:
+      name: owner
+      in: query
+      description: P2. Owner actor ID.
+      schema: { type: string, minLength: 1 }
 
   headers:
     X-Request-Id:
@@ -1590,19 +2695,23 @@ components:
           examples:
             unauthenticated: { externalValue: ./examples/Problem.unauthenticated.json }
     Forbidden:
-      description: 403 forbidden. The target is visible but the caller lacks the capability.
+      description: 403 forbidden. The target is visible but the caller lacks the capability. P2 adds `reason` (not_assignee, proof_actor_mismatch, missing_capability).
       headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            not_assignee: { externalValue: ./examples/Problem.not_assignee.json }
     NotFound:
-      description: 404 not_found. Absent, or deliberately hidden from the caller.
+      description: 404 not_found. Absent, or deliberately hidden from the caller. P2 prerequisite errors carry `task_id`; batch rejections carry `errors`.
       headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            batch_rejected: { externalValue: ./examples/Problem.batch_rejected.json }
     Conflict:
-      description: 409 idempotency_conflict, already_exists, invalid_transition, newer_message or resync_required (see x-abby.errors).
+      description: 409 idempotency_conflict, already_exists, invalid_transition, newer_message or resync_required; with P2 also task_claimed, claim_lost, task_claim_active, dependency_cycle and task_root_protected (see x-abby.errors).
       headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
       content:
         application/problem+json:
@@ -1610,6 +2719,12 @@ components:
           examples:
             newer_message: { externalValue: ./examples/Problem.newer_message.json }
             resync_required: { externalValue: ./examples/Problem.resync_required.json }
+            claim_lost: { externalValue: ./examples/Problem.claim_lost.json }
+            task_claimed: { externalValue: ./examples/Problem.task_claimed.json }
+            invalid_transition: { externalValue: ./examples/Problem.invalid_transition.json }
+            task_claim_active: { externalValue: ./examples/Problem.task_claim_active.json }
+            dependency_cycle: { externalValue: ./examples/Problem.dependency_cycle.json }
+            task_root_protected: { externalValue: ./examples/Problem.task_root_protected.json }
     Gone:
       description: 410 cursor_expired or snapshot_expired.
       headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
@@ -1637,19 +2752,33 @@ components:
           examples:
             label_expectation: { externalValue: ./examples/Problem.label_expectation.json }
     TooLarge:
-      description: 413 limit_exceeded.
+      description: 413 limit_exceeded. P2 adds `limit`, the name of the exceeded Discovery limit.
       headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            batch_too_large: { externalValue: ./examples/Problem.batch_too_large.json }
     PreconditionRequired:
-      description: 428 precondition_required.
+      description: 428 precondition_required. Missing If-Match, or (P2) missing Abby-Claim-Proof; `header` names it.
       headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
           examples:
             precondition_required: { externalValue: ./examples/Problem.precondition_required.json }
+            missing_claim_proof: { externalValue: ./examples/Problem.missing_claim_proof.json }
+    TaskResult:
+      description: P2. The task after the command. A replay returns the current task view with Idempotent-Replayed, even if the claim has ended since (CLAIM-044, TASK-071).
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+        ETag: { $ref: "#/components/headers/ETag" }
+        Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Task" }
+          examples:
+            completed: { externalValue: ./examples/Task.completed.json }
     Unavailable:
       description: 503 temporarily_unavailable. Retry with bounded backoff and the same Idempotency-Key; the operation may have committed.
       headers:

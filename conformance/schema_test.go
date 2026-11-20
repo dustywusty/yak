@@ -91,6 +91,12 @@ func TestSpecSchemasCompile(t *testing.T) {
 		"CreateActorRequest", "CreateCredentialRequest", "CreateBoardRequest", "PatchBoardRequest", "CreateChannelRequest",
 		"CreateGrantRequest", "PatchGrantRequest", "CreateThreadRequest", "PatchThreadRequest", "ReplyRequest",
 		"EditMessageRequest", "DeleteMessageRequest", "LabelsRequest", "CreateSnapshotRequest",
+		// P2 (abby.p2.tasks)
+		"TaskState", "Task", "TaskPage", "Claim", "ClaimPage", "ClaimResponse", "ClaimNextResult", "Brief", "BriefWithTask",
+		"BriefPage", "TaskBatch", "CreateTaskRequest", "CreateTaskBatchRequest", "PatchTaskRequest", "ClaimRequest",
+		"ClaimNextRequest", "RenewClaimRequest", "ReleaseTaskRequest", "CompleteTaskRequest", "FailTaskRequest",
+		"BlockTaskRequest", "UnblockTaskRequest", "CancelTaskRequest", "ReopenTaskRequest", "SetAssigneeRequest",
+		"SetDependenciesRequest", "CreateBriefRequest", "RootRedactionRequest",
 	} {
 		if s[name] == nil {
 			t.Errorf("required schema %s.schema.json is missing", name)
@@ -155,10 +161,74 @@ func TestSpecSchemasRejectInvalid(t *testing.T) {
 		{"Event", `{"id":"e","cursor":"c","type":"message.created","board_id":"b","actor_id":"a","credential_id":null,"run_id":null,
 			"resource":{"type":"message","id":"m","revision":1},"channel_id":"c","thread_id":"t",
 			"recorded_at":"2026-11-19T20:00:00Z","effective_at":"2026-11-19T20:00:00Z","payload":{"thread":{}}}`},
+		// P2: closed requests, exactly-one-of create, proofs never in bodies, typed states.
+		{"CreateTaskRequest", `{"thread_id":"t","thread":{"channel":"eng","title":"x","text":"y"}}`},
+		{"CreateTaskRequest", `{}`},
+		{"CreateTaskRequest", `{"thread":{"channel":"eng","title":"x"}}`},
+		{"CreateTaskRequest", `{"thread":{"channel":"eng","title":"x","text":"y","labels":{"abby.task.state":"done"}}}`},
+		{"CreateTaskBatchRequest", `{"tasks":[]}`},
+		{"CreateTaskBatchRequest", `{"tasks":[{"ref":"bad ref","thread":{"channel":"eng","title":"x","text":"y"}}]}`},
+		{"CreateTaskBatchRequest", `{"tasks":[{"ref":"a","thread":{"channel":"eng","title":"x","text":"y"},"depends_on":[{"ref":"b","task_id":"t"}]}]}`},
+		{"PatchTaskRequest", `{}`},
+		{"PatchTaskRequest", `{"state":"completed"}`},
+		{"CompleteTaskRequest", `{"result":{},"proof":"acp1.c.s"}`},
+		{"CompleteTaskRequest", `{"result":{"evidence":[{"kind":"guess","ref":"x"}]}}`},
+		{"FailTaskRequest", `{}`},
+		{"BlockTaskRequest", `{"reason":""}`},
+		{"CancelTaskRequest", `{}`},
+		{"SetAssigneeRequest", `{}`},
+		{"SetDependenciesRequest", `{"task_ids":"t"}`},
+		{"ClaimNextRequest", `{"assignee":"anyone"}`},
+		{"ClaimNextRequest", `{"labels":{"area":"api"}}`},
+		{"ClaimRequest", `{"lease_seconds":0}`},
+		{"TaskState", `"done"`},
+		{"Claim", `{"id":"c","task_id":"t","actor_id":"a","execution_id":"e","run_id":null,"epoch":1,"brief_revision":1,
+			"status":"active","revision":1,"lease_seconds":120,"acquired_at":"2026-11-19T20:00:00Z","expires_at":"2026-11-19T20:02:00Z",
+			"ended_at":"2026-11-19T20:01:00Z","end_recorded_at":null}`},
+		{"ClaimResponse", `{"outcome":"claimed","claim":{},"proof":null,"proof_unavailable":false,"brief":{},"task":{}}`},
+		{"ClaimNextResult", `{"outcome":"no_work"}`},
+		{"Brief", `{"task_id":"t","revision":1,"text":"x","redacted":true,"source":{"kind":"root","message_id":"m","message_revision":1},
+			"reason":null,"created_by_actor_id":"a","created_at":"2026-11-19T20:00:00Z"}`},
 	}
 	for _, c := range cases {
 		if err := schemaNamed(t, c.schema).Validate(decodeInstance(t, []byte(c.doc))); err == nil {
 			t.Errorf("%s accepted invalid document %s", c.schema, c.doc)
+		}
+	}
+
+	// P2 task-view invariants, checked on mutated copies of valid examples:
+	// state claimed <=> an active current_claim (TASK-023), no proof or
+	// unknown state, and Discovery requires the P2 limits once the profile is
+	// listed (TASK-002).
+	mutate := func(example string, edit func(J)) string {
+		raw, err := os.ReadFile(filepath.Join(specDir, "examples", example+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m J
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		edit(m)
+		out, _ := json.Marshal(m)
+		return string(out)
+	}
+	for _, c := range []struct {
+		schema, example string
+		edit            func(J)
+	}{
+		{"Task", "Task.claimed", func(m J) { m["current_claim"] = nil }},
+		{"Task", "Task.completed", func(m J) { m["current_claim"] = m["last_claim"] }},
+		{"Task", "Task.claimed", func(m J) { m["state"] = "done" }},
+		{"Task", "Task.claimed", func(m J) { delete(m, "unreadable_dependencies_pending") }},
+		{"Task", "Task.claimed", func(m J) { m["last_claim"].(J)["status"] = "active" }},
+		{"Discovery", "Discovery.p2", func(m J) { delete(m["limits"].(J), "claim_lease_max_seconds") }},
+		{"Event", "Event.task_claimed", func(m J) { m["payload"].(J)["claim"] = nil }},
+		{"Event", "Event.task_claim_renewed", func(m J) { m["resource"].(J)["type"] = "task" }},
+	} {
+		doc := mutate(c.example, c.edit)
+		if err := schemaNamed(t, c.schema).Validate(decodeInstance(t, []byte(doc))); err == nil {
+			t.Errorf("%s accepted invalid mutation of %s: %s", c.schema, c.example, doc)
 		}
 	}
 }
@@ -316,13 +386,49 @@ func TestSpecOpenAPI(t *testing.T) {
 					t.Errorf("%s: missing x-abby", where)
 					continue
 				}
+				params := opParams(item.(map[string]any), op)
 				switch x["idempotency"] {
-				case "required", "not_applicable":
+				case "required":
+					if !params["IdempotencyKey"] {
+						t.Errorf("%s: x-abby.idempotency required but no IdempotencyKey parameter", where)
+					}
+				case "optional":
+					if !params["IdempotencyKeyOptional"] {
+						t.Errorf("%s: x-abby.idempotency optional but no IdempotencyKeyOptional parameter", where)
+					}
+				case "not_applicable":
 				default:
 					t.Errorf("%s: x-abby.idempotency %v", where, x["idempotency"])
 				}
-				if pre, ok := x["precondition"]; ok && pre != "If-Match required" && pre != "If-Match optional" && pre != "none" {
+				switch pre := x["precondition"]; pre {
+				case nil, "none":
+				case "If-Match required":
+					if !params["IfMatchRequired"] {
+						t.Errorf("%s: precondition %v but no IfMatchRequired parameter", where, pre)
+					}
+				case "If-Match optional":
+					if !params["IfMatchOptional"] {
+						t.Errorf("%s: precondition %v but no IfMatchOptional parameter", where, pre)
+					}
+				default:
 					t.Errorf("%s: x-abby.precondition %v", where, pre)
+				}
+				// P2: the Abby-Claim-Proof header and x-abby.claim_proof agree.
+				switch cp := x["claim_proof"]; cp {
+				case nil:
+					if params["AbbyClaimProof"] || params["AbbyClaimProofOptional"] {
+						t.Errorf("%s: takes Abby-Claim-Proof but x-abby.claim_proof is not set", where)
+					}
+				case "required":
+					if !params["AbbyClaimProof"] {
+						t.Errorf("%s: x-abby.claim_proof required but no AbbyClaimProof parameter", where)
+					}
+				case "optional":
+					if !params["AbbyClaimProofOptional"] {
+						t.Errorf("%s: x-abby.claim_proof optional but no AbbyClaimProofOptional parameter", where)
+					}
+				default:
+					t.Errorf("%s: x-abby.claim_proof %v", where, cp)
 				}
 				if a, _ := x["authorization"].(string); a == "" {
 					t.Errorf("%s: x-abby.authorization missing", where)
@@ -335,6 +441,22 @@ func TestSpecOpenAPI(t *testing.T) {
 	}
 	sort.Strings(ops)
 	t.Logf("%d operations", len(ops))
+}
+
+// opParams returns the names of the components.parameters referenced by a
+// path item and one of its operations.
+func opParams(item, op map[string]any) map[string]bool {
+	out := map[string]bool{}
+	for _, src := range []map[string]any{item, op} {
+		ps, _ := src["parameters"].([]any)
+		for _, p := range ps {
+			m, _ := p.(map[string]any)
+			if ref, _ := m["$ref"].(string); strings.HasPrefix(ref, "#/components/parameters/") {
+				out[strings.TrimPrefix(ref, "#/components/parameters/")] = true
+			}
+		}
+	}
+	return out
 }
 
 // ---- live responses ----
@@ -572,4 +694,197 @@ func TestSpecLiveResponses(t *testing.T) {
 	}
 
 	liveCheck(t, "DELETE /grants/{id}", "Grant", 200, owner.do("DELETE", f.p("/grants/"+grantID), nil))
+}
+
+// advertisesProfile reports whether a GET /v1/server body lists profile in
+// protocol.profiles.
+func advertisesProfile(disc J, profile string) bool {
+	proto, _ := disc["protocol"].(J)
+	ps, _ := proto["profiles"].([]any)
+	for _, p := range ps {
+		if p == profile {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSpecLiveResponsesP2 validates live P2 (abby.p2.tasks) responses against
+// the schemas. It runs only against a server that advertises the profile.
+func TestSpecLiveResponsesP2(t *testing.T) {
+	a := admin(t)
+	anon := &actorClient{t: t}
+	disc := anon.do("GET", "/v1/server", nil)
+	if !advertisesProfile(disc.Body, "abby.p2.tasks") {
+		t.Skip("server does not list abby.p2.tasks in protocol.profiles; P2 live schema checks skipped")
+	}
+	liveCheck(t, "GET /v1/server (P2 limits)", "Discovery", 200, disc)
+
+	s := func(m J, k string) string { v, _ := m[k].(string); return v }
+	o := func(m J, k string) J { v, _ := m[k].(J); return v }
+	withIfMatch := func(etag string) opt { return func(r *http.Request) { r.Header.Set("If-Match", etag) } }
+	withProof := func(p string) opt { return header("Abby-Claim-Proof", p) }
+
+	owner := newActor(t, "owner")
+	mgr := newActor(t, "mgr")
+	worker := newActor(t, "worker")
+	br := a.must(201, a.do("POST", "/v1/boards", J{"name": "schema p2 " + rnd(), "owner_actor_id": owner.id}, newKey()))
+	f := &fixture{board: s(br.Body, "id"), owner: owner, grants: map[string]string{}}
+	f.grant(t, mgr, "*", "allow", "read", "post", "label", "task_manage", "channel_manage")
+	f.grant(t, worker, "*", "allow", "read", "post", "claim")
+
+	// Create (L1) and read.
+	cr := sendJSON(t, mgr, "CreateTaskRequest", "POST", f.p("/tasks"),
+		J{"thread": J{"channel": "eng", "title": "Task one", "text": "Do the first thing.", "labels": J{"area": "api"}}}, newKey())
+	liveCheck(t, "POST /tasks", "Task", 201, cr)
+	t1, thread1 := s(cr.Body, "id"), s(cr.Body, "thread_id")
+	if t1 == "" {
+		t.Fatalf("task creation failed: %s", cr.Raw)
+	}
+	gt := worker.do("GET", f.p("/tasks/"+t1), nil)
+	liveCheck(t, "GET /tasks/{id}", "Task", 200, gt)
+	if want := fmt.Sprintf(`"%v"`, gt.Body["revision"]); gt.Header.Get("ETag") != want {
+		t.Errorf("GET task ETag %q, want %s", gt.Header.Get("ETag"), want)
+	}
+	liveCheck(t, "GET /tasks", "TaskPage", 200, worker.do("GET", f.p("/tasks?state=ready&limit=10"), nil))
+	th := worker.do("GET", f.p("/threads/"+thread1), nil)
+	liveCheck(t, "GET /threads/{id} (task thread)", "ThreadWithRoot", 200, th)
+	if got := o(th.Body, "thread")["task_id"]; got != t1 {
+		t.Errorf("thread.task_id = %v, want %s (TASK-024)", got, t1)
+	}
+	liveCheck(t, "GET /tasks/{id}/briefs", "BriefPage", 200, worker.do("GET", f.p("/tasks/"+t1+"/briefs"), nil))
+	liveCheck(t, "GET /tasks/{id}/briefs/1", "Brief", 200, worker.do("GET", f.p("/tasks/"+t1+"/briefs/1"), nil))
+
+	// Claim, renew, complete (L3, L4, L7) and claimant problems.
+	cl := sendJSON(t, worker, "ClaimRequest", "POST", f.p("/tasks/"+t1+"/claims"), J{"expect_brief_revision": 1}, newKey())
+	liveCheck(t, "POST /tasks/{id}/claims", "ClaimResponse", 201, cl)
+	pr, claimID := s(cl.Body, "proof"), s(o(cl.Body, "claim"), "id")
+	liveCheck(t, "POST /tasks/{id}/claims (task_claimed)", "Problem", 409,
+		sendJSON(t, worker, "ClaimRequest", "POST", f.p("/tasks/"+t1+"/claims"), J{}, newKey()))
+	liveCheck(t, "POST /claims/{id}/renew", "Claim", 200,
+		sendJSON(t, worker, "RenewClaimRequest", "POST", f.p("/tasks/"+t1+"/claims/"+claimID+"/renew"), J{}, newKey(), withProof(pr)))
+	missing := sendJSON(t, worker, "CompleteTaskRequest", "POST", f.p("/tasks/"+t1+"/complete"), J{"result": J{}}, newKey())
+	liveCheck(t, "POST /tasks/{id}/complete (no proof)", "Problem", 428, missing)
+	if missing.code() != "precondition_required" {
+		t.Errorf("complete without Abby-Claim-Proof: code %q, want precondition_required (CLAIM-013)", missing.code())
+	}
+	liveCheck(t, "POST /tasks/{id}/complete", "Task", 200,
+		sendJSON(t, worker, "CompleteTaskRequest", "POST", f.p("/tasks/"+t1+"/complete"), J{"result": J{
+			"summary": "done", "evidence": []J{{"kind": "commit", "ref": "abc123"}}, "data": J{"ok": true},
+		}}, newKey(), withProof(pr)))
+	lost := sendJSON(t, worker, "CompleteTaskRequest", "POST", f.p("/tasks/"+t1+"/complete"), J{"result": J{}}, newKey(), withProof(pr))
+	liveCheck(t, "POST /tasks/{id}/complete (claim_lost)", "Problem", 409, lost)
+	if lost.code() != "claim_lost" {
+		t.Errorf("settled proof: code %q, want claim_lost (CLAIM-014)", lost.code())
+	}
+	liveCheck(t, "GET /tasks/{id}/claims", "ClaimPage", 200, worker.do("GET", f.p("/tasks/"+t1+"/claims"), nil))
+	if bytes.Contains(worker.do("GET", f.p("/tasks/"+t1+"/claims"), nil).Raw, []byte(pr)) {
+		t.Error("claim history contains the proof (CLAIM-011)")
+	}
+
+	// Claim-next: both outcomes, then release (SEL-007, L5).
+	cr2 := sendJSON(t, mgr, "CreateTaskRequest", "POST", f.p("/tasks"),
+		J{"thread": J{"channel": "eng/next", "title": "Task two", "text": "Do the second thing."}, "depends_on": []string{t1}}, newKey())
+	liveCheck(t, "POST /tasks (with completed prerequisite)", "Task", 201, cr2)
+	t2 := s(cr2.Body, "id")
+	cn := sendJSON(t, worker, "ClaimNextRequest", "POST", f.p("/tasks/claim-next"), J{"channel": "eng/next", "assignee": "eligible"}, newKey())
+	liveCheck(t, "POST /tasks/claim-next (claimed)", "ClaimNextResult", 201, cn)
+	if cn.Body["outcome"] != "claimed" || s(o(cn.Body, "task"), "id") != t2 {
+		t.Errorf("claim-next: want outcome claimed on %s, got %s", t2, cn.Raw)
+	}
+	nw := sendJSON(t, worker, "ClaimNextRequest", "POST", f.p("/tasks/claim-next"), J{"channel": "eng/next"}, newKey())
+	liveCheck(t, "POST /tasks/claim-next (no_work)", "ClaimNextResult", 200, nw)
+	if nw.Body["outcome"] != "no_work" {
+		t.Errorf("claim-next with nothing ready: want outcome no_work, got %s", nw.Raw)
+	}
+	rel := sendJSON(t, worker, "ReleaseTaskRequest", "POST", f.p("/tasks/"+t2+"/release"), J{"reason": "schema check"}, newKey(), withProof(s(cn.Body, "proof")))
+	liveCheck(t, "POST /tasks/{id}/release", "Task", 200, rel)
+
+	// Manager commands (L9, L11, L12, L13, L15, L16, L17, L19).
+	etag := rel.Header.Get("ETag")
+	if etag == "" {
+		etag = fmt.Sprintf(`"%v"`, rel.Body["revision"])
+	}
+	step := func(name, reqSchema, method, path string, body J, status int, respSchema string, opts ...opt) resp {
+		t.Helper()
+		r := sendJSON(t, mgr, reqSchema, method, f.p("/tasks/"+t2+path), body, opts...)
+		liveCheck(t, name, respSchema, status, r)
+		if e := r.Header.Get("ETag"); e != "" {
+			etag = e
+		} else if tk := o(r.Body, "task"); tk != nil {
+			etag = fmt.Sprintf(`"%v"`, tk["revision"])
+		}
+		return r
+	}
+	step("PUT /tasks/{id}/assignee", "SetAssigneeRequest", "PUT", "/assignee", J{"assignee_actor_id": worker.id}, 200, "Task", withIfMatch(etag))
+	step("PUT /tasks/{id}/dependencies", "SetDependenciesRequest", "PUT", "/dependencies", J{"task_ids": []string{t1}}, 200, "Task", withIfMatch(etag))
+	step("PATCH /tasks/{id}", "PatchTaskRequest", "PATCH", "", J{"title": "Task two (renamed)"}, 200, "Task", withIfMatch(etag))
+	step("POST /tasks/{id}/block", "BlockTaskRequest", "POST", "/block", J{"reason": "schema check"}, 200, "Task", newKey())
+	step("POST /tasks/{id}/unblock", "UnblockTaskRequest", "POST", "/unblock", J{}, 200, "Task", newKey())
+	step("POST /tasks/{id}/briefs", "CreateBriefRequest", "POST", "/briefs", J{"text": "Do the second thing, v2.", "reason": "scope"}, 201, "BriefWithTask",
+		newKey(), withIfMatch(etag))
+	step("POST /tasks/{id}/cancel", "CancelTaskRequest", "POST", "/cancel", J{"reason": "schema check"}, 200, "Task", newKey())
+	step("POST /tasks/{id}/reopen", "ReopenTaskRequest", "POST", "/reopen", J{}, 200, "Task", newKey())
+	inv := sendJSON(t, mgr, "UnblockTaskRequest", "POST", f.p("/tasks/"+t2+"/unblock"), J{}, newKey())
+	liveCheck(t, "POST /tasks/{id}/unblock (invalid_transition)", "Problem", 409, inv)
+
+	// Batch and P1 root protection.
+	liveCheck(t, "POST /tasks/batch", "TaskBatch", 201,
+		sendJSON(t, mgr, "CreateTaskBatchRequest", "POST", f.p("/tasks/batch"), J{"tasks": []J{
+			{"ref": "a", "thread": J{"channel": "eng", "title": "Batch A", "text": "a"}},
+			{"ref": "b", "thread": J{"channel": "eng", "title": "Batch B", "text": "b"}, "depends_on": []J{{"ref": "a"}, {"task_id": t1}}},
+		}}, newKey()))
+	prot := sendJSON(t, mgr, "PatchThreadRequest", "PATCH", f.p("/threads/"+thread1), J{"title": "nope"}, withIfMatch(th.Header.Get("ETag")))
+	liveCheck(t, "PATCH /threads/{id} (task_root_protected)", "Problem", 409, prot)
+	if prot.code() != "task_root_protected" {
+		t.Errorf("PATCH task thread: code %q, want task_root_protected (BRIEF-010)", prot.code())
+	}
+
+	// Events: every event (and so every task payload) validates.
+	er := mgr.do("GET", f.p("/events?limit=200"), nil)
+	liveCheck(t, "GET /events (P2)", "EventPage", 200, er)
+	evs, _ := er.Body["events"].([]any)
+	seen := map[string]bool{}
+	for i, e := range evs {
+		raw, _ := json.Marshal(e)
+		typ := s(e.(J), "type")
+		seen[typ] = true
+		if typ == "thread.view_invalidated" && o(e.(J), "payload")["reason"] == "task_state_changed" {
+			seen["thread.view_invalidated/task_state_changed"] = true
+		}
+		if bytes.Contains(raw, []byte(pr)) {
+			t.Errorf("event[%d] %s contains the claim proof (TASK-084)", i, typ)
+		}
+		liveCheck(t, fmt.Sprintf("event[%d] %s", i, typ), "Event", 200, resp{Status: 200, Header: er.Header, Raw: raw})
+	}
+	for _, typ := range []string{"task.created", "task.claimed", "task.claim_renewed", "task.completed", "task.released",
+		"task.assigned", "task.dependencies_changed", "task.updated", "task.blocked", "task.unblocked", "task.brief_updated",
+		"task.canceled", "task.reopened", "thread.view_invalidated/task_state_changed"} {
+		if !seen[typ] {
+			t.Errorf("event %s not observed", typ)
+		}
+	}
+
+	// Snapshot with task items (TASK-092).
+	sr := mgr.do("POST", f.p("/snapshots?subtree=eng"), nil)
+	liveCheck(t, "POST /snapshots (P2)", "SnapshotInfo", 201, sr)
+	tok, sawTask := "", false
+	for i := 0; i < 20; i++ {
+		q := url.Values{"limit": {"200"}}
+		if tok != "" {
+			q.Set("page_token", tok)
+		}
+		pg := mgr.do("GET", f.p("/snapshots/"+s(sr.Body, "id")+"?"+q.Encode()), nil)
+		liveCheck(t, fmt.Sprintf("GET /snapshots/{id} (P2) page %d", i), "SnapshotPage", 200, pg)
+		items, _ := pg.Body["items"].([]any)
+		for _, it := range items {
+			sawTask = sawTask || s(it.(J), "type") == "task"
+		}
+		if tok = s(pg.Body, "next_page_token"); tok == "" {
+			break
+		}
+	}
+	if !sawTask {
+		t.Error("snapshot of task threads has no task items (TASK-092)")
+	}
 }

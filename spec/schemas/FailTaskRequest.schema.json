@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FailTaskRequest",
+  "description": "Body of POST /tasks/{task_id}/fail (L8).",
+  "type": "object",
+  "required": [
+    "reason"
+  ],
+  "properties": {
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Required; 1..limits.max_text_bytes bytes (TASK-037)."
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "CompleteTaskRequest.schema.json#/$defs/Evidence"
+      },
+      "description": "At most limits.max_evidence_items (413)."
+    },
+    "data": {
+      "type": "object",
+      "description": "JSON object of at most limits.max_task_result_bytes (413)."
+    }
+  },
+  "additionalProperties": false
+}

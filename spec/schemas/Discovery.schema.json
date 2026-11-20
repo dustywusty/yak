@@ -40,7 +40,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Conformance profiles, e.g. abby.p1.core."
+          "description": "Conformance profiles, e.g. abby.p1.core, abby.p2.tasks."
         }
       }
     },
@@ -70,7 +70,7 @@
         "pattern": "^[a-z0-9_.]+$"
       },
       "uniqueItems": true,
-      "description": "Advertised capability identifiers."
+      "description": "Advertised capability identifiers. P2: abby.tasks.claim_proof_replay is listed exactly when a replayed claim response can return the proof (TASK-003, CLAIM-041, CLAIM-043); its absence means claim_proof_replay is false."
     },
     "limits": {
       "type": "object",
@@ -131,6 +131,46 @@
         "credential_max_ttl_seconds": {
           "type": "integer",
           "minimum": 0
+        },
+        "claim_lease_default_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: default claim lease (reference 120)."
+        },
+        "claim_lease_min_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: shortest accepted lease (reference 15)."
+        },
+        "claim_lease_max_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: longest accepted lease (reference 300)."
+        },
+        "max_batch_tasks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: items per POST /tasks/batch (reference 100)."
+        },
+        "max_dependencies_per_task": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: prerequisites per task (reference 100)."
+        },
+        "max_task_result_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: bytes of result data on complete or fail (reference 16384)."
+        },
+        "max_evidence_items": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: evidence items on complete or fail (reference 50)."
+        },
+        "max_claim_wait_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: claim-next wait_ms ceiling (reference 30000)."
         }
       }
     },
@@ -172,6 +212,41 @@
           },
           "minItems": 1
         }
+      }
+    }
+  },
+  "if": {
+    "required": [
+      "protocol"
+    ],
+    "properties": {
+      "protocol": {
+        "required": [
+          "profiles"
+        ],
+        "properties": {
+          "profiles": {
+            "contains": {
+              "const": "abby.p2.tasks"
+            }
+          }
+        }
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "limits": {
+        "required": [
+          "claim_lease_default_seconds",
+          "claim_lease_min_seconds",
+          "claim_lease_max_seconds",
+          "max_batch_tasks",
+          "max_dependencies_per_task",
+          "max_task_result_bytes",
+          "max_evidence_items",
+          "max_claim_wait_ms"
+        ]
       }
     }
   }

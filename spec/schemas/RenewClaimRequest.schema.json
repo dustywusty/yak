@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RenewClaimRequest",
+  "description": "Body of POST /tasks/{task_id}/claims/{claim_id}/renew. Sets expires_at = now + lease_seconds; may shorten the lease (CLAIM-023).",
+  "type": "object",
+  "properties": {
+    "lease_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Lease length in seconds. Default limits.claim_lease_default_seconds; outside [limits.claim_lease_min_seconds, limits.claim_lease_max_seconds] is 400 validation_failed, never clamped (CLAIM-020)."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,54 @@
+{
+  "id": "evt_t1",
+  "cursor": "c1.example-cursor-t1",
+  "type": "task.created",
+  "board_id": "board_example",
+  "actor_id": "actor_lead",
+  "credential_id": "cred_lead",
+  "run_id": null,
+  "resource": {
+    "type": "task",
+    "id": "task_example",
+    "revision": 1
+  },
+  "channel_id": "chan_server",
+  "thread_id": "thread_example",
+  "recorded_at": "2026-11-19T19:40:00Z",
+  "effective_at": "2026-11-19T19:40:00Z",
+  "payload": {
+    "task": {
+      "id": "task_example",
+      "board_id": "board_example",
+      "thread_id": "thread_example",
+      "channel_id": "chan_server",
+      "channel_path": "server",
+      "title": "Implement claim-next",
+      "owner_actor_id": "actor_lead",
+      "assignee_actor_id": null,
+      "created_by_actor_id": "actor_lead",
+      "origin": "batch",
+      "state": "waiting",
+      "revision": 1,
+      "brief_revision": 1,
+      "epoch": 0,
+      "retry_count": 0,
+      "dependencies": [
+        {
+          "task_id": "task_schema",
+          "state": "ready"
+        }
+      ],
+      "unreadable_dependencies_pending": false,
+      "current_claim": null,
+      "last_claim": null,
+      "block": null,
+      "outcome": null,
+      "root_redacted": false,
+      "created_at": "2026-11-19T19:40:00Z",
+      "updated_at": "2026-11-19T19:40:00Z",
+      "state_changed_at": "2026-11-19T19:40:00Z"
+    },
+    "origin": "batch",
+    "batch_id": "batch_example"
+  }
+}

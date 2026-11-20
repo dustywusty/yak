@@ -1,0 +1,16 @@
+{
+  "id": "claim_example",
+  "task_id": "task_example",
+  "actor_id": "actor_worker",
+  "execution_id": "exec_example",
+  "run_id": "run_example",
+  "epoch": 2,
+  "brief_revision": 1,
+  "status": "active",
+  "revision": 3,
+  "lease_seconds": 120,
+  "acquired_at": "2026-11-19T20:00:00Z",
+  "expires_at": "2026-11-19T20:03:20Z",
+  "ended_at": null,
+  "end_recorded_at": null
+}

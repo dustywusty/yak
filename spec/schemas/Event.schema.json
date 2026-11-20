@@ -91,7 +91,7 @@
     },
     "effective_at": {
       "$ref": "Timestamp.schema.json",
-      "description": "When the change took effect; equals recorded_at in P1."
+      "description": "When the change took effect. Equals recorded_at except task.claim_expired, where it is the claim's expires_at; consumers must not assume it is monotonic in stream order (CLAIM-054)."
     },
     "payload": {
       "type": "object"
@@ -235,6 +235,295 @@
       }
     },
     {
+      "properties": {
+        "type": {
+          "const": "task.created"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskCreatedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.claimed"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskClaimPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.claim_renewed"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "claim"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskClaimPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.released"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskReleasedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.claim_expired"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskClaimExpiredPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.completed"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskSettledPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.failed"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskSettledPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.blocked"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskBlockedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.unblocked"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskUnblockedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.canceled"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskCanceledPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.reopened"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskReopenedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.became_ready"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskBecameReadyPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.dependencies_changed"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskDependenciesChangedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.assigned"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskAssignedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.updated"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskUpdatedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.brief_updated"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskBriefUpdatedPayload"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "task.brief_redacted"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "task"
+            }
+          }
+        },
+        "payload": {
+          "$ref": "#/$defs/TaskBriefRedactedPayload"
+        }
+      }
+    },
+    {
       "description": "Forward compatibility: event types not defined by this version. Clients ignore types they do not understand.",
       "properties": {
         "type": {
@@ -247,7 +536,24 @@
               "message.deleted",
               "message.labels_changed",
               "thread.view_invalidated",
-              "thread.updated"
+              "thread.updated",
+              "task.created",
+              "task.claimed",
+              "task.claim_renewed",
+              "task.released",
+              "task.claim_expired",
+              "task.completed",
+              "task.failed",
+              "task.blocked",
+              "task.unblocked",
+              "task.canceled",
+              "task.reopened",
+              "task.became_ready",
+              "task.dependencies_changed",
+              "task.assigned",
+              "task.updated",
+              "task.brief_updated",
+              "task.brief_redacted"
             ]
           }
         }
@@ -344,7 +650,7 @@
       }
     },
     "ThreadViewInvalidatedPayload": {
-      "description": "Root labels changed: consumers refresh or drop the thread's cached messages.",
+      "description": "Root labels changed: consumers refresh or drop the thread's cached messages. P2: reason task_state_changed when the effective task state (abby.task.state) changed (TASK-085).",
       "type": "object",
       "required": [
         "thread",
@@ -359,7 +665,8 @@
         "reason": {
           "type": "string",
           "enum": [
-            "root_labels_changed"
+            "root_labels_changed",
+            "task_state_changed"
           ]
         },
         "labels_before": {
@@ -378,6 +685,409 @@
       "properties": {
         "thread": {
           "$ref": "Thread.schema.json"
+        }
+      }
+    },
+    "TaskCreatedPayload": {
+      "description": "L1, L2.",
+      "type": "object",
+      "required": [
+        "task",
+        "origin",
+        "batch_id"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "new_thread",
+            "converted",
+            "batch"
+          ]
+        },
+        "batch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TaskClaimPayload": {
+      "description": "task.claimed (L3) and task.claim_renewed (L4). Never carries a proof.",
+      "type": "object",
+      "required": [
+        "task",
+        "claim"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "claim": {
+          "$ref": "Claim.schema.json"
+        }
+      }
+    },
+    "TaskReleasedPayload": {
+      "description": "L5.",
+      "type": "object",
+      "required": [
+        "task",
+        "claim",
+        "reason"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "claim": {
+          "$ref": "Claim.schema.json"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TaskClaimExpiredPayload": {
+      "description": "L6. effective_at = claim.expires_at; recorded_at = materialization time (CLAIM-052).",
+      "type": "object",
+      "required": [
+        "task",
+        "claim"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "claim": {
+          "allOf": [
+            {
+              "$ref": "Claim.schema.json"
+            },
+            {
+              "properties": {
+                "status": {
+                  "const": "expired"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "TaskSettledPayload": {
+      "description": "task.completed (L7) and task.failed (L8).",
+      "type": "object",
+      "required": [
+        "task",
+        "claim",
+        "outcome"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "claim": {
+          "$ref": "Claim.schema.json"
+        },
+        "outcome": {
+          "$ref": "Task.schema.json#/$defs/Outcome"
+        }
+      }
+    },
+    "TaskBlockedPayload": {
+      "description": "L9, L10.",
+      "type": "object",
+      "required": [
+        "task",
+        "reason",
+        "cause",
+        "revoked_claim"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "cause": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "claimant",
+            "brief_updated"
+          ]
+        },
+        "revoked_claim": {
+          "anyOf": [
+            {
+              "$ref": "Claim.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TaskUnblockedPayload": {
+      "description": "L11.",
+      "type": "object",
+      "required": [
+        "task",
+        "reason"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TaskCanceledPayload": {
+      "description": "L12, L18.",
+      "type": "object",
+      "required": [
+        "task",
+        "reason",
+        "cause",
+        "revoked_claim"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "cause": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "root_redacted"
+          ]
+        },
+        "revoked_claim": {
+          "anyOf": [
+            {
+              "$ref": "Claim.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TaskReopenedPayload": {
+      "description": "L13. The prior outcome stays in history here (TASK-036).",
+      "type": "object",
+      "required": [
+        "task",
+        "reason",
+        "previous_outcome"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_outcome": {
+          "anyOf": [
+            {
+              "$ref": "Task.schema.json#/$defs/Outcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TaskBecameReadyPayload": {
+      "description": "L14. prerequisite_task_id is omitted when the reader cannot read the prerequisite (DEP-010).",
+      "type": "object",
+      "required": [
+        "task",
+        "cause"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "cause": {
+          "const": "dependencies_satisfied"
+        },
+        "prerequisite_task_id": {
+          "type": "string"
+        }
+      }
+    },
+    "TaskDependenciesChangedPayload": {
+      "description": "L15. added and removed list readable task IDs only, projected per reader (DEP-010).",
+      "type": "object",
+      "required": [
+        "task",
+        "added",
+        "removed",
+        "state_before",
+        "state_after"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "added": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "state_before": {
+          "$ref": "TaskState.schema.json"
+        },
+        "state_after": {
+          "$ref": "TaskState.schema.json"
+        }
+      }
+    },
+    "TaskAssignedPayload": {
+      "description": "L16.",
+      "type": "object",
+      "required": [
+        "task",
+        "assignee_before",
+        "assignee_after"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "assignee_before": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "assignee_after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TaskUpdatedPayload": {
+      "description": "L19.",
+      "type": "object",
+      "required": [
+        "task",
+        "changed",
+        "title",
+        "owner_actor_id"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "title",
+              "owner_actor_id"
+            ]
+          },
+          "minItems": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "owner_actor_id": {
+          "type": "string"
+        }
+      }
+    },
+    "TaskBriefUpdatedPayload": {
+      "description": "L17. Never carries brief text.",
+      "type": "object",
+      "required": [
+        "task",
+        "brief_revision",
+        "message_id",
+        "state_before",
+        "revoked_claim"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "brief_revision": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "message_id": {
+          "type": "string",
+          "description": "The notice reply."
+        },
+        "state_before": {
+          "$ref": "TaskState.schema.json"
+        },
+        "revoked_claim": {
+          "anyOf": [
+            {
+              "$ref": "Claim.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TaskBriefRedactedPayload": {
+      "description": "L18 on a terminal task.",
+      "type": "object",
+      "required": [
+        "task",
+        "brief_revisions"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        },
+        "brief_revisions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1
         }
       }
     }

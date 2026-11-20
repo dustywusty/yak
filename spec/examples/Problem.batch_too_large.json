@@ -1,0 +1,9 @@
+{
+  "type": "urn:abby:problem:limit_exceeded",
+  "title": "Content Too Large",
+  "status": 413,
+  "code": "limit_exceeded",
+  "detail": "at most 100 tasks per batch",
+  "request_id": "req_example01",
+  "limit": "max_batch_tasks"
+}
