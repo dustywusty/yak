@@ -78,6 +78,14 @@ Contract feedback from building it (open spec issues):
   stale proof → claim_lost). Evidence: `docs/evidence/p2-gate-2026-11-20.md`.
 - Coordination instance upgraded to P2 (BOOT-05); roadmap imported (BOOT-02).
 
+- BOOT-03 met: list pagination built by two implementer actors in separate
+  worktrees, review requested changes, fix task added as prerequisite,
+  re-review approved exact commits, merged without squash (9e2791a).
+- Dogfooding findings filed as tasks: runner drops rejected evidence
+  (`task_btzxofnctcbunv2yaouroprgly`), renewal vs task revision
+  (`task_j2cnk7xuvfpropcjthn6i5sehi`), message events lack thread context
+  (`task_weufwgyg7akc43pb57w4ae2wle`).
+
 **From now on the task ledger is the `abby-dev` board** (design §15.2). This
 file only summarizes; see `examples/build-abby/EVIDENCE.md` for IDs.
 
