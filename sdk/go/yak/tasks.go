@@ -101,6 +101,7 @@ type Outcome struct {
 
 // Task is the effective task view (TASK-021).
 type Task struct {
+	DirectActionRequired          bool         `json:"direct_action_required"`
 	ID                            string       `json:"id"`
 	BoardID                       string       `json:"board_id"`
 	ThreadID                      string       `json:"thread_id"`
@@ -201,16 +202,18 @@ type NewThread struct {
 // CreateTaskRequest creates a task with a new thread (Thread set) or
 // converts an existing thread (ThreadID set). Exactly one must be set.
 type CreateTaskRequest struct {
-	Thread          *NewThread `json:"thread,omitempty"`
-	ThreadID        string     `json:"thread_id,omitempty"`
-	AssigneeActorID *string    `json:"assignee_actor_id,omitempty"`
-	DependsOn       []string   `json:"depends_on,omitempty"`
+	DirectActionRequired bool       `json:"direct_action_required"`
+	Thread               *NewThread `json:"thread,omitempty"`
+	ThreadID             string     `json:"thread_id,omitempty"`
+	AssigneeActorID      *string    `json:"assignee_actor_id,omitempty"`
+	DependsOn            []string   `json:"depends_on,omitempty"`
 }
 
-// PatchTaskRequest edits title or owner (L19).
+// PatchTaskRequest edits title, owner or the direct action flag (L19).
 type PatchTaskRequest struct {
-	Title        *string `json:"title,omitempty"`
-	OwnerActorID *string `json:"owner_actor_id,omitempty"`
+	DirectActionRequired *bool   `json:"direct_action_required,omitempty"`
+	Title                *string `json:"title,omitempty"`
+	OwnerActorID         *string `json:"owner_actor_id,omitempty"`
 }
 
 // ClaimRequest is the body of POST …/tasks/{id}/claims.
@@ -253,10 +256,11 @@ type BatchDep struct {
 
 // BatchItem is one item of POST …/tasks/batch.
 type BatchItem struct {
-	Ref             string     `json:"ref"`
-	Thread          NewThread  `json:"thread"`
-	AssigneeActorID *string    `json:"assignee_actor_id,omitempty"`
-	DependsOn       []BatchDep `json:"depends_on,omitempty"`
+	DirectActionRequired bool       `json:"direct_action_required,omitempty"`
+	Ref                  string     `json:"ref"`
+	Thread               NewThread  `json:"thread"`
+	AssigneeActorID      *string    `json:"assignee_actor_id,omitempty"`
+	DependsOn            []BatchDep `json:"depends_on,omitempty"`
 }
 
 // CreateTaskBatchRequest holds 1..max_batch_tasks items.
@@ -487,7 +491,7 @@ func (t *Tasks) ListAll(ctx context.Context, f TaskFilter, fn func(Task) error) 
 	}
 }
 
-// Patch edits title or owner under If-Match (L19).
+// Patch edits title, owner or the direct action flag under If-Match (L19).
 func (t *Tasks) Patch(ctx context.Context, id string, ifMatch int64, req PatchTaskRequest) (*Task, error) {
 	return t.taskCall(ctx, t.C, Request{Method: http.MethodPatch, Path: t.path(taskPath(id, "")), Body: req, IfMatch: strconv.FormatInt(ifMatch, 10)})
 }

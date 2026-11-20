@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Task",
-  "description": "Effective task view at server time (TASK-021, TASK-025, CLAIM-051). Never carries a claim proof or brief text (TASK-022). ETag is \"<revision>\".",
+  "description": "Effective task view at server time (TASK-021, TASK-025, CLAIM-051). Never carries a claim proof or brief text (TASK-022). ETag is \"<revision>\". Current views always include direct_action_required; historical event task copies may omit it and mean false.",
   "type": "object",
   "required": [
     "id",
@@ -176,6 +176,11 @@
     },
     "state_changed_at": {
       "$ref": "Timestamp.schema.json"
+    },
+    "direct_action_required": {
+      "type": "boolean",
+      "description": "Human gate marker (DLG-090). Default false. Only a manager with a direct credential may set or clear it.",
+      "default": false
     }
   },
   "if": {

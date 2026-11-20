@@ -81,6 +81,11 @@
               "$ref": "#/$defs/BatchDependency"
             },
             "description": "Each entry names an item of this batch (ref) or an existing task (task_id)."
+          },
+          "direct_action_required": {
+            "type": "boolean",
+            "description": "Human gate marker (DLG-090). Default false. Only a manager with a direct credential may set or clear it.",
+            "default": false
           }
         },
         "additionalProperties": false

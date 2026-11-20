@@ -3,6 +3,8 @@ package httpapi
 // P2 task routes (ADR-0016 §2). Authorization is in the domain layer.
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -377,4 +379,38 @@ func (a *API) taskRoutes() {
 		}
 		return a.respondTask(w, r, p, bid(r), res)
 	}))
+}
+
+// gateBoolean validates every occurrence, including null, using the same
+// field matching and duplicate-key handling as the request decoder.
+// It is used only for validation, never for domain values or fingerprints.
+type gateBoolean bool
+
+func (v *gateBoolean) UnmarshalJSON(raw []byte) error {
+	switch string(bytes.TrimSpace(raw)) {
+	case "true":
+		*v = true
+	case "false":
+		*v = false
+	default:
+		return domain.Validation("direct_action_required must be a boolean")
+	}
+	return nil
+}
+
+func validateGateBoolean(dst any, body []byte) error {
+	type fields struct {
+		DirectActionRequired gateBoolean `json:"direct_action_required"`
+	}
+	switch dst.(type) {
+	case *domain.CreateTaskRequest, *domain.PatchTaskRequest:
+		var task fields
+		return json.Unmarshal(body, &task)
+	case *domain.CreateTaskBatchRequest:
+		var batch struct {
+			Tasks []fields `json:"tasks"`
+		}
+		return json.Unmarshal(body, &batch)
+	}
+	return nil
 }

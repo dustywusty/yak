@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PatchTaskRequest",
-  "description": "Edit title or owner (L19). Generic PATCH never changes state, assignee, dependencies or brief (TASK-030).",
+  "description": "Edit title, owner or direct_action_required (L19, DLG-090). Generic PATCH never changes state, assignee, dependencies or brief.",
   "type": "object",
   "properties": {
     "title": {
@@ -13,6 +13,10 @@
     "owner_actor_id": {
       "type": "string",
       "minLength": 1
+    },
+    "direct_action_required": {
+      "type": "boolean",
+      "description": "Human gate marker (DLG-090). Default false. Only a manager with a direct credential may set or clear it."
     }
   },
   "additionalProperties": false,

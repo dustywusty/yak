@@ -71,6 +71,7 @@ type DependencyView struct {
 
 // TaskView is the effective task view (TASK-021, TASK-025).
 type TaskView struct {
+	DirectActionRequired          bool             `json:"direct_action_required"`
 	ID                            string           `json:"id"`
 	BoardID                       string           `json:"board_id"`
 	ThreadID                      string           `json:"thread_id"`
@@ -129,6 +130,7 @@ type Outcome struct {
 // ---- storage rows ----
 
 type taskRow struct {
+	DirectActionRequired                    bool
 	ID, BoardID, ThreadID, ChannelID, Owner string
 	Assignee                                *string
 	CreatedBy, Origin                       string
@@ -147,7 +149,7 @@ type taskRow struct {
 
 const taskCols = `tk.id, tk.board_id, tk.thread_id, tk.channel_id, tk.owner_actor_id, tk.assignee_actor_id, tk.created_by, tk.origin, tk.batch_id,
 	tk.state, tk.revision, tk.epoch, tk.retry_count, tk.brief_revision, tk.current_claim_id, tk.claim_expires_at, tk.created_position,
-	tk.block, tk.outcome, tk.root_redacted_at, tk.created_at, tk.updated_at, tk.state_changed_at, th.title, th.root_message_id`
+	tk.block, tk.outcome, tk.root_redacted_at, tk.created_at, tk.updated_at, tk.state_changed_at, th.title, th.root_message_id, tk.direct_action_required`
 
 const taskFrom = ` FROM tasks tk JOIN threads th ON th.id = tk.thread_id `
 
@@ -155,7 +157,7 @@ func scanTask(r pgx.Row) (taskRow, error) {
 	var t taskRow
 	err := r.Scan(&t.ID, &t.BoardID, &t.ThreadID, &t.ChannelID, &t.Owner, &t.Assignee, &t.CreatedBy, &t.Origin, &t.BatchID,
 		&t.State, &t.Revision, &t.Epoch, &t.RetryCount, &t.BriefRevision, &t.CurrentClaimID, &t.ClaimExpiresAt, &t.CreatedPosition,
-		&t.Block, &t.Outcome, &t.RootRedactedAt, &t.CreatedAt, &t.UpdatedAt, &t.StateChangedAt, &t.Title, &t.RootMessageID)
+		&t.Block, &t.Outcome, &t.RootRedactedAt, &t.CreatedAt, &t.UpdatedAt, &t.StateChangedAt, &t.Title, &t.RootMessageID, &t.DirectActionRequired)
 	return t, err
 }
 
@@ -251,7 +253,7 @@ func chanByID(chans map[string]channelRow, id string) channelRow {
 func buildTaskView(ctx context.Context, q querier, row taskRow, chans map[string]channelRow, can readFn, now time.Time, deps []DependencyView) (TaskView, error) {
 	eff := row.effective(now)
 	v := TaskView{ID: eff.ID, BoardID: eff.BoardID, ThreadID: eff.ThreadID, ChannelID: eff.ChannelID, ChannelPath: chanByID(chans, eff.ChannelID).Path,
-		Title: eff.Title, OwnerActorID: eff.Owner, AssigneeActorID: eff.Assignee, CreatedByActorID: eff.CreatedBy, Origin: eff.Origin,
+		DirectActionRequired: eff.DirectActionRequired, Title: eff.Title, OwnerActorID: eff.Owner, AssigneeActorID: eff.Assignee, CreatedByActorID: eff.CreatedBy, Origin: eff.Origin,
 		State: eff.State, Revision: eff.Revision, BriefRevision: eff.BriefRevision, Epoch: eff.Epoch, RetryCount: eff.RetryCount,
 		Block: nullJSON(eff.Block), Outcome: nullJSON(eff.Outcome), RootRedacted: eff.RootRedactedAt != nil,
 		CreatedAt: eff.CreatedAt, UpdatedAt: eff.UpdatedAt, StateChangedAt: eff.StateChangedAt}
@@ -343,7 +345,13 @@ func projectTaskJSON(raw json.RawMessage, can readFn) json.RawMessage {
 			return b
 		}
 		projectTaskView(&v, can)
-		return jsonOf(v)
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(b, &fields); err != nil {
+			return b
+		}
+		fields["dependencies"] = jsonOf(v.Dependencies)
+		fields["unreadable_dependencies_pending"] = jsonOf(v.UnreadableDependenciesPending)
+		return jsonOf(fields)
 	}
 	if _, isTask := m["dependencies"]; isTask {
 		return projectTask(raw)
@@ -428,9 +436,9 @@ func (b *btx) storedRootLabels(rootMessageID string) (map[string]string, error) 
 // saveTask writes every mutable column of the row.
 func (b *btx) saveTask(t *taskRow) error {
 	_, err := b.Exec(b.ctx, `UPDATE tasks SET owner_actor_id=$2, assignee_actor_id=$3, state=$4, revision=$5, epoch=$6, retry_count=$7,
-		brief_revision=$8, current_claim_id=$9, claim_expires_at=$10, block=$11, outcome=$12, root_redacted_at=$13, updated_at=$14, state_changed_at=$15
+		brief_revision=$8, current_claim_id=$9, claim_expires_at=$10, block=$11, outcome=$12, root_redacted_at=$13, updated_at=$14, state_changed_at=$15, direct_action_required=$16
 		WHERE id=$1`, t.ID, t.Owner, t.Assignee, t.State, t.Revision, t.Epoch, t.RetryCount, t.BriefRevision, t.CurrentClaimID, t.ClaimExpiresAt,
-		rawOrNil(t.Block), rawOrNil(t.Outcome), t.RootRedactedAt, t.UpdatedAt, t.StateChangedAt)
+		rawOrNil(t.Block), rawOrNil(t.Outcome), t.RootRedactedAt, t.UpdatedAt, t.StateChangedAt, t.DirectActionRequired)
 	return err
 }
 

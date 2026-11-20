@@ -286,6 +286,10 @@ try {
     T.holdTask='task_work'; T.heldTasks=[];
     const st=createStore({api,boardId:'brd_test',onChange:()=>changes++,onUnauthorized:()=>unauthorized++,onStatus:s=>{if(s==='live')live++;}});
     await wait(()=>T.heldTasks.length===1);
+    if (!st.gated({state:'blocked',direct_action_required:true,thread_id:'thr_ops'})) throw Error('flagged gate without label not recognized');
+    st.S.threads.set('thr_label_gate',{labels:{gate:'pending'}});
+    if (st.gated({state:'blocked',direct_action_required:false,thread_id:'thr_label_gate'})) throw Error('label alone counted as a gate');
+    if (st.gated({state:'ready',direct_action_required:true,thread_id:'thr_ops'})) throw Error('unblocked task counted as pending gate');
     T.resync=true; const posts=T.posts; await wait(()=>T.posts>posts && T.heldTasks.length===2);
     // The old request errors after a new-generation request for the same ID
     // starts. Its catch must not log out, nor its finally clear the new read.

@@ -108,11 +108,11 @@ ADR-0016. They use only the public HTTP API through `sdk/go/yak`
 
 | Command | API |
 |---|---|
-| `task create CHANNEL --title T [--text X] [--set-label k=v] [--assignee A] [--depends-on ID]` | `POST …/tasks` with `thread` |
-| `task convert THREAD [--assignee A] [--depends-on ID]` | `POST …/tasks` with `thread_id` |
+| `task create CHANNEL --title T [--text X] [--set-label k=v] [--assignee A] [--depends-on ID] [--direct-action-required[=false]]` | `POST …/tasks` with `thread` |
+| `task convert THREAD [--assignee A] [--depends-on ID] [--direct-action-required[=false]]` | `POST …/tasks` with `thread_id` |
 | `task show ID` | `GET …/tasks/{id}` (effective view) |
 | `task list [--channel] [--subtree] [--state S]… [--assignee A\|me\|none] [--owner A\|me] [--label k\|k:v]…` | `GET …/tasks` (follows page tokens; NDJSON with `--json`) |
-| `task edit ID --if-revision R [--title] [--owner]` | `PATCH …/tasks/{id}` |
+| `task edit ID --if-revision R [--title] [--owner] [--direct-action-required[=false]]` | `PATCH …/tasks/{id}` |
 | `task brief ID [--revision N \| --list]` | `GET …/briefs[/{revision}]` (default: current revision) |
 | `task brief ID --set --text X --reason R --if-revision R` | `POST …/briefs` (blocks the task, revokes any claim) |
 | `task redact-root ID --if-root-revision R --reason R` | `POST …/root-redaction` |
@@ -319,3 +319,9 @@ Other 409, 412, and 428 problems still use 5.
 The runner provides both `YAK_*` claim metadata and matching `ABBY_*` aliases
 to child commands. Both result-file variables name the same file. It removes
 inherited claim proofs and stale claim metadata from both namespaces.
+
+Task creation and conversion default `direct_action_required` to false.
+`task edit --direct-action-required=false` explicitly clears it; omitting
+the flag preserves its value. Batch and plan JSON accept the same boolean
+on each task item. Task text and JSON views show the flag. Flagged reopen
+creates a fresh block and preserves the flag (DLG-099).

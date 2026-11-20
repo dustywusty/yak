@@ -1059,7 +1059,8 @@
             "type": "string",
             "enum": [
               "title",
-              "owner_actor_id"
+              "owner_actor_id",
+              "direct_action_required"
             ]
           },
           "minItems": 1
