@@ -138,6 +138,30 @@ export function operatorFixture() {
     if(['PUT','DELETE'].includes(m)&&p===`/v1/boards/${B}/messages/root/reactions/like`)return json({});
     return json({code:'not_found'},404);
   };
+  // OP17-026: hold the first confirmation response before committing it.
+  T.enableConfirmationDelay = () => {
+    if (T.confirmationDelayEnabled) return;
+    T.confirmationDelayEnabled = true;
+    const base = window.fetch;
+    window.fetch = async (url, opts = {}) => {
+      const path = new URL(url, location.href).pathname;
+      if (T.delayConfirmation && (opts.method || 'GET') !== 'GET' &&
+          !path.includes('/snapshots') && path !== '/v1/boards/brd_test/tasks/t/claims/q/renew') {
+        T.delayConfirmation = false;
+        const write = {method:opts.method,path,body:opts.body ? JSON.parse(opts.body) : null,headers:opts.headers};
+        T.writes.push(write);
+        await new Promise(resolve => T.resolveConfirmation = resolve);
+        T.resolveConfirmation = null;
+        if (T.rejectConfirmation) return json({code:'synthetic_confirmation_rejection'},412);
+        // The base transport captures the committed request exactly once.
+        T.writes.splice(T.writes.indexOf(write), 1);
+      }
+      const response = await base(url, opts);
+      if ((opts.method || 'GET') === 'GET' && path === '/v1/boards/brd_test/tasks/t' && response.ok)
+        T.confirmationTaskRead = await response.clone().json();
+      return response;
+    };
+  };
   // Fault only the next captured operator write, after its synthetic commit.
   T.enableRenewTest = () => {
     T.testLease = 30; T.mono = 0; T.renewTimers = [];

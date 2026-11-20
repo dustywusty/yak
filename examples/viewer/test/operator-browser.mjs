@@ -65,7 +65,8 @@ const count=()=>ev('window.__op.writes.length');
 const open=async()=>{await ev("document.querySelector('#operator-tools').click()");await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");await ev("{const sel=document.querySelector('.op-workspace select[aria-label=Thread]');sel.value='th';sel.dispatchEvent(new Event('change'));}");await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')")};
 const confirm=async(name)=>{await until("!!document.querySelector('.op-confirm[open]')");await ev(`(()=>{const b=[...document.querySelectorAll('.op-confirm button')].find(b=>b.textContent===${JSON.stringify(name)});if(!b)throw new Error('missing named confirm');b.click();b.click();})()`);await sleep(150)};
 const cancel=async()=>click('Cancel','.op-confirm');
-async function matrix(action,named=action,setup=''){
+async function matrix(action,named=action,setup='',report=check,reject=false){
+ const check=report;
  if(setup)await ev(setup);
  const n=await count();
  await ev("for(const input of document.querySelectorAll('.op-workspace input,.op-workspace textarea')){input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));}");check(`${action}: Enter in text fields sends nothing`,await count()===n);
@@ -77,8 +78,72 @@ async function matrix(action,named=action,setup=''){
  await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
  check(`${action}: Enter on Cancel sends nothing`,await count()===n);
  if(await ev("!!document.querySelector('.op-confirm[open]')"))await cancel();
- await click(action);await confirm(named);check(`${action}: explicit confirmation writes`,await count()>n);
- await until("!document.querySelector('.op-pending')?.textContent.includes('Sending')");
+ const receipts=await ev("document.querySelectorAll('.op-pending').length");
+ await ev(`window.__op.enableConfirmationDelay();window.__op.delayConfirmation=true;window.__op.rejectConfirmation=${reject}`);
+ await click(action);await until("!!document.querySelector('.op-confirm[open]')");
+ const expected=await op17026ExpectedWrites(action);
+ await confirm(named);
+ await until("typeof window.__op.resolveConfirmation==='function'");
+ check(`${action}: double click sends only first step before success`,await op17026Matches(n,expected.slice(0,1)));
+ check(`${action}: one pending receipt while response delayed`,await ev(`document.querySelectorAll('.op-pending').length===${receipts+1} && [...document.querySelectorAll('.op-pending')].at(-1).textContent==='Sending…'`));
+ await ev("window.__op.resolveConfirmation()");
+ await until(`[...document.querySelectorAll('.op-pending')].length===${receipts+1} && ![...document.querySelectorAll('.op-pending')].at(-1).textContent.includes('Sending')`);
+ check(`${action}: explicit confirmation writes exact ordered intent`,await op17026Matches(n,reject?expected.slice(0,1):expected));
+ check(`${action}: one receipt after settlement`,await ev(`document.querySelectorAll('.op-pending').length===${receipts+1}`));
+}
+// Independent wire table: fixed fixture values and values read before confirmation.
+async function op17026ExpectedWrites(action) {
+ const read=await ev(`({revision:String(window.__op.confirmationTaskRead?.revision),brief:window.__op.confirmationTaskRead?.brief_revision,gate:window.__op.root.labels.gate,note:document.querySelector('textarea[aria-label="Gate note t"]')?.value || '',title:document.querySelector('input[aria-label^="Task title"]')?.value,text:document.querySelector('textarea[aria-label^="Message"]')?.value,approval:document.querySelector('input[aria-label^="Needs my approval"]')?.checked,assignee:document.querySelector('select[aria-label="Task assignee"]')?.value || null})`);
+ const B='/v1/boards/brd_test', task=B+'/tasks/t';
+ const request=(method,path,body,headers={})=>({method,path,body,headers});
+ const label=value=>request('PATCH',B+'/messages/root/labels',{operations:[{op:'set',key:'gate',value,expect:{value:read.gate}}]});
+ switch(action) {
+  case 'Approve and unblock':return [request('POST',task+'/unblock',{reason:'gate approved'+(read.note?': '+read.note:'')},{'If-Match':'"'+read.revision+'"'}),label('approved')];
+  case 'Request changes':return [request('POST',B+'/threads/th/messages',{text:read.note}),label('changes_requested')];
+  case 'Work on this now (while this tab is open)':return [request('POST',task+'/claims',{lease_seconds:300,expect_brief_revision:read.brief})];
+  case 'Release':return [request('POST',task+'/release',{reason:'released by operator'},{'Yak-Claim-Proof':'fake-secret-proof'})];
+  case 'Assign to myself':return [request('PUT',task+'/assignee',{assignee_actor_id:'a'},{'If-Match':'"'+read.revision+'"'})];
+  case 'Assign / unassign':return [request('PUT',task+'/assignee',{assignee_actor_id:null},{'If-Match':'"'+read.revision+'"'})];
+  case 'Remove approval requirement':case 'Require my approval':return [request('PATCH',task,{direct_action_required:action==='Require my approval'},{'If-Match':'"'+read.revision+'"'})];
+  case 'Create task':return [request('POST',B+'/tasks',{thread:{channel:'ops',title:read.title,text:read.text},assignee_actor_id:read.assignee,direct_action_required:read.approval})];
+  default:throw new Error('OP17-026 missing expected request for '+action);
+ }
+}
+async function op17026Matches(before,expected) {
+ const writes=await ev(`window.__op.writes.slice(${before}).filter(w=>!(w.method==='POST' && w.path==='/v1/boards/brd_test/tasks/t/claims/q/renew'))`);
+ const keys=writes.map(w=>w.headers?.['Idempotency-Key']);
+ const actual=writes.map(w=>({...w,headers:Object.fromEntries(Object.entries(w.headers || {}).filter(([k])=>/^if-/i.test(k) || k.toLowerCase()==='yak-claim-proof'))}));
+ const canonical=value=>JSON.stringify(value,(_key,v)=>v && !Array.isArray(v) && typeof v==='object'?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
+ const ok=canonical(actual)===canonical(expected) && keys.every(k=>typeof k==='string' && k.length>=22) && new Set(keys).size===expected.length;
+ if(!ok)console.log('OP17-026 wire mismatch',JSON.stringify({actual,expected,keyCount:keys.length,uniqueKeys:new Set(keys).size}));
+ return ok;
+}
+async function op17026ConfirmationCase() {
+ let assertions=0,fixtures=0;
+ const assert=(name,ok,detail='')=>{assertions++;check(`OP17-026: ${name}`,ok,detail)};
+ const variants=[
+  ['Approve and unblock','Approve and unblock'],
+  ['Request changes','Request changes'],
+  ['Work on this now (while this tab is open)','Claim'],['Release','Release'],
+  ['Assign to myself','Assign to @alice'],['Assign / unassign','Unassign'],
+  ['Create task','Create task',false],['Create task','Create task',true],
+  ['Require my approval','Require my approval'],['Remove approval requirement','Remove approval requirement'],
+  ['Approve and unblock','Approve and unblock',null,true],['Request changes','Request changes',null,true],
+ ];
+ for(const [action,named,gate,reject=false] of variants) {
+  await freshIdentityFixture(`window.__op.task.state=${JSON.stringify(action.includes('Work on') || action==='Release'?'ready':'blocked')};window.__op.task.direct_action_required=${action!=='Require my approval'};window.__op.task.assignee_actor_id=${action==='Assign / unassign'?"'a'":'null'};`);fixtures++;
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-confirm-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");await open();
+   if(action==='Release') {await click('Work on this now (while this tab is open)');await confirm('Claim');await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");}
+   if(action==='Assign / unassign')await ev("document.querySelector('select[aria-label=\"New assignee\"]').value=''");
+   await matrix(action,named,`{const note=document.querySelector('textarea[aria-label="Gate note t"]');if(note)note.value='Please change this';}document.querySelector('input[aria-label^="Task title"]').value='Confirmation task';document.querySelector('textarea[aria-label^="Message"]').value='Confirmation brief';document.querySelector('input[aria-label^="Needs my approval"]').checked=${!!gate}`,assert,reject);
+   if(reject)assert(`${action}: rejected first step never updates label`,await ev("window.__op.root.labels.gate==='pending' && !document.querySelector('.op-receipts').textContent.includes('Saved.')"));
+  } finally {await ev("window.__op.resolveConfirmation?.();document.querySelector('#operator-logout')?.click()");}
+ }
+ assert('all required variants executed',fixtures===12 && assertions>=120);
+ assert('no browser exceptions',errors.length===0,errors.join(' | '));
+ console.log(`OP17-026 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
 // Each named regression owns a fresh in-page fixture and its write capture.
 async function freshIdentityFixture(setup = '') {
@@ -1230,7 +1295,7 @@ async function op17044WireCase() {
  if(assertions!==10)throw new Error(`OP17-044 executed ${assertions}, expected 10`);
  console.log(`OP17-044 executed ${assertions} assertions across two fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
