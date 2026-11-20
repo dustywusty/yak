@@ -1145,7 +1145,32 @@ async function op17040IrcModeCase() {
  if (assertions!==13) throw new Error(`OP17-040 expected 13 assertions, executed ${assertions}`);
  console.log(`OP17-040 executed ${assertions} assertions across operator login and read-only remount`);
 }
-const operatorCases = new Map([['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17044WireCase() {
+ let assertions=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-044: ${name}`,ok)};
+ for(const gate of [false,true]) {
+  await freshIdentityFixture();
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-wire-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");await open();
+   await ev(`document.querySelector('input[aria-label^="Task title"]').value='Wire task';document.querySelector('textarea[aria-label^="Message"]').value='Wire brief';document.querySelector('select[aria-label="Task assignee"]').value=${JSON.stringify(gate?'a':'')};document.querySelector('input[aria-label^="Needs my approval"]').checked=${gate}`);
+   const before=await count();await click('Create task');await confirm('Create task');
+   assert(`create ${gate} single write`,await count()===before+1);
+   assert(`create ${gate} exact nested body`,await ev(`JSON.stringify(window.__op.writes.at(-1).body)===JSON.stringify({thread:{channel:'ops',title:'Wire task',text:'Wire brief'},assignee_actor_id:${JSON.stringify(gate?'a':null)},direct_action_required:${gate}})`));
+   assert(`create ${gate} created task/thread/root`,await ev(`window.__op.created?.task.title==='Wire task' && window.__op.created.task.direct_action_required===${gate} && window.__op.created.thread.channel_path==='ops' && window.__op.created.root.text==='Wire brief'`));
+   assert(`create ${gate} successful receipt`,await ev("document.querySelector('.op-receipts').textContent.includes('Saved.')"));
+   const statuses=await ev(`(async()=>{const send=(method,path,body,headers={})=>fetch('/v1/boards/brd_test/'+path,{method,body:JSON.stringify(body),headers}).then(r=>r.status);return Promise.all([
+    send('POST','tasks',{invalid_thread:{channel:'ops',title:'bad',text:'bad'},assignee_actor_id:null,direct_action_required:false}),
+    send('POST','tasks/t/release',{reason:'release'}),
+    send('POST','tasks/t/claims/q/renew',{lease_seconds:1},{'Yak-Claim-Proof':'synthetic'}),
+    send('PATCH','tasks/t',{direct_action_required:'true'}),send('POST','unknown',{}),send('PUT','tasks',{})]);})()`);
+   assert(`fixture ${gate} rejects malformed writes`,JSON.stringify(statuses)==='[400,428,400,400,404,405]');
+  } finally {await ev("document.querySelector('#operator-logout')?.click()");}
+ }
+ if(assertions!==10)throw new Error(`OP17-044 executed ${assertions}, expected 10`);
+ console.log(`OP17-044 executed ${assertions} assertions across two fresh fixtures`);
+}
+const operatorCases = new Map([['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

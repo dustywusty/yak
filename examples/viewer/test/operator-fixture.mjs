@@ -66,14 +66,34 @@ export function operatorFixture() {
     if(/\/snapshots\//.test(p))return json(null,204);
     const body=opts.body?JSON.parse(opts.body):null;
     T.writes.push({method:m,path:p,body,headers:opts.headers});
-    if(p.endsWith('/unblock')) {
+    const invalid=()=>json({code:'validation_error'},400);
+    const only=(value,keys)=>value && typeof value==='object' && !Array.isArray(value) && Object.keys(value).every(k=>keys.includes(k));
+    const lease=()=>body?.lease_seconds===undefined || (Number.isInteger(body.lease_seconds) && body.lease_seconds>=15 && body.lease_seconds<=300);
+    if(p===`/v1/boards/${B}/tasks`) {
+      if(m!=='POST')return json({code:'method_not_allowed'},405);
+      if(!only(body,['thread','assignee_actor_id','direct_action_required']) ||
+        !only(body.thread,['channel','title','text','labels']) ||
+        !['channel','title','text'].every(k=>typeof body.thread[k]==='string') ||
+        !body.thread.channel.trim() || !body.thread.title.trim() ||
+        !(body.assignee_actor_id===null || actors.some(a=>a.id===body.assignee_actor_id)) ||
+        typeof body.direct_action_required!=='boolean')return invalid();
+      const id=`created-${(T.createdCount=(T.createdCount||0)+1)}`;
+      const createdThread={...thread,id:`th-${id}`,root_message_id:`root-${id}`,title:body.thread.title,channel_path:body.thread.channel,labels:{},task_id:id};
+      const createdRoot={...root,id:`root-${id}`,thread_id:createdThread.id,channel_path:body.thread.channel,text:body.thread.text,labels:{}};
+      const createdTask={...task,id,thread_id:createdThread.id,title:body.thread.title,channel_path:body.thread.channel,
+        state:'ready',block:null,current_claim:null,revision:1,assignee_actor_id:body.assignee_actor_id,direct_action_required:body.direct_action_required};
+      T.created={task:createdTask,thread:createdThread,root:createdRoot};return json(createdTask,201);
+    }
+    if(p===`/v1/boards/${B}/tasks/t/unblock`) {
+      if(m!=='POST')return json({},405);
       T.seenKeys.push(opts.headers['Idempotency-Key']);
       if(T.conflict){T.conflict=false;task.revision++;task.assignee_actor_id='bot';return json({code:'revision_conflict',revision:task.revision},412)}
       if(task.state==='blocked'){task.state='ready';task.revision++;T.events.push({id:'approved',type:'task.unblocked',actor_id:'a',credential_id:'cred_test',recorded_at:iso(),payload:{task:{...task},reason:body.reason}});}
       if(T.dropUnblock){T.dropUnblock=false;throw new TypeError('dropped response')}
       return json(task);
     }
-    if(p.endsWith('/labels')) {
+    if(p===`/v1/boards/${B}/messages/root/labels`) {
+      if(m!=='PATCH')return json({},405);
       if(T.labelFault) {
         if(T.deferLabel) await new Promise(resolve=>T.resolveLabel=resolve);
         if(T.labelFault.status===0) throw new TypeError('synthetic label network uncertainty');
@@ -82,13 +102,26 @@ export function operatorFixture() {
       if(T.failLabel){T.failLabel--;return json({code:'revision_conflict',current:'changes_requested'},412)}
       for(const op of body.operations) {if(op.op==='unset')delete root.labels[op.key];else root.labels[op.key]=op.value;}return json(root);
     }
-    if(p.endsWith('/claims')){task.state='claimed';task.current_claim={id:T.claimId || 'q',actor_id:'a',lease_seconds:T.testLease || 300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:'fake-secret-proof',task,brief:{revision:1}})}
-    if(p.endsWith('/renew')) { if(T.deferRenew) await new Promise(resolve=>T.resolveRenew=resolve); return json(T.renewReply || {}, 200); }
-    if(p.endsWith('/release')){task.state='ready';task.current_claim=null;return json(task)}
-    if(p.endsWith('/assignee')){task.assignee_actor_id=body.assignee_actor_id;task.revision++;return json(task)}
-    if(m==='PATCH'&&p.endsWith('/tasks/t')){Object.assign(task,body);task.revision++;return json(task)}
-    if(p.endsWith('/credentials/cred_test')){T.revoked=true;return json(null,204)}
-    return json({});
+    if(p===`/v1/boards/${B}/tasks/t/claims`){if(m!=='POST')return json({},405);if(!only(body,['lease_seconds','expect_brief_revision'])||!lease())return invalid();task.state='claimed';task.current_claim={id:T.claimId || 'q',actor_id:'a',lease_seconds:T.testLease || 300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:'fake-secret-proof',task,brief:{revision:1}})}
+    if(p===`/v1/boards/${B}/tasks/t/claims/${encodeURIComponent(T.claimId || 'q')}/renew`) {
+      if(m!=='POST')return json({},405);
+      if(!opts.headers?.['Yak-Claim-Proof'])return json({code:'precondition_required'},428);
+      if(!only(body,['lease_seconds'])||!lease())return invalid();
+      if(T.deferRenew) await new Promise(resolve=>T.resolveRenew=resolve);
+      return json(T.renewReply || {id:task.current_claim?.id || 'q',task_id:task.id,actor_id:'a',execution_id:'synthetic-exec',run_id:null,
+        epoch:1,brief_revision:task.brief_revision,status:'active',revision:2,lease_seconds:body.lease_seconds || 300,
+        acquired_at:iso(),expires_at:new Date(Date.now()+(body.lease_seconds || 300)*1000).toISOString(),ended_at:null,end_recorded_at:null},200);
+    }
+    if(p===`/v1/boards/${B}/tasks/t/release`){if(m!=='POST')return json({},405);if(!opts.headers?.['Yak-Claim-Proof'])return json({code:'precondition_required'},428);if(!only(body,['reason']))return invalid();task.state='ready';task.current_claim=null;return json(task)}
+    if(p===`/v1/boards/${B}/tasks/t/assignee`){if(m!=='PUT')return json({},405);task.assignee_actor_id=body.assignee_actor_id;task.revision++;return json(task)}
+    if(p===`/v1/boards/${B}/tasks/t`){if(m!=='PATCH')return json({},405);if(!only(body,['direct_action_required'])||typeof body.direct_action_required!=='boolean')return invalid();Object.assign(task,body);task.revision++;return json(task)}
+    if(p==='/v1/credentials/cred_test'){if(m!=='DELETE')return json({},405);T.revoked=true;return json(null,204)}
+    // Explicit disposable composer/edit/reaction routes used by the existing matrix.
+    if(m==='POST'&&p===`/v1/boards/${B}/threads/th/messages`)return json({...root,id:'reply',is_root:false,text:body.text});
+    if(m==='POST'&&p===`/v1/boards/${B}/threads`)return json({...thread,id:'new-thread',title:body.title,channel_path:body.channel});
+    if(m==='PATCH'&&p===`/v1/boards/${B}/messages/reply`)return json({...root,id:'reply',is_root:false,text:body.text});
+    if(['PUT','DELETE'].includes(m)&&p===`/v1/boards/${B}/messages/root/reactions/like`)return json({});
+    return json({code:'not_found'},404);
   };
   // Fault only the next captured operator write, after its synthetic commit.
   T.enableRenewTest = () => {
@@ -336,9 +369,14 @@ export function operatorFixture() {
       const mapped = other ? u.href.replace('/boards/brd_other','/boards/brd_test').replaceAll('th_other','th').replaceAll('t_other','t') : u.href;
       // Capture actual write destinations, without translating them to board A.
       if ((opts.method || 'GET') !== 'GET' && !u.pathname.includes('/snapshots')) {
-        T.writes.push({method:opts.method,path:u.pathname,body:opts.body ? JSON.parse(opts.body) : null,headers:opts.headers});
-        if (T.pendingFailurePath === u.pathname) { T.pendingFailurePath = null; return json({code:'synthetic_ambiguous_failure'},503); }
-        return json({});
+        if (T.pendingFailurePath === u.pathname) {
+          T.writes.push({method:opts.method,path:u.pathname,body:opts.body ? JSON.parse(opts.body) : null,headers:opts.headers});
+          T.pendingFailurePath = null; return json({code:'synthetic_ambiguous_failure'},503);
+        }
+        const before=T.writes.length;
+        const response=await base(mapped.replaceAll('reply_other','reply'),opts);
+        if(T.writes.length>before)T.writes.at(-1).path=u.pathname;
+        return response;
       }
       const response = await base(mapped, opts);
       if (!response.ok || response.status === 204) return response;
