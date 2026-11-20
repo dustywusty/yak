@@ -7,7 +7,7 @@ const field = (label, node) => h('label', {}, label, node);
 // A shared, explicit workspace keeps the source skins and their lifecycle intact.
 // Draft nodes survive live store redraws, navigation and conflict refreshes.
 export function createOperatorUI({ session, read, route }) {
-  let panel, content, status, current, opener, sequence = 0;
+  let panel, content, status, current, opener, refresh, sequence = 0;
   const drafts = new Map();
   const receipts = h('div', { class: 'op-receipts' });
   const guards = new WeakMap();
@@ -215,6 +215,7 @@ export function createOperatorUI({ session, read, route }) {
     const version = ++sequence;
     dismissConfirmations(); panel.querySelector('.op-channel').replaceChildren();
     const snapshot = current = Object.freeze({ ...current, channel, thread: null, task: null });
+    refresh.disabled = false;
     const B = snapshot.B; content.replaceChildren('Reading current permissions and state…');
     try {
       const [perm, threads, actors] = await Promise.all([read('GET', `${B}/permissions`, { channel }), all(`${B}/threads`, 'threads', { channel, subtree: false }), all(`${B}/actors`, 'actors')]);
@@ -243,6 +244,7 @@ export function createOperatorUI({ session, read, route }) {
   async function loadBoard(id, channel, thread) {
     const version = ++sequence;
     dismissConfirmations();
+    refresh.disabled = true;
     content.replaceChildren('Reading board…'); panel.querySelector('.op-channel').replaceChildren();
     const snapshot = current = Object.freeze({ B: `/v1/boards/${enc(id)}`, generation: session.generation, actors: [], permissions: [] });
     try {
@@ -259,7 +261,9 @@ export function createOperatorUI({ session, read, route }) {
     if (!session.active || session.ending) return;
     close(); opener = document.activeElement;
     status = h('p', { role: 'status' }); content = h('div', {});
-    panel = h('dialog', { class: 'op-workspace', 'aria-label': 'Operator tools' }, h('h2', {}, 'Operator tools'), button('Close', close), status, h('div', { class: 'op-board' }), h('div', { class: 'op-channel' }), button('Refresh permissions and state', () => current?.channel && loadChannel(current.channel, current.thread?.id)), content, receipts);
+    refresh = button('Refresh permissions and state', () => current?.channel && loadChannel(current.channel, current.thread?.id));
+    refresh.disabled = true;
+    panel = h('dialog', { class: 'op-workspace', 'aria-label': 'Operator tools' }, h('h2', {}, 'Operator tools'), button('Close', close), status, h('div', { class: 'op-board' }), h('div', { class: 'op-channel' }), refresh, content, receipts);
     const openedPanel = panel, version = sequence;
     panel.addEventListener('keydown', (e) => e.stopPropagation());
     panel.addEventListener('cancel', (e) => { e.preventDefault(); close(); });

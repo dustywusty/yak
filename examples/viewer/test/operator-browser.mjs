@@ -350,6 +350,63 @@ async function boardSwitchCase() {
  assert('required variants executed nonzero assertions',assertions>=40);
  console.log(`OP17-005 executed ${assertions} assertions across four fresh board transitions and six fresh pending-recovery fixtures`);
 }
+async function refreshDiscoveryCase() {
+ let assertions = 0;
+ const assert = (name, ok) => { assertions++; check(`OP17-007: ${name}`, ok); };
+ const selectBoard = async id => ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ for (const variant of ['initial', 'switch', 'failed', 'empty']) {
+  await freshIdentityFixture('window.__op.enableBoardSwitch();');
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-discovery-refresh';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");
+   await ev(`window.__op.deferBoard=true;window.__op.failBoard=${variant === 'failed'};window.__op.emptyBoard=${variant === 'empty'};`);
+   if (variant === 'initial') {
+    await ev("window.dispatchEvent(new CustomEvent('yak-operator-open',{detail:{board:'brd_other'}}))");
+   } else {
+    await ev("document.querySelector('#operator-tools').click()");
+    await until("!!document.querySelector('.op-workspace select[aria-label=Channel]')");
+    assert(`${variant}: A starts with write controls`, await ev("!!document.querySelector('.op-workspace [data-op-write]')"));
+    await selectBoard('brd_other');
+   }
+   await until('window.__op.discoveryStarted && typeof window.__op.resolveBoard==="function"');
+   await ev("window.__refresh=[...document.querySelectorAll('.op-workspace button')].find(b=>b.textContent==='Refresh permissions and state')");
+   assert(`${variant}: Refresh disabled during discovery`, await ev('window.__refresh.disabled'));
+   const reads = await ev('window.__op.boardReads.length');
+   // Native click and direct listener dispatch both must leave discovery intact.
+   await ev("window.__refresh.click();window.__refresh.dispatchEvent(new Event('click'))"); await sleep(120);
+   assert(`${variant}: Refresh sends no read while channel is unresolved`, await ev('window.__op.boardReads.length') === reads);
+   assert(`${variant}: no old channel or writes during discovery`, await ev("!document.querySelector('.op-workspace select[aria-label=Channel]') && !document.querySelector('.op-workspace [data-op-write]')"));
+   await ev('window.__op.deferBoard=false;window.__op.resolveBoard()');
+   if (variant === 'failed' || variant === 'empty') {
+    await until(variant === 'failed' ? "document.querySelector('.op-workspace [role=status]').textContent.includes('synthetic_discovery_failure')" : "document.querySelector('.op-workspace [role=status]').textContent.includes('No readable channel')");
+    assert(`${variant}: Refresh stays disabled and old writes stay absent`, await ev("window.__refresh.disabled && !document.querySelector('.op-workspace [data-op-write]')"));
+    const settled = await ev('window.__op.boardReads.length');
+    await ev("window.__refresh.dispatchEvent(new Event('click'))"); await sleep(80);
+    assert(`${variant}: handler remains inert after discovery`, await ev('window.__op.boardReads.length') === settled);
+    assert(`${variant}: board selector remains usable`, await ev("!document.querySelector('.op-workspace select[aria-label=Board]').disabled"));
+    await selectBoard('brd_test');
+    await until("document.querySelector('.op-workspace select[aria-label=Channel]')?.value==='ops'");
+    assert(`${variant}: selecting another board restores Refresh`, await ev('!window.__refresh.disabled'));
+   } else {
+    await until("document.querySelector('.op-workspace select[aria-label=Channel]')?.value==='other'");
+    assert(`${variant}: discovery survives Refresh and restores button`, await ev("!window.__refresh.disabled && document.querySelector('.op-workspace select[aria-label=Board]').value==='brd_other'"));
+    const before = await ev("window.__op.boardReads.filter(p=>p.startsWith('/v1/boards/brd_other/permissions?')).length");
+    await click('Refresh permissions and state');
+    await until("document.querySelector('.op-workspace select[aria-label=Channel]')?.value==='other'");
+    assert(`${variant}: ready Refresh rereads B permissions`, await ev("window.__op.boardReads.filter(p=>p.startsWith('/v1/boards/brd_other/permissions?')).length") === before + 1);
+    assert(`${variant}: refreshed B channel and composer are retained`, await ev("document.querySelector('.op-workspace select[aria-label=Channel]').value==='other' && !!document.querySelector('textarea[aria-label*=brd_other]')"));
+   }
+   assert(`${variant}: permissions and thread lists always include a resolved channel`, await ev("window.__op.boardReads.filter(p=>/\\/(permissions|threads)\\?/.test(p)).every(p=>['ops','other'].includes(new URL(p,location.origin).searchParams.get('channel')))"));
+   assert(`${variant}: regression sent no writes`, await count() === 0);
+  } finally {
+   await ev("if(document.body.dataset.operator==='true')document.querySelector('#operator-logout').click()");
+   await until("!document.body.dataset.operator");
+  }
+ }
+ assert('no browser exceptions', errors.length === 0);
+ assert('all required variants executed assertions', assertions >= 35);
+ console.log(`OP17-007 executed ${assertions} assertions across four fresh discovery fixtures`);
+}
 async function openRaceCase() {
  let assertions = 0;
  const assert = (name, ok) => { assertions++; check(`OP17-006: ${name}`, ok); };
@@ -393,7 +450,7 @@ async function openRaceCase() {
  if (!assertions) throw new Error('OP17-006 executed no assertions');
  console.log(`OP17-006 executed ${assertions} assertions across four fresh initial-open fixtures`);
 }
-const operatorCases = new Map([['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

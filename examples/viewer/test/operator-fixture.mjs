@@ -116,7 +116,8 @@ export function operatorFixture() {
       if (other && u.pathname.endsWith('/channels')) {
         T.discoveryStarted = true;
         if (T.deferBoard) await new Promise(resolve => T.resolveBoard = resolve);
-        if (T.failBoard) return json({code:'synthetic_discovery_failure'},503);
+        if (T.failBoard) return json({code:'synthetic_discovery_failure',detail:'synthetic_discovery_failure'},503);
+        if (T.emptyBoard) return json({channels:[]});
       }
       const mapped = other ? u.href.replace('/boards/brd_other','/boards/brd_test').replaceAll('th_other','th').replaceAll('t_other','t') : u.href;
       // Capture actual write destinations, without translating them to board A.
