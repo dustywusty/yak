@@ -817,7 +817,9 @@ func TestSpecLiveResponsesP2(t *testing.T) {
 		return r
 	}
 	step("PUT /tasks/{id}/assignee", "SetAssigneeRequest", "PUT", "/assignee", J{"assignee_actor_id": worker.id}, 200, "Task", withIfMatch(etag))
-	step("PUT /tasks/{id}/dependencies", "SetDependenciesRequest", "PUT", "/dependencies", J{"task_ids": []string{t1}}, 200, "Task", withIfMatch(etag))
+	// t2 already depends on t1; replacing with the empty set is a real change
+	// (an unchanged set emits no event).
+	step("PUT /tasks/{id}/dependencies", "SetDependenciesRequest", "PUT", "/dependencies", J{"task_ids": []string{}}, 200, "Task", withIfMatch(etag))
 	step("PATCH /tasks/{id}", "PatchTaskRequest", "PATCH", "", J{"title": "Task two (renamed)"}, 200, "Task", withIfMatch(etag))
 	step("POST /tasks/{id}/block", "BlockTaskRequest", "POST", "/block", J{"reason": "schema check"}, 200, "Task", newKey())
 	step("POST /tasks/{id}/unblock", "UnblockTaskRequest", "POST", "/unblock", J{}, 200, "Task", newKey())

@@ -5,6 +5,7 @@ package conformance
 // skips unless GET /v1/server lists the abby.p2.tasks profile.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -525,8 +526,26 @@ func TestCT012AtomicBatchRejection(t *testing.T) { // BATCH-001..005, DEP-001, D
 		if !found {
 			t.Fatalf("%s: want code %s in problem or errors: %s", name, wantCode, r.Raw)
 		}
-		if strings.Contains(string(r.Raw), hid) {
-			t.Fatalf("%s: problem leaks an unreadable task ID", name)
+		// Echoing the caller's own input reveals nothing; what must not happen
+		// is a hidden ID being answered differently from an unknown one.
+		if name == "hidden prerequisite" || name == "cross-board prerequisite" {
+			norm := func(raw []byte, id string) string {
+				var m J
+				_ = json.Unmarshal(raw, &m)
+				delete(m, "request_id")
+				b, _ := json.Marshal(m)
+				return strings.ReplaceAll(string(b), id, "<ID>")
+			}
+			missing := "task_missing_" + rnd()
+			u := batch(item("ok", "plan"), item("a", "plan", J{"task_id": missing}))
+			sent := hid
+			if name == "cross-board prerequisite" {
+				sent = xid
+				u = batch(item("a", "plan", J{"task_id": missing}))
+			}
+			if norm(r.Raw, sent) != norm(u.Raw, missing) {
+				t.Fatalf("%s: answered differently from an unknown ID:\n%s\n%s", name, r.Raw, u.Raw)
+			}
 		}
 		nothingCreated(name)
 	}
@@ -586,6 +605,15 @@ func TestCT012AtomicBatchRejection(t *testing.T) { // BATCH-001..005, DEP-001, D
 		t.Fatalf("batch refs resolved to %v, want %v", deps, want)
 	}
 	evs, _ := f.since(t, m, cur)
+	// Channels a batch creates on first post are not part of BATCH-004's
+	// pair ordering; drop them before checking the pairs.
+	kept := evs[:0]
+	for _, e := range evs {
+		if str(e, "type") != "channel.created" {
+			kept = append(kept, e)
+		}
+	}
+	evs = kept
 	wantTypes(t, "batch events", evs, "thread.created", "task.created", "thread.created", "task.created", "thread.created", "task.created")
 	for i := 0; i < 3; i++ {
 		pl := obj(evs[2*i+1], "payload")
@@ -907,6 +935,9 @@ func TestCT029LifecycleWalk(t *testing.T) { // TASK-020..026, TASK-030..038, TAS
 	out := newActor(t, "out")
 	f.grant(t, out, "elsewhere", "allow", "read")
 	ss := func(v J) string { return str(v, "state") }
+	// Create the channel first so L1 emits exactly thread.created and
+	// task.created (a first post into a new channel adds channel.created).
+	f.channel(t, m, "walk", "inherited")
 	cur := f.head(t, m)
 
 	var tk J
