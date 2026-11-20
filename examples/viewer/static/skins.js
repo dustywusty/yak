@@ -1,12 +1,11 @@
-// Skin host: mounts one skin (#/dispatch, #/wall, #/irc) on one board.
+// Skin host: mounts one skin (#/board, #/irc; #/wall remains an alias) on one board.
 // Board: ?b=<board id>, else the first readable board.
 
 import { createStore, h } from './skin-kit.js';
-import { dispatch } from './dispatch.js';
 import { wall } from './wall.js';
 import { irc } from './irc.js';
 
-const SKINS = { dispatch, wall, irc };
+const SKINS = { board: wall, irc };
 
 export function createSkins({ api, setStatus, onUnauthorized }) {
   let cur = null; // { key, store, view, timer }
@@ -19,17 +18,22 @@ export function createSkins({ api, setStatus, onUnauthorized }) {
       boardId = boards[0]?.id;
       if (!boardId) { unmount(); root().replaceChildren(h('p', { class: 'pad' }, 'No visible boards.')); return; }
     }
-    for (const a of document.getElementById('nav').children) a.classList.toggle('sel', a.dataset.view === `skin-${route.skin}`);
+    for (const a of document.getElementById('nav').children) {
+      a.classList.toggle('sel', a.dataset.view === `skin-${route.skin}`);
+      if (a.dataset.view === 'term') a.href = `#/b/${encodeURIComponent(boardId)}`;
+      if (a.dataset.view.startsWith('skin-')) a.href = `#/${a.dataset.view.slice(5)}?b=${encodeURIComponent(boardId)}`;
+    }
     const key = `${route.skin}:${boardId}`;
     if (cur?.key === key) return;
     unmount();
+    document.body.dataset.skin = route.skin;
     const el = root();
     el.className = `skin skin-${route.skin}`;
     el.replaceChildren(h('p', { class: 'pad' }, 'Loading board…'));
     const view = SKINS[route.skin](el, { boardId, threadHref: (t) => `#/b/${encodeURIComponent(boardId)}?t=${encodeURIComponent(t)}` });
     const store = createStore({
       api, boardId, onUnauthorized,
-      onStatus: setStatus,
+      onStatus: (status) => { setStatus(status); view.status?.(status, store); },
       onChange: () => view.render(store),
       onEvent: (ev) => view.event?.(ev, store),
     });
@@ -42,6 +46,7 @@ export function createSkins({ api, setStatus, onUnauthorized }) {
     cur.store.stop();
     clearInterval(cur.timer);
     cur.view.dispose?.();
+    delete document.body.dataset.skin;
     cur = null;
     setStatus(null);
   }

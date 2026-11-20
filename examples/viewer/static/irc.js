@@ -5,8 +5,6 @@ import { h, lease, jumpPalette } from './skin-kit.js';
 
 const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
-const MENUS = ['File', 'View', 'Board', 'Commands', 'Window', 'Help'];
-const TOOLS = ['⌁', '▭', '✉', '@', '☑', '⌗', '⎘', 'ⓘ'];
 // Task events that the current task view cannot show later; logged as they arrive.
 const LOGGED = {
   'task.blocked': (p) => `blocked task: ${p.reason ?? ''}`, 'task.unblocked': (p) => `unblocked task: ${p.reason ?? ''}`,
@@ -17,6 +15,10 @@ const LOGGED = {
 export function irc(root, { threadHref }) {
   let tab = null, topicThread = null, palette = null, store = null, leaseEl = null;
   const unread = new Map(), log = [];
+  const chrome = document.querySelector('.top');
+  const chromeHome = document.createComment('viewer navigation');
+  chrome.before(chromeHome);
+  let connection = 'resyncing';
 
   const nick = (st, id) => {
     const a = st.actor(id);
@@ -58,7 +60,7 @@ export function irc(root, { threadHref }) {
     for (const x of out) {
       if (x.thread !== last) {
         const t = st.thread(x.thread);
-        rows.push(h('div', { class: 'i-line i-join' }, h('button', { type: 'button', class: 'i-link', onclick: () => { topicThread = x.thread; render(st); } },
+        rows.push(h('div', { class: 'i-line i-join' }, h('button', { type: 'button', class: 'i-link', 'data-thread': x.thread, onclick: () => { topicThread = x.thread; render(st); } },
           `-- thread: ${t?.title || '?'}`)));
         last = x.thread;
       }
@@ -69,7 +71,7 @@ export function irc(root, { threadHref }) {
 
   function statusLines(st) {
     const S = st.S;
-    const items = [`*** Connected to ${S.board.name} as ${S.me?.handle}`,
+    const items = [`*** ${connection} · ${S.board.name} as ${S.me?.handle}`,
       `*** ${S.channels.length} channels, ${S.threads.size} threads, ${S.tasks.size} tasks`,
       '*** This window is read-only. /commands are disabled.',
       ...log.map((x) => `[${hhmm(x.ts)}] #${x.channel} ${x.text}`)];
@@ -85,7 +87,7 @@ export function irc(root, { threadHref }) {
     if (c) leaseEl.dataset.exp = c.expires_at;
     return [`Topic: ${t.title} | ${task ? `state=${task.state}` : `${t.message_count} messages`}`,
       c ? [` | ${st.num(task.id)} claimed by ${st.handle(c.actor_id)} (`, leaseEl, ')'] : '',
-      ' | ', h('a', { href: threadHref(t.id) }, 'open thread')];
+      ' | ', h('a', { href: threadHref(t.id), 'data-focus': 'topic' }, 'open thread')];
   }
 
   function paintLease() {
@@ -102,36 +104,55 @@ export function irc(root, { threadHref }) {
     tab ??= [...S.threads.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0]?.channel_path || 'status';
     palette ??= jumpPalette(() => [{ label: 'Status', go: () => select('status') },
       ...S.channels.map((c) => ({ label: `#${c.path}`, hint: unread.get(c.path) ? `${unread.get(c.path)} new` : '', go: () => select(c.path) }))], 'Jump to a channel');
+    const focused = document.activeElement;
+    const focusChannel = focused?.dataset.channel;
+    const focusControl = focused?.dataset.focus;
+    const focusTab = focused?.getAttribute('role') === 'tab';
+    const transcriptFocused = focused?.classList.contains('i-text');
+    const focusedThread = focused?.dataset.thread;
     const textArea = root.querySelector('.i-text');
+    const textTop = textArea?.scrollTop || 0;
+    const paneScroll = ['.i-tree', '.i-nicks', '.i-tabs'].map((s) => root.querySelector(s)?.scrollTop || 0);
+    const tabsLeft = root.querySelector('.i-tabs')?.scrollLeft || 0;
     const atBottom = !textArea || textArea.scrollTop + textArea.clientHeight >= textArea.scrollHeight - 8;
     const { rows, lastThread } = tab === 'status' ? { rows: statusLines(st), lastThread: null } : lines(st);
     const th = topicThread && st.thread(topicThread)?.channel_path === tab ? topicThread : lastThread;
     const actors = [...S.actors.values()].sort((a, b) => a.handle.localeCompare(b.handle));
     const people = actors.filter((a) => a.kind === 'human'), agents = actors.filter((a) => a.kind !== 'human');
-    const threadsHere = [...S.threads.values()].filter((t) => t.channel_path === tab).length;
-    const ro = { disabled: true, title: 'read-only viewer' };
     const win = h('div', { class: 'i-win' },
-      h('div', { class: 'i-title' }, h('span', { class: 'i-icon' }, 'A'),
-        h('span', { class: 'i-titletext' }, `Yak IRC - [${tab === 'status' ? 'Status' : `#${tab} [${threadsHere}]`}]${st.thread(th) ? `: ${st.thread(th).title}` : ''}`),
-        ['_', '□', '×'].map((x) => h('button', { type: 'button', class: 'i-wbtn', ...ro }, x))),
-      h('div', { class: 'i-menu' }, MENUS.map((m) => h('span', { title: 'read-only viewer' }, h('u', {}, m[0]), m.slice(1)))),
-      h('div', { class: 'i-tools' }, TOOLS.map((x) => h('button', { type: 'button', class: 'i-tool', ...ro }, x))),
+      h('div', { class: 'i-title' }, h('span', { class: 'i-icon', 'aria-hidden': 'true' }, 'Y'),
+        h('span', { class: 'i-titletext' }, `Yak IRC - ${S.board.name} - ${tab === 'status' ? 'Status' : `#${tab}`} - Read-only`)),
+      chrome,
+      h('div', { class: 'i-tools' }, h('button', { type: 'button', 'data-focus': 'jump', onclick: () => palette.open() }, 'Jump to channel…'),
+        h('span', {}, 'Ctrl-K · Alt-1…9 · Read-only viewer')),
       h('div', { class: 'i-tabs', role: 'tablist' }, [['status', 'Status'], ...S.channels.map((c) => [c.path, `#${c.path}`])].map(([key, label]) =>
-        h('button', { type: 'button', role: 'tab', 'aria-selected': String(key === tab), class: `i-tab${key === tab ? ' on' : ''}${unread.get(key) ? ' unread' : ''}`,
+        h('button', { type: 'button', role: 'tab', 'aria-selected': String(key === tab), 'data-channel': key, class: `i-tab${key === tab ? ' on' : ''}${unread.get(key) ? ' unread' : ''}`,
           onclick: () => select(key) }, label, unread.get(key) ? ` (${unread.get(key)})` : ''))),
       h('div', { class: 'i-topic' }, topic(st, th)),
-      h('div', { class: 'i-body' }, h('div', { class: 'i-text', role: 'log' }, rows),
+      h('div', { class: 'i-body' },
+        h('nav', { class: 'i-tree', 'aria-label': 'Board channels' }, h('b', {}, S.board.name),
+          [['status', 'Status'], ...S.channels.map((c) => [c.path, `#${c.path}`])].map(([key, label]) =>
+            h('button', { type: 'button', 'data-channel': key, 'aria-current': key === tab ? 'page' : null,
+              onclick: () => select(key) }, label, unread.get(key) ? ` (${unread.get(key)})` : ''))),
+        h('div', { class: 'i-text', role: 'log', tabindex: '0', 'aria-label': 'Channel transcript' }, rows),
         h('div', { class: 'i-nicks' }, people.map((a) => h('div', { class: 'i-person' }, `@${a.handle}`)),
           agents.map((a) => h('div', { class: 'i-agent' }, `+${a.handle}`)),
-          h('div', { class: 'i-count' }, `--- ${actors.length} here`), h('div', { class: 'i-count' }, ` ${people.length} people (@)`),
-          h('div', { class: 'i-count' }, ` ${agents.length} agents (+)`))),
+          h('div', { class: 'i-count' }, `${actors.length} board actors`), h('div', { class: 'i-count' }, ` ${people.length} people (@)`),
+          h('div', { class: 'i-count' }, ` ${agents.length} agents/services (+)`))),
       h('input', { class: 'i-input', type: 'text', disabled: true, 'aria-label': 'message input (read-only)', placeholder: 'read-only viewer: /commands and messages are disabled' }),
-      h('div', { class: 'i-statusbar' }, h('span', {}, `Connected to ${S.board.name} as ${S.me?.handle}`),
+      h('div', { class: 'i-statusbar' }, h('span', {}, `${connection} · ${S.board.name} as ${S.me?.handle}`),
         h('span', {}, 'Ctrl-K jump'), h('span', {}, `${S.channels.length} channels`)));
     root.replaceChildren(h('div', { class: 'i-desk' }, win));
     paintLease();
     const text = root.querySelector('.i-text');
-    if (atBottom) text.scrollTop = text.scrollHeight;
+    text.scrollTop = atBottom ? text.scrollHeight : textTop;
+    ['.i-tree', '.i-nicks', '.i-tabs'].forEach((s, i) => { root.querySelector(s).scrollTop = paneScroll[i]; });
+    root.querySelector('.i-tabs').scrollLeft = tabsLeft;
+    if (focusChannel) [...root.querySelectorAll(focusTab ? '.i-tab' : '.i-tree button')].find((e) => e.dataset.channel === focusChannel)?.focus({ preventScroll: true });
+    else if (focusControl) [...root.querySelectorAll('[data-focus]')].find((e) => e.dataset.focus === focusControl)?.focus({ preventScroll: true });
+    else if (transcriptFocused) text.focus({ preventScroll: true });
+    else if (focusedThread) [...root.querySelectorAll('.i-link')].find((e) => e.dataset.thread === focusedThread)?.focus({ preventScroll: true });
+    else if (chrome.contains(focused)) focused.focus({ preventScroll: true });
   }
 
   function select(key) {
@@ -160,6 +181,7 @@ export function irc(root, { threadHref }) {
 
   return {
     render, event, tick: paintLease,
-    dispose: () => { palette?.dispose(); document.removeEventListener('keydown', onKey); },
+    status: (value, st) => { if (connection !== value) { connection = value; render(st); } },
+    dispose: () => { chromeHome.replaceWith(chrome); palette?.dispose(); document.removeEventListener('keydown', onKey); },
   };
 }
