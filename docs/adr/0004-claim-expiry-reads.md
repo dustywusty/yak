@@ -2,7 +2,8 @@
 
 Status: Accepted (owner approved the draft 2026-11-20). Implements design §5.1
 (claim replay), §7.2, §8 (effective time). Normative text: `spec/p2-tasks.md`
-§7 (CLAIM-001..055), TASK-025, TASK-031, TASK-092.
+§7 (CLAIM-001..055), TASK-025, TASK-031, TASK-082, TASK-092. Amended
+2026-11-20 by §4 (renewal semantics).
 
 ## Context
 
@@ -113,6 +114,51 @@ replay of complete, fail, or release returns the current task view with
 `Idempotent-Replayed: true`, even though the claim has ended — that is
 how a client that lost a completion response learns it succeeded.
 
+### 4. Renewal changes the task revision and keeps the lease length
+
+Added 2026-11-20 (tasks `task_j2cnk7xuvfpropcjthn6i5sehi` and
+`task_twdcj46fvqln5vscwkx6rzqh5y`, found by the viewer and by the BOOT-04
+live exercise).
+
+**Task revision.** The first version of CLAIM-023 said a renewal changes
+the claim revision but not the task revision. But the task view shows
+`current_claim.expires_at`, so after a renewal the same task revision had
+two different views. TASK-092 tells clients to apply task views by
+revision. A client that keeps only newer revisions dropped every renewal
+and showed an old expiry.
+
+Decision: a renewal is a task change. It increments the task revision and
+sets `updated_at` (CLAIM-023). It does not change the epoch, execution, or
+state. `task.claim_renewed` carries the task resource at the new
+revision, like every other task event (TASK-082). The claim revision is
+still in `payload.claim.revision`.
+
+Rationale:
+
+- One ordering key. Clients keep the rule "apply a task view if its
+  revision is higher". They do not need a pair of keys or a special case
+  for one event type.
+- The ETag stays honest. `ETag` is the task revision, and a different view
+  now always has a different ETag. Caches and conditional GETs work.
+- The lapse projection stays deterministic. The effective view after a
+  lapse is still "recorded revision + 1" (§1), because a renewal writes
+  its revision to the row.
+- Cost: an `If-Match` request from a manager can now fail with
+  `412 revision_conflict` because the claimant renewed in between (at most
+  every lease/3). Assignee and dependency changes are refused during an
+  active claim anyway (TASK-053, DEP-006). For the others (PATCH, brief
+  update, block or cancel with `If-Match`) a 412 is a safe, normal retry:
+  read the task again and send the new revision.
+
+**Lease length.** The first version of CLAIM-020 gave renew the same
+default as claim: `claim_lease_default_seconds`. A worker that claimed
+with a short lease to bound takeover time got the long default on every
+renewal that left out `lease_seconds`. Decision: on renew, the default is
+the claim's current `lease_seconds`. An explicit value still changes it,
+inside the advertised bounds. The idempotency fingerprint records the body
+as sent, so `{}` and `{"lease_seconds": n}` under one key are different
+requests.
+
 ## Alternatives considered
 
 | Alternative | Why not |
@@ -124,6 +170,9 @@ how a client that lost a completion response learns it succeeded.
 | Derive the proof as `HMAC(key, claim_id)` (no stored ciphertext) | Anyone with the key and a claim ID (which every reader sees in events) can forge proofs. Encryption needs the key and a database copy. |
 | No proof replay (like credentials, ADR-0003) | Simpler, but a lost claim response strands the task for a whole lease and fails the intent of CT-009. Kept as the fallback when no key is configured. |
 | Replay re-renews an active claim | Violates "replay never extends a lease". |
+| Keep the task revision on renewal; order task views by (task revision, claim revision) | Every client needs a two-part key and must know that `current_claim` can be null or change identity. The ETag would not change when the view changes. Rejected for the one-key rule (§4). |
+| Drop `current_claim.expires_at` from the task view | Readers need the expiry to see when a claim can be taken over. Rejected. |
+| Renew without `lease_seconds` uses the server default | A short lease silently became the long default after the first renewal (BOOT-04). Rejected (§4). |
 | Materialize as part of a rejected request | Makes some failures commit events; complicates IDEM-004 and the "rejected means nothing changed" rule. |
 
 ## Examples

@@ -2015,7 +2015,7 @@ paths:
     post:
       operationId: renewClaim
       tags: [claims]
-      summary: Renew the active claim (L4, CLAIM-023). Changes neither task revision, epoch, execution nor state.
+      summary: Renew the active claim (L4, CLAIM-023). Increments the claim and task revisions; changes neither epoch, execution nor state.
       description: |
         Sets `expires_at` = now + lease_seconds (may shorten) and increments
         the claim revision. Without `lease_seconds` the claim keeps its

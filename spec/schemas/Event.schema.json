@@ -276,7 +276,7 @@
         "resource": {
           "properties": {
             "type": {
-              "const": "claim"
+              "const": "task"
             }
           }
         },

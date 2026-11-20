@@ -975,14 +975,23 @@ func TestCT029LifecycleWalk(t *testing.T) { // TASK-020..026, TASK-030..038, TAS
 		t.Fatalf("claim (CLAIM-004): %v", c)
 	}
 	revBefore := num(f.getTask(t, m, id), "revision")
-	f.step(t, m, &cur, "L4 renew", func() {
-		rn := w.must(200, f.renew(w, id, str(cl, "id"), p, J{"lease_seconds": f.d.lim(t, "claim_lease_min_seconds")})).Body
+	var rn J
+	evs = f.step(t, m, &cur, "L4 renew", func() {
+		rn = w.must(200, f.renew(w, id, str(cl, "id"), p, J{"lease_seconds": f.d.lim(t, "claim_lease_min_seconds")})).Body
 		if num(rn, "revision") != 2 || rn["id"] != cl["id"] || rn["status"] != "active" {
 			t.Fatalf("renew: %v", rn)
 		}
 	}, "task.claim_renewed")
-	if v := f.getTask(t, m, id); num(v, "revision") != revBefore || num(v, "epoch") != 1 || ss(v) != "claimed" {
-		t.Fatalf("renew changed the task (CLAIM-023): %v", v)
+	// The task view shows the new expiry, so the task revision goes up by
+	// one; epoch and state stay (CLAIM-023). The event names the task at
+	// that revision and carries the claim revision in the payload.
+	if v := f.getTask(t, m, id); num(v, "revision") != revBefore+1 || num(v, "epoch") != 1 || ss(v) != "claimed" ||
+		!sameInstant(t, obj(v, "current_claim")["expires_at"], rn["expires_at"]) {
+		t.Fatalf("renew must bump the task revision only (CLAIM-023): before %v, now %v", revBefore, v)
+	}
+	if res := obj(evs[0], "resource"); res["type"] != "task" || num(res, "revision") != revBefore+1 ||
+		num(obj(obj(evs[0], "payload"), "claim"), "revision") != 2 {
+		t.Fatalf("task.claim_renewed (TASK-082): %v", evs[0])
 	}
 	f.step(t, m, &cur, "L5 release", func() {
 		if v := f.mustCmd(t, w, id, "release", nil, proof(p)); ss(v) != "ready" || obj(v, "last_claim")["status"] != "released" {
@@ -1869,8 +1878,9 @@ func TestCT038ProofHygiene(t *testing.T) { // CLAIM-010, CLAIM-011, CLAIM-012, C
 }
 
 // TestRenewKeepsLease checks that a renewal without lease_seconds keeps the
-// claim's current lease, not the server default (CLAIM-020, CLAIM-023).
-func TestRenewKeepsLease(t *testing.T) { // CLAIM-020, CLAIM-023, CLAIM-040
+// claim's current lease, not the server default (CLAIM-020), and that each
+// renewal increments the task revision (CLAIM-023, TASK-092).
+func TestRenewKeepsLease(t *testing.T) { // CLAIM-020, CLAIM-023, CLAIM-040, TASK-092
 	f := newP2Board(t)
 	mn, df := f.d.lim(t, "claim_lease_min_seconds"), f.d.lim(t, "claim_lease_default_seconds")
 	if mn+1 >= df {
@@ -1893,9 +1903,18 @@ func TestRenewKeepsLease(t *testing.T) { // CLAIM-020, CLAIM-023, CLAIM-040
 	if exp := ts(t, rn["expires_at"]); !exp.Before(acquired.Add(time.Duration(df) * time.Second)) {
 		t.Fatalf("renew without lease_seconds used the default lease: expires_at %v, acquired_at %v", exp, acquired)
 	}
-	// The body is part of the fingerprint: an explicit lease under the same
-	// key is a different request.
+	// The renewal is a task change: task revision +1 (CLAIM-023).
+	rev0 := num(obj(c, "task"), "revision")
+	if v := f.getTask(t, m, id); num(v, "revision") != rev0+1 || !sameInstant(t, obj(v, "current_claim")["expires_at"], rn["expires_at"]) {
+		t.Fatalf("renewal must bump the task revision to %v and show the new expiry: %v", rev0+1, v)
+	}
+	// A replay changes nothing; the body is part of the fingerprint, so an
+	// explicit lease under the same key is a different request.
+	w.must(200, f.renew(w, id, cid, p, nil, k))
 	w.wantProblem(409, "idempotency_conflict", f.renew(w, id, cid, p, J{"lease_seconds": df}, k))
+	if v := f.getTask(t, m, id); num(v, "revision") != rev0+1 {
+		t.Fatalf("renew replay changed the task revision: %v", v)
+	}
 
 	// An explicit value changes the lease; the next renewal without a value
 	// keeps the new one.
@@ -1905,7 +1924,7 @@ func TestRenewKeepsLease(t *testing.T) { // CLAIM-020, CLAIM-023, CLAIM-040
 	if rn := w.must(200, f.renew(w, id, cid, p, nil)).Body; num(rn, "lease_seconds") != float64(mn+1) || num(rn, "revision") != 4 {
 		t.Fatalf("renew without lease_seconds must keep lease %d: %v", mn+1, rn)
 	}
-	if v := f.getTask(t, m, id); num(obj(v, "current_claim"), "lease_seconds") != float64(mn+1) {
+	if v := f.getTask(t, m, id); num(obj(v, "current_claim"), "lease_seconds") != float64(mn+1) || num(v, "revision") != rev0+3 {
 		t.Fatalf("task current_claim after renewals: %v", v)
 	}
 	f.mustCmd(t, w, id, "release", nil, proof(p))

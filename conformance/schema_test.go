@@ -224,7 +224,7 @@ func TestSpecSchemasRejectInvalid(t *testing.T) {
 		{"Task", "Task.claimed", func(m J) { m["last_claim"].(J)["status"] = "active" }},
 		{"Discovery", "Discovery.p2", func(m J) { delete(m["limits"].(J), "claim_lease_max_seconds") }},
 		{"Event", "Event.task_claimed", func(m J) { m["payload"].(J)["claim"] = nil }},
-		{"Event", "Event.task_claim_renewed", func(m J) { m["resource"].(J)["type"] = "task" }},
+		{"Event", "Event.task_claim_renewed", func(m J) { m["resource"].(J)["type"] = "claim" }},
 	} {
 		doc := mutate(c.example, c.edit)
 		if err := schemaNamed(t, c.schema).Validate(decodeInstance(t, []byte(doc))); err == nil {
