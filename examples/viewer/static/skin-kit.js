@@ -120,6 +120,17 @@ export function createStore({ api, boardId, onChange, onEvent, onStatus, onUnaut
   const abort = new AbortController();
   const B = `/v1/boards/${enc(boardId)}`;
   const get = (path, params) => api('GET', path, params, abort.signal);
+  // PAGE-001: follow next_page_token until it is null.
+  const all = async (path, key) => {
+    const out = [];
+    let token = null;
+    do {
+      const page = await get(path, { limit: clock.limits.max_page_size, page_token: token });
+      out.push(...page[key]);
+      token = page.next_page_token;
+    } while (token);
+    return out;
+  };
   const bucket = (id) => S.msgs.get(id) || S.msgs.set(id, new Map()).get(id);
   const putTask = (t) => {
     const cur = S.tasks.get(t.id);
@@ -131,7 +142,25 @@ export function createStore({ api, boardId, onChange, onEvent, onStatus, onUnaut
     const [board, actors, channels, me] = await Promise.all([get(B), get(`${B}/actors`), get(`${B}/channels`), get('/v1/me')]);
     Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.actors.map((a) => [a.id, a])),
       threads: new Map(), msgs: new Map(), tasks: new Map(), order: [] });
-    const info = await api('POST', `${B}/snapshots`, {}, abort.signal);
+    let info;
+    try {
+      info = await api('POST', `${B}/snapshots`, {}, abort.signal);
+    } catch (e) {
+      if (e.status !== 413) throw e;
+      // SNAP-004: too many items for one snapshot. Take the head position
+      // first (EVT-010), then read the thread and task lists and the messages
+      // of the 50 most recently active threads. Live events fill in the rest.
+      const head = await get(`${B}/events`, { from: 'latest', limit: 1 });
+      for (const t of await all(`${B}/threads`, 'threads')) S.threads.set(t.id, t);
+      for (const t of await all(`${B}/tasks`, 'items')) putTask(t);
+      const recent = [...S.threads.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 50);
+      await Promise.all(recent.map(async ({ id }) => {
+        for (const m of await all(`${B}/threads/${enc(id)}/messages`, 'messages')) bucket(id).set(m.id, m);
+      }));
+      S.cursor = head.next_cursor;
+      S.seen.clear();
+      return;
+    }
     let token = null;
     try {
       do {
@@ -157,6 +186,17 @@ export function createStore({ api, boardId, onChange, onEvent, onStatus, onUnaut
     S.events++;
     const p = ev.payload || {};
     if (p.thread) S.threads.set(p.thread.id, p.thread);
+    if (p.message && !S.threads.has(p.message.thread_id)) {
+      // A thread we have not seen: use thread_title from the event (EVT-013) at once,
+      // then read the thread. Events recorded before the upgrade have no thread_title.
+      const m = p.message;
+      if (typeof p.thread_title === 'string') {
+        S.threads.set(m.thread_id, { id: m.thread_id, board_id: m.board_id, channel_id: m.channel_id, channel_path: m.channel_path,
+          title: p.thread_title, labels: {}, message_count: m.seq, last_message_id: m.id, root_message_id: null,
+          created_by_actor_id: m.author_actor_id, created_at: m.created_at, updated_at: m.created_at, task_id: p.task_id ?? null });
+      }
+      get(`${B}/threads/${enc(m.thread_id)}`).then((r) => { S.threads.set(r.thread.id, r.thread); onChange(); }).catch(() => {});
+    }
     if (p.message) {
       bucket(p.message.thread_id).set(p.message.id, p.message);
       const t = S.threads.get(p.message.thread_id);

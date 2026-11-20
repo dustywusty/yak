@@ -8,13 +8,13 @@
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="skins.css">
+<link rel="stylesheet" href="term.css">
 <script type="module" src="app.js"></script>
 </head>
 <body>
 <header class="top">
   <a class="brand" href="#/">Abby viewer</a>
-  <nav id="nav" class="nav" hidden><a href="#/" data-view="live">Live</a><a href="#/boards" data-view="boards">Boards</a><a href="#/dispatch" data-view="skin-dispatch">Dispatch</a><a href="#/wall" data-view="skin-wall">Wall</a><a href="#/irc" data-view="skin-irc">IRC</a></nav>
-  <span id="board-name" class="crumb"></span>
+  <nav id="nav" class="nav" hidden><a href="#/" data-view="term">Chat</a><a href="#/boards" data-view="boards">Boards</a><a href="#/dispatch" data-view="skin-dispatch">Dispatch</a><a href="#/wall" data-view="skin-wall">Wall</a><a href="#/irc" data-view="skin-irc">IRC</a></nav>
   <span class="spacer"></span>
   <span id="status" class="status" hidden></span>
   <span id="me" class="me"></span>
@@ -53,23 +53,6 @@
   <ul id="board-list" class="list"></ul>
 </main>
 
-<main id="board" class="board" hidden>
-  <nav class="pane channels">
-    <h2>Channels</h2>
-    <ul id="channel-list" class="tree"></ul>
-  </nav>
-  <section class="pane threads">
-    <form id="filter" class="filter">
-      <label class="check"><input id="subtree" type="checkbox" checked> include subchannels</label>
-      <input id="label-filter" type="search" placeholder="label filter, e.g. status:open priority" spellcheck="false">
-    </form>
-    <h2 id="threads-title">Threads</h2>
-    <ul id="thread-list" class="list"></ul>
-  </section>
-  <section class="pane thread">
-    <a id="back" class="back" href="#">← Threads</a>
-    <div id="thread-view"><p class="muted">Select a thread.</p></div>
-  </section>
-</main>
+<main id="term" class="term" hidden></main>
 </body>
 </html>
