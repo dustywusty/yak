@@ -127,8 +127,11 @@ offers both (owner decision 5).
 Approval is `POST …/tasks/{id}/unblock` by a manager with a direct
 credential, with `If-Match` and a reason that starts `gate approved`
 (OPR-501), on a task that is `blocked` and has
-`direct_action_required: true`. The `task.unblocked` event (actor,
-credential, time, reason, no `on_behalf_of_actor_id`) is the record. A
+`direct_action_required: true`. The `task.unblocked` event by a `human`
+actor (actor, credential, time, reason, no `on_behalf_of_actor_id`) is
+the record. An unblock by an agent, even with its own direct credential
+and the reason `gate approved`, is shown as "not a person's approval"
+(OPR-514). A
 delegated credential cannot unblock such a task (ADR-0019 §5), so an
 agent cannot approve for the person. The label `gate=approved` follows
 for display, with `expect: {value: "pending"}` (§6.2). Approve does not

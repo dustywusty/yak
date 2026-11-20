@@ -385,12 +385,16 @@ cannot approve for the person.
   on a task that is `blocked` and has `direct_action_required: true`.
   The reason MUST start with `gate approved` and MAY add the person's
   note (for example `gate approved: ship to staging`).
-- **OPR-502** The authoritative record of an approval is the
-  `task.unblocked` event with `on_behalf_of_actor_id: null`: `actor_id`
-  (the person), `credential_id`, `recorded_at`, and `payload.reason`. The
-  client MUST show approval status from task events, not from labels or
-  messages. A `task.unblocked` or `task.completed` event with a non-null
-  `on_behalf_of_actor_id` is never an approval (DLG-096).
+- **OPR-502** The authoritative record of an approval is a
+  `task.unblocked` event with `on_behalf_of_actor_id: null` whose
+  `actor_id` is an actor of kind `human` (from `GET …/actors`, OPR-601):
+  `actor_id` (the person), `credential_id`, `recorded_at`, and
+  `payload.reason`. The client MUST show approval status from task
+  events, not from labels or messages. A `task.unblocked` or
+  `task.completed` event with a non-null `on_behalf_of_actor_id` is never
+  an approval (DLG-096). A `task.unblocked` by an actor that is not
+  `human`, or that is not in the actor list, is never an approval
+  (OPR-514).
 
 ### 6.2 Order of the two calls
 
@@ -419,7 +423,16 @@ the task, checks it, and then does two calls in this order:
   approved, with the person and time from the event. A task with
   `gate=pending` and `direct_action_required: false` MUST be shown as
   "label only; not a gate", and the client MUST NOT offer Approve on it.
-  A manager can set the flag first (A13).
+  A manager can set the flag first (A13). "Approved" in this rule means an
+  approval as defined in OPR-502.
+- **OPR-514** The client MUST show a `task.unblocked` of a gate task that
+  is not an approval under OPR-502 as "unblocked by <handle> (<kind>),
+  not a person's approval" (for a delegated event: "A for P", OPR-606).
+  An agent can unblock its own gate with its own direct credential, so a
+  `gate approved` reason alone proves nothing. A gate task that left
+  `blocked` after its last `task.blocked` without an approval (for
+  example through cancel and then reopen) MUST be shown as "not
+  approved".
 - **OPR-513** Approve MUST NOT clear `direct_action_required`. The flag
   stays on the task, so a delegated credential still cannot settle it or
   approve a later gate on it (DLG-091). A manager who wants delegated
@@ -466,14 +479,19 @@ them, LBL-002.)
   "Request changes" (A12): a reply with the requested changes, then the
   label `gate=changes_requested` with `expect: {value: "pending"}`. The
   task stays `blocked` and the flag stays set.
-- **OPR-531** Agents that wait on a gate MUST wait for the task state
+- **OPR-531** Agents that wait on a gate SHOULD wait for the task state
   (`task.unblocked`, then `task.became_ready` or state `ready`), not for
   the label. (This is guidance for agents; the reference CLI `abby wait`
   already filters by event type.)
+  <!-- TODO(F1): pending owner confirmation of the F1 fix (review
+  msg_y7eqfu7bba4u3lw6vxuvhyinuq). State `ready` alone does not prove
+  approval (cancel then reopen). Replace this rule with the confirmed
+  wording: wait for a `task.unblocked` by a human actor with
+  `on_behalf_of_actor_id: null`. -->
 - **OPR-532** The client MUST NOT read gate status or approval from the
   `gate` label. Gate status comes from the task state and
   `direct_action_required`; approval comes from task events (OPR-502).
-- **OPR-533** An actor that opens a gate MUST set
+- **OPR-533** An actor that opens a gate SHOULD set
   `direct_action_required: true` (at creation, or with
   `PATCH …/tasks/{id}` and a direct credential, DLG-090), then block the
   task, then set `gate=pending`. A `gate=pending` label without the flag
@@ -489,9 +507,10 @@ Events and messages already record `actor_id`, `credential_id`, and
   actor's handle and kind (`human`, `agent`, `service`) from
   `GET …/actors`. An actor that is not in the list MUST show as a short
   ID, never as a guessed name.
-- **OPR-602** For an approval (`task.unblocked` with a `gate approved`
-  reason) the client MUST show: the approver's handle and kind, the
-  time (`recorded_at`), the reason, and the `credential_id`.
+- **OPR-602** For an approval (OPR-502: a direct `task.unblocked` by a
+  `human` actor) the client MUST show: the approver's handle and kind,
+  the time (`recorded_at`), the reason, and the `credential_id`. Other
+  unblocks follow OPR-514.
 - **OPR-603** The client MUST send `Abby-Run-Id: operator/<random>` with
   one random value per operator session. The UI MAY show "from operator
   client" for an event whose `run_id` starts with `operator/`, and if it
@@ -562,7 +581,7 @@ Planned tests:
 | UX-CONFIRM | Each of A6, A7, A9, A10 shows the confirmation fields of OPR-401; Cancel has focus; Enter in a text field does not confirm. |
 | UX-IDEM | Drop the response of a confirmed unblock (proxy fault injection) → the retry reuses the key and shows success with `Idempotent-Replayed`; a double click sends one intent. |
 | UX-412 | Change the task in another session between read and confirm → `412` → page shows the change and asks again; no automatic retry. |
-| UX-GATE | Approve offered only on `blocked` + `direct_action_required: true` for a manager; unblock first, then label with `expect`; the flag stays set; fault after step 1 → "Approved; label not updated" and retry of step 2 only. Label-only `gate=approved` on a blocked task → shown as not approved. `gate=pending` without the flag → "label only; not a gate", no Approve. Server without the field → no Approve. Delegated `task.unblocked` → "A for P", no approval badge. Request changes → reply, then `gate=changes_requested` with `expect`; task stays `blocked`. |
+| UX-GATE | Approve offered only on `blocked` + `direct_action_required: true` for a manager; unblock first, then label with `expect`; the flag stays set; fault after step 1 → "Approved; label not updated" and retry of step 2 only. Label-only `gate=approved` on a blocked task → shown as not approved. `gate=pending` without the flag → "label only; not a gate", no Approve. Server without the field → no Approve. Delegated `task.unblocked` → "A for P", no approval badge. Direct `task.unblocked` by an agent with reason `gate approved` → "unblocked by <handle> (agent), not a person's approval", no approval badge. Gate task canceled and then reopened (state `ready`, no `task.unblocked`) → "not approved". Request changes → reply, then `gate=changes_requested` with `expect`; task stays `blocked`. |
 | UX-TASK | Create task with "Needs my approval" sends `direct_action_required: true`; no dependency field. A13 sends only `direct_action_required` with `If-Match`. Claim action is labeled "Work on this now (while this tab is open)"; assign-to-self is offered. |
 | UX-CLAIM | Claim → renew loop at about one third of the lease; lost claim → loop stops and the UI says so; release sends the proof; the proof is never in storage, DOM, or logs. |
 | UX-PROV | Approval shows handle, kind, time, reason, credential ID; `operator/` run ID shown as unverified. |
@@ -606,9 +625,9 @@ Planned tests:
 | OPR-401..403 | UX-CONFIRM |
 | OPR-410..413 | UX-IDEM |
 | OPR-420..425 | UX-412, UX-GATE |
-| OPR-501..502, OPR-510..513 | UX-GATE; CT-OPR-GATE |
+| OPR-501..502, OPR-510..514 | UX-GATE; CT-OPR-GATE |
 | OPR-520 | UX-GATE (non-manager sees no Approve) |
 | OPR-530, OPR-532 | UX-GATE |
-| OPR-531, OPR-533 | Guidance; checked in agent runbooks, not by a test |
+| OPR-531, OPR-533 (SHOULD) | Guidance; checked in agent runbooks, not by a test |
 | OPR-601..603, OPR-605..606 | UX-PROV; UX-GATE (delegated event) |
 | OPR-701..705, OPR-707 | VWR-ALLOWLIST, UX-ALLOWLIST, CT-OPR-CEILING |
