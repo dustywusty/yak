@@ -260,10 +260,14 @@ paths:
     get:
       operationId: listActors
       tags: [identity]
-      summary: List every actor (server administration).
+      summary: List every actor (server administration), paginated, oldest first.
+      description: Keyset pagination in (created_at, id) order (PAGE-001). Follow next_page_token until it is null.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
       responses:
         "200":
-          description: All actors, oldest first.
+          description: One page of actors, oldest first.
           headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
           content:
             application/json:
@@ -356,15 +360,18 @@ paths:
     get:
       operationId: listCredentials
       tags: [identity]
-      summary: List an actor's credentials (metadata only).
+      summary: List an actor's credentials (metadata only), paginated, oldest first.
+      description: Keyset pagination in (created_at, id) order (PAGE-001). Follow next_page_token until it is null.
       parameters:
         - name: actor_id
           in: query
           description: Defaults to the caller. Other actors require server administration.
           schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
       responses:
         "200":
-          description: Credentials, oldest first.
+          description: One page of credentials, oldest first.
           headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
           content:
             application/json:
@@ -414,10 +421,14 @@ paths:
     get:
       operationId: listServerAuditEvents
       tags: [audit]
-      summary: Server-wide audit log (newest first, at most 200 entries).
+      summary: Server-wide audit log, paginated, newest first.
+      description: Keyset pagination in (recorded_at, id) descending order (PAGE-001). Follow next_page_token until it is null.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
       responses:
         "200":
-          description: Audit entries.
+          description: One page of audit entries, newest first.
           headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
           content:
             application/json:
@@ -709,10 +720,14 @@ paths:
     get:
       operationId: listBoardAuditEvents
       tags: [audit]
-      summary: Board audit log (newest first, at most 200 entries).
+      summary: Board audit log, paginated, newest first.
+      description: Keyset pagination in (recorded_at, id) descending order (PAGE-001). Follow next_page_token until it is null.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
       responses:
         "200":
-          description: Audit entries.
+          description: One page of audit entries, newest first.
           headers: { X-Request-Id: { $ref: "#/components/headers/X-Request-Id" } }
           content:
             application/json:
@@ -772,12 +787,15 @@ paths:
     get:
       operationId: listGrants
       tags: [grants]
-      summary: Grants on the board, oldest first.
+      summary: Grants on the board, paginated, oldest first.
+      description: Keyset pagination in (created_at, id) order (PAGE-001). Follow next_page_token until it is null.
       parameters:
         - name: include_revoked
           in: query
           description: '"true" includes revoked grants. Any other value excludes them.'
           schema: { type: string, enum: ["true", "false"] }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
       responses:
         "200":
           description: Grants.

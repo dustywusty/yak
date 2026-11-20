@@ -231,7 +231,12 @@ Every MUST maps to a check in the traceability table at the end.
 
 - **PAGE-001** Lists use opaque `page_token`s and `limit` (1–`max_page_size`).
   Threads are ordered by creation, messages by sequence; both are stable
-  under concurrent activity.
+  under concurrent activity. Grants, credentials, and `GET /v1/actors` are
+  ordered by (`created_at`, `id`) ascending. Audit events (board and
+  server-wide) are ordered newest first by (`recorded_at`, `id`) descending,
+  and the page token resumes in that direction. Each page returns
+  `next_page_token`, null on the last page. A page boundary neither skips
+  nor repeats an item that existed when the listing began.
 
 ## 9 Error catalog (P1)
 
@@ -287,4 +292,4 @@ Every MUST maps to a check in the traceability table at the end.
 | EVT-012 | REF TestRetentionAndEpoch (retention sweep → 410) |
 | SNAP-001..003 | CT TestCT015SnapshotThenReplay, TestCT016, TestCT017 |
 | SNAP-004 | REF TestSnapshotItemLimit |
-| PAGE-001 | CT TestCT015 (paging); CLI `threads`/`read` follow tokens |
+| PAGE-001 | CT TestCT015 (paging), TestPAGB* (grants, credentials, actors, audit); CLI `threads`/`read`/`grant list`/`credential list`/`actor list`/`audit` follow tokens |

@@ -378,19 +378,32 @@ func scanGrant(r pgx.Row) (GrantView, error) {
 	return g, err
 }
 
-func (s *Service) ListGrants(ctx context.Context, p *Principal, boardID string, includeRevoked bool) ([]GrantView, error) {
+// ListGrants returns one page of the board's grants in (created_at, id)
+// order and the token for the next page (nil on the last page).
+func (s *Service) ListGrants(ctx context.Context, p *Principal, boardID string, includeRevoked bool, pg PageRequest) ([]GrantView, *string, error) {
+	has, t, id, err := pg.pageAfter()
+	if err != nil {
+		return nil, nil, err
+	}
 	v, err := s.viewBoard(ctx, s.DB, p, boardID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !v.policy.IsBoardAdmin() {
-		return nil, Forbidden("board_admin required")
+		return nil, nil, Forbidden("board_admin required")
 	}
-	rows, err := s.DB.Query(ctx, `SELECT `+grantCols+` FROM grants WHERE board_id=$1 AND ($2 OR revoked_at IS NULL) ORDER BY created_at, id`, boardID, includeRevoked)
+	rows, err := s.DB.Query(ctx, `SELECT `+grantCols+` FROM grants WHERE board_id=$1 AND ($2 OR revoked_at IS NULL)
+		AND (NOT $3 OR (created_at, id) > ($4, $5)) ORDER BY created_at, id LIMIT $6`,
+		boardID, includeRevoked, has, t, id, pg.Limit+1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (GrantView, error) { return scanGrant(r) })
+	l, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (GrantView, error) { return scanGrant(r) })
+	if err != nil {
+		return nil, nil, err
+	}
+	l, next := trimPage(l, pg.Limit, func(g GrantView) (time.Time, string) { return g.CreatedAt, g.ID })
+	return l, next, nil
 }
 
 func (s *Service) GetGrant(ctx context.Context, p *Principal, boardID, grantID string) (*GrantView, error) {
@@ -562,26 +575,39 @@ type AuditView struct {
 	RecordedAt time.Time      `json:"recorded_at"`
 }
 
-func (s *Service) ListAudit(ctx context.Context, p *Principal, boardID string, limit int) ([]AuditView, error) {
+// ListAudit returns one page of audit events, newest first: (recorded_at,
+// id) descending, with the keyset applied in that direction. boardID ""
+// lists server-wide events (server administrators only).
+func (s *Service) ListAudit(ctx context.Context, p *Principal, boardID string, pg PageRequest) ([]AuditView, *string, error) {
+	has, t, id, err := pg.pageAfter()
+	if err != nil {
+		return nil, nil, err
+	}
 	if boardID != "" {
 		v, err := s.viewBoard(ctx, s.DB, p, boardID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !v.policy.IsBoardAdmin() {
-			return nil, Forbidden("board_admin required")
+			return nil, nil, Forbidden("board_admin required")
 		}
 	} else if err := requireServerAdmin(p); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err := s.DB.Query(ctx, `SELECT id, board_id, actor_id, action, target_type, target_id, reason, metadata, recorded_at FROM audit_events
-		WHERE ($1='' OR board_id=$1) ORDER BY recorded_at DESC, id LIMIT $2`, boardID, limit)
+		WHERE ($1='' OR board_id=$1) AND (NOT $2 OR (recorded_at, id) < ($3, $4))
+		ORDER BY recorded_at DESC, id DESC LIMIT $5`, boardID, has, t, id, pg.Limit+1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (AuditView, error) {
+	l, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (AuditView, error) {
 		var a AuditView
 		err := r.Scan(&a.ID, &a.BoardID, &a.ActorID, &a.Action, &a.TargetType, &a.TargetID, &a.Reason, &a.Metadata, &a.RecordedAt)
 		return a, err
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	l, next := trimPage(l, pg.Limit, func(a AuditView) (time.Time, string) { return a.RecordedAt, a.ID })
+	return l, next, nil
 }
