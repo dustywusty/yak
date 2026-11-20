@@ -31,7 +31,7 @@ func TestKeysetPageVisibility(t *testing.T) {
 			if pages > len(want)+2 {
 				t.Fatalf("limit %d: no end", limit)
 			}
-			page, next, err := keysetPage(tok, limit, sliceFetch(append([]keyRef(nil), keys...)), load)
+			page, next, err := keysetPage(PageRequest{Token: tok, Limit: limit}, sliceFetch(append([]keyRef(nil), keys...)), load)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -48,7 +48,7 @@ func TestKeysetPageVisibility(t *testing.T) {
 			t.Fatalf("limit %d: got %v want %v", limit, got, want)
 		}
 	}
-	if _, _, err := keysetPage("k1.zz", 1, sliceFetch(keys), load); err == nil {
+	if _, _, err := keysetPage(PageRequest{Token: "k1.zz", Limit: 1}, sliceFetch(keys), load); err == nil {
 		t.Fatal("malformed token accepted")
 	}
 }

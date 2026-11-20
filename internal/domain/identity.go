@@ -228,10 +228,11 @@ func (s *Service) GetActor(ctx context.Context, p *Principal, id string) (*Actor
 // ListAllActors returns one page of all actors in (created_at, id) order
 // (server administrators only).
 func (s *Service) ListAllActors(ctx context.Context, p *Principal, pg PageRequest) ([]ActorView, *string, error) {
-	has, t, id, err := pg.pageAfter()
+	after, err := pg.after()
 	if err != nil {
 		return nil, nil, err
 	}
+	has, t, id := after.sqlArgs()
 	if err := requireServerAdmin(p); err != nil {
 		return nil, nil, err
 	}
@@ -248,7 +249,7 @@ func (s *Service) ListAllActors(ctx context.Context, p *Principal, pg PageReques
 	if err != nil {
 		return nil, nil, err
 	}
-	l, next := trimPage(l, pg.Limit, func(a ActorView) (time.Time, string) { return a.CreatedAt, a.ID })
+	l, next := trimPage(l, pg.Limit, func(a ActorView) keyRef { return keyRef{a.CreatedAt, a.ID} })
 	return l, next, nil
 }
 
@@ -378,10 +379,11 @@ func (s *Service) CreateCredential(ctx context.Context, p *Principal, idem *Idem
 // ListCredentials returns one page of an actor's credentials in
 // (created_at, id) order.
 func (s *Service) ListCredentials(ctx context.Context, p *Principal, actorID string, pg PageRequest) ([]CredentialView, *string, error) {
-	has, t, id, err := pg.pageAfter()
+	after, err := pg.after()
 	if err != nil {
 		return nil, nil, err
 	}
+	has, t, id := after.sqlArgs()
 	if actorID == "" {
 		actorID = p.ActorID
 	}
@@ -401,7 +403,7 @@ func (s *Service) ListCredentials(ctx context.Context, p *Principal, actorID str
 	if err != nil {
 		return nil, nil, err
 	}
-	l, next := trimPage(l, pg.Limit, func(c CredentialView) (time.Time, string) { return c.CreatedAt, c.ID })
+	l, next := trimPage(l, pg.Limit, func(c CredentialView) keyRef { return keyRef{c.CreatedAt, c.ID} })
 	return l, next, nil
 }
 

@@ -97,7 +97,7 @@ func (s *Service) ListBoards(ctx context.Context, p *Principal, pg PageRequest) 
 	}
 	// GetBoard below is the authority on visibility; the query only narrows
 	// the candidates (credential board_ids included) so that pages stay cheap.
-	return keysetPage(pg.Token, pg.Limit, fetch, func(k keyRef) (BoardView, bool, error) {
+	return keysetPage(pg, fetch, func(k keyRef) (BoardView, bool, error) {
 		bv, err := s.GetBoard(ctx, p, k.ID)
 		var de *Error
 		if errors.As(err, &de) && de.Status == 404 {
@@ -114,12 +114,8 @@ func (s *Service) ListBoards(ctx context.Context, p *Principal, pg PageRequest) 
 // arguments first, then $k+1 (has-after flag), $k+2 (after created_at),
 // $k+3 (after id), and $k+4 (limit), where k = len(fixed).
 func (s *Service) fetchKeys(ctx context.Context, sql string, after *keyRef, n int, fixed ...any) ([]keyRef, error) {
-	var at time.Time
-	var aid string
-	if after != nil {
-		at, aid = after.T, after.ID
-	}
-	args := append(fixed, after != nil, at, aid, n)
+	has, at, aid := after.sqlArgs()
+	args := append(fixed, has, at, aid, n)
 	rows, err := s.DB.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -256,7 +252,7 @@ func (s *Service) ListChannels(ctx context.Context, p *Principal, boardID string
 		byID[c.ID] = c
 		keys = append(keys, keyRef{T: c.CreatedAt, ID: c.ID})
 	}
-	return keysetPage(pg.Token, pg.Limit, sliceFetch(keys), func(k keyRef) (ChannelView, bool, error) {
+	return keysetPage(pg, sliceFetch(keys), func(k keyRef) (ChannelView, bool, error) {
 		c := byID[k.ID]
 		if !admin && !v.policy.Has(c.Path, authz.Read) {
 			return ChannelView{}, false, nil
@@ -407,10 +403,11 @@ func scanGrant(r pgx.Row) (GrantView, error) {
 // ListGrants returns one page of the board's grants in (created_at, id)
 // order and the token for the next page (nil on the last page).
 func (s *Service) ListGrants(ctx context.Context, p *Principal, boardID string, includeRevoked bool, pg PageRequest) ([]GrantView, *string, error) {
-	has, t, id, err := pg.pageAfter()
+	after, err := pg.after()
 	if err != nil {
 		return nil, nil, err
 	}
+	has, t, id := after.sqlArgs()
 	v, err := s.viewBoard(ctx, s.DB, p, boardID)
 	if err != nil {
 		return nil, nil, err
@@ -428,7 +425,7 @@ func (s *Service) ListGrants(ctx context.Context, p *Principal, boardID string, 
 	if err != nil {
 		return nil, nil, err
 	}
-	l, next := trimPage(l, pg.Limit, func(g GrantView) (time.Time, string) { return g.CreatedAt, g.ID })
+	l, next := trimPage(l, pg.Limit, func(g GrantView) keyRef { return keyRef{g.CreatedAt, g.ID} })
 	return l, next, nil
 }
 
@@ -559,7 +556,7 @@ func (s *Service) BoardActors(ctx context.Context, p *Principal, boardID string,
 			AND (NOT $2 OR (a.created_at, a.id) > ($3, $4))
 			ORDER BY a.created_at, a.id LIMIT $5`, after, n, boardID)
 	}
-	return keysetPage(pg.Token, pg.Limit, fetch, func(k keyRef) (ActorView, bool, error) {
+	return keysetPage(pg, fetch, func(k keyRef) (ActorView, bool, error) {
 		visible := admin || k.ID == p.ActorID
 		if !visible {
 			other := &Principal{ActorID: k.ID, Scopes: []string{authz.AllScopes}}
@@ -603,10 +600,11 @@ type AuditView struct {
 // id) descending, with the keyset applied in that direction. boardID ""
 // lists server-wide events (server administrators only).
 func (s *Service) ListAudit(ctx context.Context, p *Principal, boardID string, pg PageRequest) ([]AuditView, *string, error) {
-	has, t, id, err := pg.pageAfter()
+	after, err := pg.after()
 	if err != nil {
 		return nil, nil, err
 	}
+	has, t, id := after.sqlArgs()
 	if boardID != "" {
 		v, err := s.viewBoard(ctx, s.DB, p, boardID)
 		if err != nil {
@@ -632,6 +630,6 @@ func (s *Service) ListAudit(ctx context.Context, p *Principal, boardID string, p
 	if err != nil {
 		return nil, nil, err
 	}
-	l, next := trimPage(l, pg.Limit, func(a AuditView) (time.Time, string) { return a.RecordedAt, a.ID })
+	l, next := trimPage(l, pg.Limit, func(a AuditView) keyRef { return keyRef{a.RecordedAt, a.ID} })
 	return l, next, nil
 }
