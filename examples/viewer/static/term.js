@@ -4,6 +4,8 @@
 
 import { createStore, h, avatar, jumpPalette, snip, ago, now } from './skin-kit.js';
 
+import { createAgentActivity } from './agent-activity.js';
+
 const SEEN_KEY = 'yak-viewer-seen';   // per-viewer "last seen" times (a convenience only)
 const THEME_KEY = 'yak-viewer-theme';
 const store_ = {
@@ -49,6 +51,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
         onEvent: (ev) => { if (route.v !== 'activity') activityNew++; },
       });
       cur = { boardId, store };
+      activityTimer = setInterval(() => activity?.update(), 1000);
       palette = jumpPalette(paletteItems, 'Jump to a channel or thread');
     }
     open();
@@ -70,12 +73,14 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     sel = -1;
   }
 
-  let palette = null;
+  let palette = null, activity = null, activityTimer = null;
   function unmount() {
     if (!cur) return;
     cur.store.stop();
+    clearInterval(activityTimer);
     palette?.dispose();
     cur = null;
+    activity = null;
     mark = {};
   }
 
@@ -236,6 +241,11 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     if (!S.board) { root().replaceChildren(h('p', { class: 'pad' }, 'Loading board…')); return; }
     open();
     const view = route.v === 'activity' ? activityView() : route.v === 'mentions' ? mentionsView() : route.t ? threadView() : channelView();
+    const focusRow = document.activeElement?.closest('[data-activity-task]');
+    const focusIndex = focusRow ? [...focusRow.querySelectorAll('a')].indexOf(document.activeElement) : -1;
+    const focusTask = focusRow?.dataset.activityTask;
+    const activityTop = root().querySelector('.t-agent-activity')?.scrollTop || 0;
+    const activityFocused = document.activeElement?.classList.contains('t-agent-activity');
     const old = root().querySelector('.t-scroll');
     const keep = old && route.key === render.lastKey ? { top: old.scrollTop, bottom: old.scrollTop + old.clientHeight >= old.scrollHeight - 8 } : null;
     render.lastKey = route.key;
@@ -260,9 +270,10 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
         h('div', {}, h('button', { type: 'button', onclick: () => { theme = theme === 'dark' ? 'light' : 'dark'; store_.set(THEME_KEY, theme); render(); } }, theme === 'dark' ? '◐ light' : '◑ dark'),
           ' ', h('button', { type: 'button', onclick: onForget }, 'Forget token'))));
     const scroll = h('div', { class: `t-scroll${view.activity ? ' t-activity' : ''}`, role: 'log' }, view.body);
+    activity = createAgentActivity(st(), href, status);
     const main = h('section', { class: 't-main' },
       h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', onclick: () => { sideOpen = !sideOpen; render(); } }, '☰'), view.head),
-      scroll,
+      activity.root, scroll,
       view.composer ? h('div', { class: 't-composer' }, h('input', { type: 'text', disabled: true, 'aria-label': `${view.composer} (read-only)`, placeholder: `${view.composer} (read-only viewer)` })) : null);
     const hints = route.t ? [['↑↓', 'move'], ['esc', 'close'], ['^K', 'jump'], ['?', 'help']] : [['↑↓', 'move'], ['⏎', 'open'], ['^K', 'jump'], ['?', 'help']];
     const foot = h('footer', { class: 't-foot' }, h('span', { class: `t-dot t-${status}` }), ` ${status} `,
@@ -274,6 +285,12 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
         .map(([k, v]) => h('div', {}, h('kbd', {}, k), ` ${v}`)), h('p', { class: 't-mute' }, 'This viewer is read-only.')) : null;
     root().replaceChildren(h('div', { class: `t-app${sideOpen ? ' t-sideopen' : ''}`, 'data-theme': theme }, side, main, foot, helpBox));
     if (view.activity && liveEl) { liveEl.hidden = false; scroll.prepend(liveEl); }
+    activity.root.scrollTop = activityTop;
+    if (activityFocused) activity.root.focus({ preventScroll: true });
+    if (focusTask && focusIndex >= 0) {
+      const row = [...activity.root.querySelectorAll('[data-activity-task]')].find((e) => e.dataset.activityTask === focusTask);
+      (row?.querySelectorAll('a')[focusIndex] || activity.root).focus({ preventScroll: true });
+    }
     paintSel();
     if (keep) scroll.scrollTop = keep.bottom ? scroll.scrollHeight : keep.top;
     else if (route.m && scrolledTo !== route.m && document.getElementById(`tm-${route.m}`)) { document.getElementById(`tm-${route.m}`).scrollIntoView({ block: 'start' }); scrolledTo = route.m; }
@@ -293,7 +310,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   let gPending = false;
   function onKey(e) {
     if (!cur || document.getElementById('term').hidden || document.querySelector('.jump')) return;
-    if (e.target.closest?.('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target.closest?.('.t-agent-activity, input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
     if (gPending) { gPending = false; if (k === 'a') return go({ v: 'activity' }); if (k === 'm') return go({ v: 'mentions' }); }
     if (k === 'ArrowDown' || k === 'j') { e.preventDefault(); move(1); }

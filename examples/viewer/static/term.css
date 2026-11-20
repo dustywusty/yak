@@ -109,3 +109,34 @@ kbd { font: inherit; padding: 0 .3rem; border: 1px solid var(--t-line); border-r
 }
 .t-filter { color: var(--t-acc); }
 .t-filter a { text-decoration: none; margin-left: .2rem; }
+
+/* Board activity stays visible above the chat, with its own bounded scroll. */
+.t-agent-activity { flex: 0 1 auto; min-height: 100px; max-height: 38vh; overflow-y: auto; padding: .65rem 1.2rem; background: var(--t-side); border-bottom: 1px solid var(--t-line); overflow-wrap: anywhere; }
+.a-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem 1rem; }
+.a-counts { color: var(--t-acc); font-size: .9em; }
+.a-freshness { margin: .25rem 0 .5rem; color: var(--t-mute); font-size: .85em; }
+.a-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.2rem; }
+.a-columns h2 { font: inherit; font-size: 1.05em; font-weight: 700; margin: 0 0 .3rem; }
+.a-columns h2:first-letter { color: var(--t-acc); }
+.a-columns ul { list-style: none; padding: 0; margin: 0; }
+.a-columns li { padding: .3rem 0; border-top: 1px solid var(--t-line); }
+.a-columns li > a { display: block; color: var(--t-acc); }
+.a-columns time { display: inline-block; font-weight: 700; margin-right: .6rem; color: var(--t-ok); }
+.a-columns section:last-child time { color: var(--t-warn); }
+.a-assignee { display: block; color: var(--t-mute); font-size: .9em; }
+.a-reasons { display: grid; gap: .15rem; font-size: .9em; }
+.a-columns section:last-child time.a-long { color: var(--t-bad); }
+.a-unclaimed { margin: .4rem 0 0; font-size: .9em; }
+.a-stale .a-freshness, .a-unconfirmed { color: var(--t-warn); }
+.a-stale .a-counts, .t-agent-activity.a-stale .a-columns time, .t-agent-activity.a-stale .a-columns time.a-long, .a-pending time { color: var(--t-mute); }
+.t-agent-activity:focus-visible, .t-agent-activity a:focus-visible { outline: 2px solid var(--t-acc); outline-offset: 2px; }
+@media (max-width: 700px) {
+  .t-agent-activity { padding: .6rem 16px; max-height: 46vh; }
+  .a-counts { font-size: .78em; }
+  .a-freshness { font-size: .75em; }
+  .a-agent li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem .4rem; padding: .2rem 0; }
+  .a-agent time { font-size: .85em; margin: 0; }
+  .a-unconfirmed { grid-column: 1 / -1; }
+  .a-unconfirmed:empty { display: none; }
+  .a-columns { grid-template-columns: minmax(0, 1fr); gap: .8rem; }
+}

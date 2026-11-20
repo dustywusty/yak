@@ -64,6 +64,9 @@ jobs:
       - name: go test
         run: go test ./...
 
+      - name: Viewer regression checks (synthetic API, Chrome)
+        run: node examples/viewer/test/regress.mjs
+
       - name: Create databases
         run: |
           psql -d yak -c "CREATE DATABASE yak_ref"

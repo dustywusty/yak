@@ -48,8 +48,12 @@ async function api(method, path, params = {}, signal = S.abort.signal) {
     if (e.name === 'AbortError') throw e;
     throw new ApiError(0, { code: 'network', detail: 'network error' });
   }
+  if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
   if (res.status === 204) return null;
   const body = await res.json().catch(() => ({}));
+  // Cancellation can outlive fetch while the response body is being read.
+  // An old 401 must not forget the token for a replacement view.
+  if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
   if (!res.ok) {
     const err = new ApiError(res.status, body);
     if (res.status === 401) needToken(UNAUTHORIZED);
