@@ -3,14 +3,14 @@
 Status: Accepted (owner, 2026-11-20). Normative text: `spec/delegation.md`
 (DLG-001..140, CT-DLG-01..18). Builds on design §3.2, §4, §4.2, §13,
 PAR-039; ADR-0002; ADR-0003; ADR-0016. Designed together with ADR-0018
-(operator mode, accepted) and closes its conflicts C1 and C5. Abby task:
+(operator mode, accepted) and closes its conflicts C1 and C5. Yak task:
 `task_sa3li42ffdox4bf5augfdus3he`.
 
 ## Context
 
 The owner wants to chat in the viewer and ask agents to do things for
 them. Agents are external processes with their own actors and
-credentials (`examples/build-abby`). An agent bridge will listen for
+credentials (`examples/build-yak`). An agent bridge will listen for
 mentions and hand each request to an agent command. ADR-0018 covers a
 person who writes directly from the browser. This ADR covers an agent
 that writes **as the person's agent**.
@@ -43,7 +43,7 @@ person. Nothing in a request header or body can select a principal.
 
 | Option | Summary | Verdict |
 |---|---|---|
-| A. Header on the agent's own token (`Abby-On-Behalf-Of: dlg_…`) | No new secret; one bridge token serves many people | Rejected |
+| A. Header on the agent's own token (`Yak-On-Behalf-Of: dlg_…`) | No new secret; one bridge token serves many people | Rejected |
 | B. Delegated credential bound to a delegation | Ordinary bearer token; the delegation is in the credential | **Chosen** |
 | C. Delegator mints a token for the agent | Person's client creates the secret and hands it over | Rejected |
 | D. RFC 8693 token exchange / OIDC | Standard, external IdP | Later (P4) |
@@ -83,7 +83,7 @@ Why intersection:
 4. **Fails closed.** When in doubt, both must agree.
 
 Cost: an agent needs its own grants wherever it acts for someone. That is
-already true for the build-abby agents. The value of delegation is then
+already true for the build-yak agents. The value of delegation is then
 (a) the confused-deputy guard (the agent never exceeds the person), (b)
 the person's ownership, assignment, and manager status, and (c) honest
 attribution.
@@ -114,7 +114,7 @@ idempotent replays. Expiry, operation classes, and revocation are enough.
 | Option | Old client shows | Verdict |
 |---|---|---|
 | `actor_id` = person (effective), `authenticated_actor_id` = agent | "Dusty: approved, ship it" when the agent wrote it | Rejected |
-| **`actor_id` = agent, `on_behalf_of_actor_id` = person, `delegation_id`** | "abby-bridge: …" | **Chosen** |
+| **`actor_id` = agent, `on_behalf_of_actor_id` = person, `delegation_id`** | "yak-bridge: …" | **Chosen** |
 
 Why: WIRE-001 tells clients to ignore unknown fields. Every P1 client and
 the current viewer would show a delegated write as the person's own words
@@ -140,7 +140,7 @@ filter `on_behalf_of`.
 ### 5 Human gates: one server-known task flag
 
 ADR-0018 defines a gate as a `blocked` task with root label
-`gate=pending`, approved by a manager's **unblock**. BUILD_ABBY BOOT-03
+`gate=pending`, approved by a manager's **unblock**. BUILD_YAK BOOT-03
 approves by **completing** a review task. Both are ordinary task
 transitions, so a delegation with `task.manage` or `task.settle` could
 approve. ADR-0018 keeps `gate` as a label convention the server does not
@@ -151,16 +151,17 @@ only with a direct credential). For such a task, a delegated credential
 cannot unblock, claim, renew, release, complete, fail, update the brief,
 change root labels, or remove it from another task's prerequisites
 (`403 direct_action_required`). A delegated credential also cannot
-create a task with the flag or change the flag (DLG-098). Block, cancel,
-reopen, and assign stay allowed; none of them can approve.
+create a task with the flag or change the flag (DLG-098), or cancel or
+reopen a task with the flag (DLG-091). Manager block and assignment stay
+allowed. Reopening a task with the flag always lands in `blocked`, even
+with a direct credential and completed prerequisites (DLG-099). It
+records a new block and keeps the flag; it does not approve the gate.
 
-<!-- TODO(F1): pending owner confirmation of the F1 fix (review
-msg_y7eqfu7bba4u3lw6vxuvhyinuq). Cancel then reopen of a gate task by a
-delegated credential reaches `ready` with no `task.unblocked`, so "none
-of them can approve" is not true for that pair. Replace this paragraph
-with the confirmed wording, and update owner decision 7. --> Clients never show a delegated
-`task.unblocked` or `task.completed` as an approval (DLG-096), even on
-tasks that were not marked.
+Clients count a human gate as passed only on `task.unblocked` by a
+`human` actor with `on_behalf_of_actor_id: null`, after the latest block
+(DLG-096). Completion, an agent's direct unblock, state `ready`, and
+labels do not pass a human gate. This is the owner's F1 decision,
+relayed in `msg_iuv3meuxx4r74djrk62f4jnryy` on 2026-11-20.
 
 "Direct" means "not delegated". It does not prove a human was present
 (§7).
@@ -178,7 +179,7 @@ one to `true` if the issuer has `false`. `false` refuses issue, list,
 revoke-other (revoke-self stays allowed for logout), or delegation
 create, mint, revoke, with `403 credential_restricted`. Delegated
 credentials always have both `false`. The pair ships first, alone, as
-the capability `abby.credentials.restrictions` (Q14). Operator-mode
+the capability `yak.credentials.restrictions` (Q14). Operator-mode
 tokens have both `false` (Q2).
 
 Rejected: new scopes (`credentials`, `delegate`) in the scope list.
@@ -192,7 +193,7 @@ make `*` silently include them.
 ADR-0018 C5: a reader cannot prove that a write came from the browser,
 because `run_id` is client data and credential labels are private.
 
-Decision: the only provenance fact Abby guarantees is the one the server
+Decision: the only provenance fact Yak guarantees is the one the server
 derives from the authenticated credential: **direct, or delegated by P to
 A through D**. `on_behalf_of_actor_id` and `delegation_id` cannot be set
 by any client input. `run_id` stays diagnostic; clients never show an
@@ -231,7 +232,7 @@ audit on each board in the delegation for create and revoke (without the
 other boards), so board admins see which agents can act for which
 members. Every board audit record made under delegation carries
 `on_behalf_of_actor_id` and `delegation_id`. Discovery: profile
-`abby.delegation`, limits, and a `delegation` object listing operation
+`yak.delegation`, limits, and a `delegation` object listing operation
 classes and never-delegable operations, for consent screens.
 
 ### 10 How the agent bridge uses this (informative)
@@ -243,7 +244,7 @@ classes and never-delegable operations, for consent screens.
    credential narrowed to the thread's channel and 30 minutes.
 3. B hands only that token to the agent command. The command cannot
    exceed P, cannot exceed B, and cannot approve a gate.
-4. Every write shows "abby-bridge for P". P revokes the delegation to
+4. Every write shows "yak-bridge for P". P revokes the delegation to
    stop all of it at the next request.
 
 ## Design conflicts
@@ -272,9 +273,10 @@ classes and never-delegable operations, for consent screens.
   (DLG-111, DLG-112), the "own credentials only" authorization of
   `DELETE /v1/credentials/{id}` in `spec/openapi.yaml` (DLG-083),
   IDEM-002, EVT-003/005, EVT-009 and SNAP-003 (DLG-075), TASK-041
-  (DLG-110), TASK-042/043, TASK-052, SEL-002 (DLG-091), P2 L2 root
-  authorship (DLG-112), and BATCH-003 (DLG-098) are amended by ID (spec
-  §17). P1/P2 behavior for direct credentials does not change.
+  (DLG-110), TASK-042/043, TASK-052, SEL-002 (DLG-091), P2 L13 and
+  TASK-035 (DLG-099), P2 L2 root authorship (DLG-112), and BATCH-003 (DLG-098) are amended by ID (spec
+  §17). Direct gate reopen now lands in `blocked`; other P1/P2
+  behavior for direct credentials does not change.
 - **D5 — PAR-039 is P4** in the design milestone table. The owner pulled
   it forward; §15 and A3 of the design need an update with the
   implementation.
@@ -295,7 +297,7 @@ classes and never-delegable operations, for consent screens.
 - One new server resource (delegation), two credential attributes, one
   task field, new attribution fields, one filter, three error codes.
 - Delivery order: the credential flags ship first and alone
-  (`abby.credentials.restrictions`, board task
+  (`yak.credentials.restrictions`, board task
   `task_ej3tgn5syl5fqyesin6ge4f2pm`). The task field
   `direct_action_required` is board task
   `task_hm7cvzd6z553n4josm2vfypj54`.
@@ -328,9 +330,12 @@ The owner accepted every recommendation of the draft.
    The runner stops on the first `401` (DLG-116).
 6. OR filter "author or on behalf of P": no. Two reads in v1 (DLG-103).
 7. Gate marker: add the task field `direct_action_required`. A delegated
-   credential cannot unblock, claim, renew, release, complete, fail,
-   change the brief or root labels, or remove the task as a
-   prerequisite (DLG-090..093). ADR-0018's approve flow uses the field.
+   credential cannot unblock, cancel, reopen, claim, renew, release,
+   complete, fail, change the brief or root labels, or remove the task as a
+   prerequisite (DLG-090..093). Reopening a flagged task lands in
+   `blocked` for everyone (DLG-099). Only a direct `task.unblocked` by a
+   human passes a human gate (DLG-096). The owner confirmed these F1
+   rules on 2026-11-20; ADR-0018's approve flow uses them.
 8. Subscriptions and schedules (P3) under delegation: not in v1
    (DLG-095).
 9. Delegators: `human` actors only in v1 (DLG-011). No chains.
@@ -345,6 +350,6 @@ The owner accepted every recommendation of the draft.
     delegated (DLG-106..108).
 14. Credential flags first: yes. `may_manage_credentials` and
     `may_delegate` ship first and separately as
-    `abby.credentials.restrictions`. Default: the issuer's value. A child
+    `yak.credentials.restrictions`. Default: the issuer's value. A child
     can never turn one back to `true`. A refusal is
     `403 credential_restricted` (DLG-004, DLG-036..038).

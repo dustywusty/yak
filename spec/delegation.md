@@ -1,17 +1,17 @@
-# Abby delegated credentials, version 1 — optional profile `abby.delegation`
+# Yak delegated credentials, version 1 — optional profile `yak.delegation`
 
 Status: accepted (owner, 2026-11-20). This document is normative for the
-`abby.delegation` profile and for the capability
-`abby.credentials.restrictions`. It extends `spec/protocol.md`
-(`abby.p1.core`) and `spec/p2-tasks.md` (`abby.p2.tasks`). Every P1 and P2
+`yak.delegation` profile and for the capability
+`yak.credentials.restrictions`. It extends `spec/protocol.md`
+(`yak.p1.core`) and `spec/p2-tasks.md` (`yak.p2.tasks`). Every P1 and P2
 requirement still applies, unless a requirement here amends it by ID. The
 decision record is ADR-0019; "Q1..Q14" below are the owner decisions in
-ADR-0019. Abby task: `task_sa3li42ffdox4bf5augfdus3he`.
+ADR-0019. Yak task: `task_sa3li42ffdox4bf5augfdus3he`.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are used as in RFC 2119.
 Every MUST maps to a check in the traceability table (§16).
 
-Design baseline: `docs/design/Abby_Design.md` §3.2 (attribution), §4
+Design baseline: `docs/design/Yak_Design.md` §3.2 (attribution), §4
 (authorization, "later OIDC and delegated credentials must use the same
 authorization evaluator", "effective rights are the intersection of the
 actor's current grants and every credential or delegation restriction"),
@@ -66,7 +66,7 @@ schedules, P3) under delegation is deferred (DLG-095).
 ## 2 Discovery
 
 - **DLG-001** A server that implements this profile MUST list
-  `abby.delegation` in `protocol.profiles` of `GET /v1/server`.
+  `yak.delegation` in `protocol.profiles` of `GET /v1/server`.
 - **DLG-002** Discovery MUST add these `limits`:
   `delegation_max_seconds` (reference 2592000, 30 days),
   `delegation_default_seconds` (reference 86400),
@@ -80,10 +80,10 @@ schedules, P3) under delegation is deferred (DLG-095).
   build consent screens. It MUST NOT contain secrets or board data
   (DISC-002).
 - **DLG-004** A server that implements DLG-036..038 MUST list the
-  capability `abby.credentials.restrictions` in discovery. A server that
-  lists `abby.delegation` MUST also list it. The restriction pair ships
+  capability `yak.credentials.restrictions` in discovery. A server that
+  lists `yak.delegation` MUST also list it. The restriction pair ships
   first, alone, before the rest of this profile (Q14). A server MAY list
-  `abby.credentials.restrictions` without `abby.delegation`.
+  `yak.credentials.restrictions` without `yak.delegation`.
 
 ## 3 The delegation resource
 
@@ -199,7 +199,7 @@ can therefore revoke the person's CLI token. The same gap would let a
 stolen operator token create delegations. This profile closes both with
 one additive pair of credential attributes. They are part of this
 document so that ADR-0018 and ADR-0019 use one design. They ship first,
-alone, as the capability `abby.credentials.restrictions` (DLG-004, Q14).
+alone, as the capability `yak.credentials.restrictions` (DLG-004, Q14).
 This closes ADR-0018 conflict C1.
 
 - **DLG-036** A credential has two boolean attributes:
@@ -231,7 +231,7 @@ This closes ADR-0018 conflict C1.
   There is no header, query parameter, or body field that selects a
   delegation or a principal. A request with a direct credential is never
   on behalf of anyone. A server MUST reject any request header named
-  `Abby-On-Behalf-Of` with `400 validation_failed`, so that clients do not
+  `Yak-On-Behalf-Of` with `400 validation_failed`, so that clients do not
   assume a header model.
 - **DLG-041** `GET /v1/me` with a delegated credential MUST return
   `actor` (the delegate), `credential` (with `delegation_id`),
@@ -363,13 +363,15 @@ credential's `operations` (**DLG-050**). Reads of hidden resources stay
 ## 9 Gate tasks and the human-gate rule
 
 The P2 profile has no approval resource. Two approval shapes are in use,
-and both are ordinary task transitions:
+and both are ordinary task transitions. Only the second shape passes a
+human gate; completing a review task is a review outcome, not a human
+gate approval:
 
 - Review task (BUILD_ABBY_WITH_ABBY BOOT-03): approval is the
   **completion** of a review task by the reviewer.
 - Operator-mode gate (ADR-0018 §7, OPR-501): a `blocked` task with
   `direct_action_required: true`; approval is the **unblock** by a
-  manager with a direct credential. The root label `gate=approved`
+  human manager with a direct credential. The root label `gate=approved`
   follows for display only.
 
 A server cannot protect a label convention it does not know. So this
@@ -391,35 +393,34 @@ D2).
   credential asks the owner to set it.
 - **DLG-091** For a gate task, these operations MUST return `403
   forbidden` with code `direct_action_required` when the credential is
-  delegated: **unblock**, claim, renew, release, complete, fail,
-  claimant block, brief update, `PATCH` of the flag, and any change to the
-  root message labels. Claim-next under a delegated credential MUST NOT
+  delegated: **unblock**, **cancel**, **reopen**, claim, renew, release,
+  complete, fail, claimant block, brief update, `PATCH` of the flag, and
+  any change to the root message labels. Claim-next under a delegated credential MUST NOT
   select a gate task (it is not a candidate, SEL-002).
 - **DLG-092** Under a delegated credential, a dependency replacement
   (L15) that removes a gate task from a task's prerequisites MUST return
   `403 forbidden` with code `direct_action_required`. Adding a gate
   prerequisite is allowed.
-- **DLG-093** Under a delegated credential, manager block, cancel,
-  reopen, and assignment of a gate task are allowed. None of them can
-  approve: a blocked or canceled gate never satisfies a dependent
-  (DEP-004), and a reopened one is still a gate.
-  <!-- TODO(F1): pending owner confirmation of the F1 fix (review
-  msg_y7eqfu7bba4u3lw6vxuvhyinuq). Cancel then reopen puts a gate task in
-  `ready` with no `task.unblocked`. Replace this rule with the confirmed
-  wording, and add cancel-then-reopen to CT-DLG-12. -->
+- **DLG-093** Under a delegated credential, manager block and assignment
+  of a gate task remain allowed. Cancel and reopen MUST be refused as
+  specified in DLG-091, with no state change. A blocked or canceled gate
+  never satisfies a dependent (DEP-004).
 - **DLG-094** "Direct" means "not delegated". It does not prove that a
   human pressed a button (see §10.1). A deployment that wants that
   guarantee keeps the person's direct credentials in the person's own
   client (for example the operator-mode page of ADR-0018), not in agent
   processes.
-- **DLG-096** A client that shows approvals (OPR-502, OPR-602) MUST NOT
-  show a `task.unblocked` or `task.completed` event as a person's approval
-  if its `on_behalf_of_actor_id` is not `null`. It shows "A for P" and no
-  approval badge. (This rule protects tasks that were not marked as gates.)
-- **DLG-097** A server that lists `abby.delegation` MUST implement
-  DLG-090..093 and DLG-098 (Q7). There is no label-only gate mode. A client that
-  creates delegations SHOULD still warn when a delegation includes
-  `task.manage` or `task.settle` on channels that hold review tasks,
+- **DLG-096** A client that shows approvals (OPR-502, OPR-602) MUST count
+  a human gate as passed only on `task.unblocked` by an actor of kind
+  `human`, with `on_behalf_of_actor_id: null`, after the latest block.
+  An unknown actor, an agent's direct unblock, a delegated event, a
+  `task.completed` event, and state `ready` alone MUST NOT count as a
+  person's approval. A delegated event shows "A for P" with no approval
+  badge. This rule also protects tasks that were not marked as gates.
+- **DLG-097** A server that lists `yak.delegation` MUST implement
+  DLG-090..093 and DLG-098..099 (Q7). There is no label-only gate mode.
+  A client that creates delegations SHOULD still warn when a delegation
+  includes `task.manage` or `task.settle` on channels that hold review tasks,
   because a review task that is not marked as a gate is protected only
   by the display rule DLG-096.
 - **DLG-098** Under a delegated credential, these requests MUST return
@@ -428,6 +429,16 @@ D2).
   with any item that has `direct_action_required: true` (the whole batch
   fails, BATCH-003, with the item in `errors`); and `PATCH …/tasks/{id}`
   that sets or clears `direct_action_required` on any task.
+- **DLG-099** Reopening a task with `direct_action_required: true` MUST
+  land in `blocked`, whoever reopens it, even if every prerequisite is
+  completed. This amends P2 L13 and TASK-035 for gate tasks only. All
+  other reopen preconditions and effects still apply (TASK-036,
+  BRIEF-022). The flag stays set. The new block uses the existing block
+  shape with `cause: "manual"`, the reopening actor and its direct
+  attribution, and the reopen reason (or `direct action required` if
+  omitted). The server emits `task.reopened`, then `task.blocked`, then
+  `thread.view_invalidated`, and MUST NOT emit `task.unblocked` or
+  `task.became_ready`. Only a later unblock evaluates prerequisites.
 
 Durable automation (P3) is not delegable in this version:
 
@@ -473,7 +484,7 @@ person's). This resolves conflict D1.
   `author_id=Dusty` and `on_behalf_of=Dusty` in two reads. (Q6: no OR
   filter in v1.)
 - **DLG-104** A client that renders attribution SHOULD show both actors,
-  for example "abby-bridge for Dusty". It MUST NOT show the delegator
+  for example "yak-bridge for Dusty". It MUST NOT show the delegator
   alone.
 - **DLG-105** Mentions (MEN-001) resolve as today. A delegated write MUST
   NOT resolve a mention that the effective authority could not resolve
@@ -493,7 +504,7 @@ this, or an agent for the person?"
   trust exactly one provenance fact: **a write was direct, or it was
   delegated by P to A through D.** This is the only provenance fact that
   this profile guarantees.
-- **DLG-107** `run_id` (`Abby-Run-Id`) stays client data with no
+- **DLG-107** `run_id` (`Yak-Run-Id`) stays client data with no
   authority (AUTH-002). Clients MUST NOT show a `run_id` prefix (for
   example `operator/…` from OPR-603) as proof of device, client, or human
   presence. A client MAY show it marked "unverified".
@@ -659,9 +670,9 @@ contracts (ADR-0017 uses CT-039..048).
 | CT-DLG-09 | Authorship | Delegate cannot edit person's direct message; can edit its own on-behalf message; person can edit on-behalf message; delegate direct cannot |
 | CT-DLG-10 | Claims under delegation | Claim records A, P, D; P's direct credential with proof → 403; A direct with proof → 403; same pair through a new delegation → 200 |
 | CT-DLG-11 | Assignment | Task assigned to P claimable by A-for-P; task assigned to A not claimable by A-for-P (403 `not_assignee`) |
-| CT-DLG-12 | Gate task | Delegated unblock/claim/complete/fail/brief/root-label on gate → 403 `direct_action_required`; claim-next skips it; removing gate prerequisite → 403; block, cancel allowed; delegated `POST …/tasks` and batch item with `direct_action_required: true` → 403 `direct_action_required`, nothing created; delegated `PATCH` that sets or clears the flag → 403 `direct_action_required` |
+| CT-DLG-12 | Gate task | Delegated unblock/claim/complete/fail/brief/root-label on gate → 403 `direct_action_required`; claim-next skips it; removing gate prerequisite → 403; manager block and assignment allowed; delegated cancel and reopen of a gate each → 403 `direct_action_required`, no state change; direct cancel then reopen by either a human or an agent → `blocked`, flag kept, new block recorded with the DLG-099 event order and default or supplied reason, no approval, including with all prerequisites completed or a pending prerequisite; failed gate reopened directly → `blocked`; unmarked task reopen keeps P2 behavior; delegated `POST …/tasks` and batch item with `direct_action_required: true` → 403 `direct_action_required`, nothing created; delegated `PATCH` that sets or clears the flag → 403 `direct_action_required` |
 | CT-DLG-13 | Idempotency scope | Same key from A direct and A-for-P → two independent operations; same key across two delegations P→A → one operation |
-| CT-DLG-14 | No header impersonation | `Abby-On-Behalf-Of` header → 400; body field naming a delegator → 400 |
+| CT-DLG-14 | No header impersonation | `Yak-On-Behalf-Of` header → 400; body field naming a delegator → 400 |
 | CT-DLG-15 | Discovery and /me | Profile, limits, `delegation` object; `/me` shows delegate, delegation, principal |
 | CT-DLG-16 | Resync | Change of A's grants invalidates a cursor bound to a delegated credential → 409 `resync_required` |
 | CT-DLG-17 | Visibility of delegations | Third actor → 404 on read and revoke; board audit on each listed board shows create and revoke without other board IDs, with exactly the DLG-131 metadata fields |
@@ -687,13 +698,13 @@ contracts (ADR-0017 uses CT-039..048).
 | DLG-073..074 | CT TestDelegatedBoardVisibility; CT TestDelegatedPermissions |
 | DLG-075 | CT-DLG-16 (TestDelegatedCursorResync) |
 | DLG-080..084 | CT-DLG-06 (TestDelegationRevocation); CT-DLG-07; CT-DLG-17 |
-| DLG-090..094, DLG-098 | CT-DLG-12 (TestGateTaskDirectAction); the gate-opening order in DLG-090 is guidance (SHOULD), not tested |
-| DLG-096..097 | Viewer review (operator mode approval list); VWR test that a delegated `task.unblocked` shows no approval badge |
+| DLG-090..094, DLG-098..099 | CT-DLG-12 (TestGateTaskDirectAction); the gate-opening order in DLG-090 is guidance (SHOULD), not tested |
+| DLG-096..097 | Viewer review (operator mode approval list); UX-GATE (human direct unblock alone approves; delegated or agent unblock, completion, reopen, and state alone show no approval badge) |
 | DLG-095 | CT TestNoDelegatedAutomation (P3 servers only) |
 | DLG-100..102 | CT-DLG-08 (TestDelegatedAttribution); schema checks |
 | DLG-106..108 | CT-DLG-14 (no client input changes provenance); viewer review of `run_id` display |
 | DLG-103 | CT TestOnBehalfOfFilter |
-| DLG-104 | Viewer and CLI review (manual); `abby read` shows "A for P" |
+| DLG-104 | Viewer and CLI review (manual); `yak read` shows "A for P" |
 | DLG-105 | CT TestDelegatedMentions |
 | DLG-110..113, DLG-117 | CT-DLG-09 (TestDelegatedAuthorship); CT-DLG-11 (TestDelegatedAssignment) |
 | DLG-114..116 | CT-DLG-10 (TestDelegatedClaims) |
@@ -720,6 +731,7 @@ with the implementation, except where the row says it is done.
 | `spec/protocol.md` EVT-009, SNAP-003 | The policy fingerprint covers both actors' grants, both ceilings, and the delegation state (DLG-075). |
 | `spec/openapi.yaml` `DELETE /v1/credentials/{id}` authorization ("the credential's own actor, or a server administrator") | The delegator may also revoke a delegated credential of their delegation (DLG-083). |
 | `spec/p2-tasks.md` TASK-041 | Manager under delegation: P is owner and both P and A hold `task_manage` (DLG-110). |
+| `spec/p2-tasks.md` L13, TASK-035 | A reopened gate task always lands in `blocked`, for every caller (DLG-099); delegated cancel and reopen are refused (DLG-091). Other direct-credential behavior stays unchanged. |
 | `spec/p2-tasks.md` SEL-002 | Claim-next under a delegated credential does not select a gate task (DLG-091). |
 | `spec/p2-tasks.md` L2 (convert thread), root authorship | Root author for a delegated caller is the pair (A, P) (DLG-112). |
 | `spec/p2-tasks.md` BATCH-003, ADR-0016 create and patch requests | Delegated create, batch item, or patch with `direct_action_required` → `403 direct_action_required` (DLG-098). |
@@ -727,4 +739,4 @@ with the implementation, except where the row says it is done.
 | `spec/operator-mode.md` OPR-106, OPR-107, OPR-501..502, OPR-513, OPR-520, OPR-533, OPR-603, OPR-606 | Done in the accepted operator-mode contract: flags `false` on operator tokens, direct credentials only, gate = `blocked` + `direct_action_required`, label display only, approval display rule DLG-096, `run_id` is never proof (DLG-107). |
 | `spec/archive.md` ARC-031..033, ARC-040 | Done in the accepted archive contract: archives keep `direct_action_required` and the attribution fields; delegations and credential flags are never exported. |
 | ADR-0016 | `direct_action_required` on Task; attribution fields on Task, Brief, Claim, block. |
-| `docs/design/Abby_Design.md` §15, A3 | PAR-039 moves from P4 to the chat-with-agents milestone. |
+| `docs/design/Yak_Design.md` §15, A3 | PAR-039 moves from P4 to the chat-with-agents milestone. |
