@@ -1,0 +1,14 @@
+{
+  "channel": "eng",
+  "title": "Deploy 1.4",
+  "text": "Deploy 1.4 to staging? @bob please confirm.",
+  "labels": {
+    "Status": "open"
+  },
+  "mentions": [
+    "act_bob"
+  ],
+  "extensions": {
+    "acme.ticket": "OPS-42"
+  }
+}

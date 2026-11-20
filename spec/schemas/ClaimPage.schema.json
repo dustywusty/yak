@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClaimPage",
+  "description": "Claim history of one task, newest first. Never carries proofs.",
+  "type": "object",
+  "required": [
+    "items",
+    "next_page_token"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "Claim.schema.json"
+      }
+    },
+    "next_page_token": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Opaque page token (\"p1.\" prefix); null on the last page."
+    }
+  }
+}

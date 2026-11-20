@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CancelTaskRequest",
+  "description": "Body of POST /tasks/{task_id}/cancel (L12).",
+  "type": "object",
+  "required": [
+    "reason"
+  ],
+  "properties": {
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Required; 1..limits.max_text_bytes bytes (TASK-037)."
+    }
+  },
+  "additionalProperties": false
+}

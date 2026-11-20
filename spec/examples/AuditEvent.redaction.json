@@ -1,0 +1,14 @@
+{
+  "id": "aud_1",
+  "board_id": "brd_demo",
+  "actor_id": "act_alice",
+  "action": "message.redact",
+  "target_type": "message",
+  "target_id": "msg_reply1",
+  "reason": "posted a secret",
+  "metadata": {
+    "thread_id": "thr_deploy",
+    "author_actor_id": "act_bob"
+  },
+  "recorded_at": "2026-11-19T20:04:45Z"
+}

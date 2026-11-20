@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ThreadPage",
+  "description": "Threads in creation order. A page may be short or empty while next_page_token is non-null.",
+  "type": "object",
+  "required": [
+    "threads",
+    "next_page_token"
+  ],
+  "properties": {
+    "threads": {
+      "type": "array",
+      "items": {
+        "$ref": "Thread.schema.json"
+      }
+    },
+    "next_page_token": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Opaque page token (\"p1.\" prefix); null on the last page."
+    }
+  }
+}

@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Discovery",
+  "description": "GET /v1/server: protocol versions, capabilities, limits and retention. Unauthenticated.",
+  "type": "object",
+  "required": [
+    "protocol",
+    "implementation",
+    "capabilities",
+    "limits",
+    "retention",
+    "authentication"
+  ],
+  "properties": {
+    "protocol": {
+      "type": "object",
+      "required": [
+        "name",
+        "versions",
+        "status",
+        "profiles"
+      ],
+      "properties": {
+        "name": {
+          "const": "abby"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "status": {
+          "type": "string",
+          "description": "Specification maturity, e.g. draft."
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Conformance profiles, e.g. abby.p1.core, abby.p2.tasks."
+        }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_.]+$"
+      },
+      "uniqueItems": true,
+      "description": "Advertised capability identifiers. P2: abby.tasks.claim_proof_replay is listed exactly when a replayed claim response can return the proof (TASK-003, CLAIM-041, CLAIM-043); its absence means claim_proof_replay is false."
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "max_request_bytes",
+        "max_text_bytes",
+        "max_title_bytes",
+        "max_labels_per_message",
+        "max_label_key_bytes",
+        "max_label_value_bytes",
+        "max_channel_path_bytes",
+        "max_page_size",
+        "max_wait_ms",
+        "snapshot_max_items",
+        "credential_max_ttl_seconds"
+      ],
+      "properties": {
+        "max_request_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_text_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_title_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_labels_per_message": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_label_key_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_label_value_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_channel_path_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_page_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_wait_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "snapshot_max_items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "credential_max_ttl_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "claim_lease_default_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: default claim lease (reference 120)."
+        },
+        "claim_lease_min_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: shortest accepted lease (reference 15)."
+        },
+        "claim_lease_max_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: longest accepted lease (reference 300)."
+        },
+        "max_batch_tasks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: items per POST /tasks/batch (reference 100)."
+        },
+        "max_dependencies_per_task": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: prerequisites per task (reference 100)."
+        },
+        "max_task_result_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: bytes of result data on complete or fail (reference 16384)."
+        },
+        "max_evidence_items": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: evidence items on complete or fail (reference 50)."
+        },
+        "max_claim_wait_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "P2: claim-next wait_ms ceiling (reference 30000)."
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "required": [
+        "idempotency_seconds",
+        "events_seconds",
+        "snapshot_seconds"
+      ],
+      "properties": {
+        "idempotency_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "events_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "snapshot_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "authentication": {
+      "type": "object",
+      "required": [
+        "methods"
+      ],
+      "properties": {
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "bearer"
+            ]
+          },
+          "minItems": 1
+        }
+      }
+    }
+  },
+  "if": {
+    "required": [
+      "protocol"
+    ],
+    "properties": {
+      "protocol": {
+        "required": [
+          "profiles"
+        ],
+        "properties": {
+          "profiles": {
+            "contains": {
+              "const": "abby.p2.tasks"
+            }
+          }
+        }
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "limits": {
+        "required": [
+          "claim_lease_default_seconds",
+          "claim_lease_min_seconds",
+          "claim_lease_max_seconds",
+          "max_batch_tasks",
+          "max_dependencies_per_task",
+          "max_task_result_bytes",
+          "max_evidence_items",
+          "max_claim_wait_ms"
+        ]
+      }
+    }
+  }
+}

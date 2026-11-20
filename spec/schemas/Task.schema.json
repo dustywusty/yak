@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Task",
+  "description": "Effective task view at server time (TASK-021, TASK-025, CLAIM-051). Never carries a claim proof or brief text (TASK-022). ETag is \"<revision>\".",
+  "type": "object",
+  "required": [
+    "id",
+    "board_id",
+    "thread_id",
+    "channel_id",
+    "channel_path",
+    "title",
+    "owner_actor_id",
+    "assignee_actor_id",
+    "created_by_actor_id",
+    "origin",
+    "state",
+    "revision",
+    "brief_revision",
+    "epoch",
+    "retry_count",
+    "dependencies",
+    "unreadable_dependencies_pending",
+    "current_claim",
+    "last_claim",
+    "block",
+    "outcome",
+    "root_redacted",
+    "created_at",
+    "updated_at",
+    "state_changed_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "board_id": {
+      "type": "string"
+    },
+    "thread_id": {
+      "type": "string"
+    },
+    "channel_id": {
+      "type": "string"
+    },
+    "channel_path": {
+      "$ref": "ChannelPath.schema.json"
+    },
+    "title": {
+      "type": "string",
+      "description": "The thread title."
+    },
+    "owner_actor_id": {
+      "type": "string",
+      "description": "Accountable actor. Owner plus task_manage is a manager; ownership alone grants nothing."
+    },
+    "assignee_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The only eligible claimant, or null (any actor with read and claim)."
+    },
+    "created_by_actor_id": {
+      "type": "string"
+    },
+    "origin": {
+      "type": "string",
+      "enum": [
+        "new_thread",
+        "converted",
+        "batch"
+      ]
+    },
+    "state": {
+      "$ref": "TaskState.schema.json"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Task revision; exposed as the ETag. A lapsed lease shows recorded revision + 1."
+    },
+    "brief_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Current brief revision. Brief text is read only through the brief routes and the claim response."
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Incremented by every new claim; 0 before the first claim."
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of reopens."
+    },
+    "dependencies": {
+      "type": "array",
+      "description": "Prerequisites the reader can read (DEP-009). Never a count of unreadable ones.",
+      "items": {
+        "$ref": "#/$defs/Dependency"
+      }
+    },
+    "unreadable_dependencies_pending": {
+      "type": "boolean",
+      "description": "True exactly when the task is waiting and every readable prerequisite is completed (DEP-009)."
+    },
+    "current_claim": {
+      "anyOf": [
+        {
+          "$ref": "Claim.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The active claim, or null. A claim whose lease is over never appears here (TASK-023)."
+    },
+    "last_claim": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "Claim.schema.json"
+            },
+            {
+              "properties": {
+                "status": {
+                  "not": {
+                    "const": "active"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The most recent claim that is not active, or null."
+    },
+    "block": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Block"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Outcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "How the task last ended. null while nonterminal, including after a reopen (TASK-036)."
+    },
+    "root_redacted": {
+      "type": "boolean",
+      "description": "The root was redacted (BRIEF-021); the task can no longer be reopened."
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "updated_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "state_changed_at": {
+      "$ref": "Timestamp.schema.json"
+    }
+  },
+  "if": {
+    "properties": {
+      "state": {
+        "const": "claimed"
+      }
+    },
+    "required": [
+      "state"
+    ]
+  },
+  "then": {
+    "properties": {
+      "current_claim": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "active"
+          }
+        }
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "current_claim": {
+        "type": "null"
+      }
+    }
+  },
+  "$defs": {
+    "Dependency": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "state"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "TaskState.schema.json"
+        }
+      }
+    },
+    "Block": {
+      "type": "object",
+      "required": [
+        "reason",
+        "cause",
+        "by_actor_id",
+        "at"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "cause": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "claimant",
+            "brief_updated"
+          ]
+        },
+        "by_actor_id": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "Timestamp.schema.json"
+        }
+      }
+    },
+    "Outcome": {
+      "type": "object",
+      "description": "Recorded as given; the server never infers success or failure from evidence or text (CLAIM-032).",
+      "required": [
+        "kind",
+        "reason",
+        "summary",
+        "evidence",
+        "data",
+        "by_actor_id",
+        "claim_id",
+        "execution_id",
+        "at"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "failed",
+            "canceled"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Fail or cancel reason; null for completed."
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "description": "Evidence as given, or null when none was given."
+        },
+        "data": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "by_actor_id": {
+          "type": "string"
+        },
+        "claim_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The settling claim; null for a cancel without an active claim."
+        },
+        "execution_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "$ref": "Timestamp.schema.json"
+        }
+      }
+    },
+    "Evidence": {
+      "type": "object",
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "message",
+            "commit",
+            "url",
+            "artifact",
+            "other"
+          ]
+        },
+        "ref": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

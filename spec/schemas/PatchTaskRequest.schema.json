@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PatchTaskRequest",
+  "description": "Edit title or owner (L19). Generic PATCH never changes state, assignee, dependencies or brief (TASK-030).",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "1..limits.max_title_bytes bytes, not blank."
+    },
+    "owner_actor_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false,
+  "minProperties": 1
+}

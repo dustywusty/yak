@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateChannelRequest",
+  "type": "object",
+  "required": [
+    "path"
+  ],
+  "properties": {
+    "path": {
+      "$ref": "ChannelPath.schema.json"
+    },
+    "access_mode": {
+      "type": "string",
+      "enum": [
+        "inherited",
+        "private"
+      ],
+      "default": "inherited"
+    }
+  },
+  "additionalProperties": false
+}

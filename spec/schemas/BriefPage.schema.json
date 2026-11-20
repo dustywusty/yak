@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BriefPage",
+  "description": "Brief versions of one task.",
+  "type": "object",
+  "required": [
+    "items",
+    "next_page_token"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "Brief.schema.json"
+      }
+    },
+    "next_page_token": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Opaque page token (\"p1.\" prefix); null on the last page."
+    }
+  }
+}

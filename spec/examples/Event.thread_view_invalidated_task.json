@@ -1,0 +1,48 @@
+{
+  "id": "evt_t8",
+  "cursor": "c1.example-cursor-t8",
+  "type": "thread.view_invalidated",
+  "board_id": "board_example",
+  "actor_id": "actor_worker_2",
+  "credential_id": "cred_worker_2",
+  "run_id": null,
+  "resource": {
+    "type": "thread",
+    "id": "thread_example",
+    "revision": 5
+  },
+  "channel_id": "chan_server",
+  "thread_id": "thread_example",
+  "recorded_at": "2026-11-19T19:52:11Z",
+  "effective_at": "2026-11-19T19:52:11Z",
+  "payload": {
+    "thread": {
+      "id": "thread_example",
+      "board_id": "board_example",
+      "channel_id": "chan_server",
+      "channel_path": "server",
+      "title": "Implement claim-next",
+      "root_message_id": "msg_root_example",
+      "created_by_actor_id": "actor_lead",
+      "labels": {
+        "abby.task.state": "ready",
+        "plan.ref": "claim-next"
+      },
+      "revision": 5,
+      "message_count": 1,
+      "last_message_id": "msg_root_example",
+      "task_id": "task_example",
+      "created_at": "2026-11-19T19:40:00Z",
+      "updated_at": "2026-11-19T19:52:11Z"
+    },
+    "reason": "task_state_changed",
+    "labels_before": {
+      "abby.task.state": "claimed",
+      "plan.ref": "claim-next"
+    },
+    "labels_after": {
+      "abby.task.state": "ready",
+      "plan.ref": "claim-next"
+    }
+  }
+}

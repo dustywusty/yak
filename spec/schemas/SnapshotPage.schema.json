@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SnapshotPage",
+  "type": "object",
+  "description": "One page of a materialized snapshot. Exactly one of next_page_token and continuation_cursor is non-null.",
+  "required": [
+    "snapshot",
+    "items",
+    "next_page_token",
+    "continuation_cursor"
+  ],
+  "properties": {
+    "snapshot": {
+      "$ref": "SnapshotInfo.schema.json"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SnapshotItem"
+      }
+    },
+    "next_page_token": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Opaque page token (\"p1.\" prefix); null on the last page."
+    },
+    "continuation_cursor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Present only on the final page: replay GET /events with the same filter from here."
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "next_page_token": {
+          "type": "string"
+        },
+        "continuation_cursor": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "properties": {
+        "next_page_token": {
+          "type": "null"
+        },
+        "continuation_cursor": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "SnapshotItem": {
+      "type": "object",
+      "required": [
+        "type",
+        "id",
+        "data"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "thread",
+            "message",
+            "task"
+          ],
+          "description": "P2 adds task: one item right after each thread item whose thread has a task, the effective view at capture time (TASK-092)."
+        },
+        "id": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "thread"
+            },
+            "data": {
+              "$ref": "Thread.schema.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "message"
+            },
+            "data": {
+              "$ref": "Message.schema.json"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "task"
+            },
+            "data": {
+              "$ref": "Task.schema.json"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

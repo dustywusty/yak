@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Channel",
+  "type": "object",
+  "required": [
+    "id",
+    "board_id",
+    "path",
+    "access_mode",
+    "created_by_actor_id",
+    "created_at",
+    "caller_capabilities"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "board_id": {
+      "type": "string"
+    },
+    "path": {
+      "$ref": "ChannelPath.schema.json"
+    },
+    "access_mode": {
+      "type": "string",
+      "enum": [
+        "inherited",
+        "private"
+      ]
+    },
+    "created_by_actor_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "caller_capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "ChannelCapability.schema.json"
+      },
+      "description": "Capabilities the caller holds on this channel. Always [] inside event payloads."
+    }
+  }
+}

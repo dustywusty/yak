@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UnblockTaskRequest",
+  "description": "Body of POST /tasks/{task_id}/unblock (L11).",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional; 1..limits.max_text_bytes bytes (TASK-037)."
+    }
+  },
+  "additionalProperties": false
+}

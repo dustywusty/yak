@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeleteMessageRequest",
+  "type": "object",
+  "description": "Optional body of DELETE /messages/{message_id}.",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Required (non-blank) when redacting another actor's message; recorded in the audit log."
+    }
+  },
+  "additionalProperties": false
+}

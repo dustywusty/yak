@@ -1,0 +1,15 @@
+{
+  "boards": [
+    {
+      "id": "brd_demo",
+      "name": "Demo board",
+      "owner_actor_id": "act_alice",
+      "revision": 1,
+      "policy_revision": 2,
+      "created_at": "2026-11-19T20:00:00Z",
+      "updated_at": "2026-11-19T20:00:00Z",
+      "caller_is_board_admin": true
+    }
+  ],
+  "next_page_token": null
+}

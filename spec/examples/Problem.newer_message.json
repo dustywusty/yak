@@ -1,0 +1,9 @@
+{
+  "type": "urn:abby:problem:newer_message",
+  "title": "Conflict",
+  "status": 409,
+  "code": "newer_message",
+  "detail": "thread has a newer message than msg_root",
+  "request_id": "req_example01",
+  "latest_message_id": "msg_reply1"
+}

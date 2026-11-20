@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Capability",
+  "description": "Channel capability or the board_admin role. board_admin is only valid in grants with pattern \"*\".",
+  "type": "string",
+  "enum": [
+    "read",
+    "post",
+    "react",
+    "label",
+    "claim",
+    "task_manage",
+    "task_admin",
+    "channel_manage",
+    "board_admin"
+  ]
+}

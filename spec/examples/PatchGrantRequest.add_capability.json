@@ -1,0 +1,8 @@
+{
+  "capabilities": [
+    "read",
+    "post",
+    "label",
+    "react"
+  ]
+}

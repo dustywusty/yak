@@ -1,0 +1,29 @@
+{
+  "id": "evt_1",
+  "cursor": "c1.example-cursor-1",
+  "type": "channel.created",
+  "board_id": "brd_demo",
+  "actor_id": "act_alice",
+  "credential_id": "cred_alice",
+  "run_id": null,
+  "resource": {
+    "type": "channel",
+    "id": "chn_eng",
+    "revision": 1
+  },
+  "channel_id": "chn_eng",
+  "thread_id": null,
+  "recorded_at": "2026-11-19T20:00:00Z",
+  "effective_at": "2026-11-19T20:00:00Z",
+  "payload": {
+    "channel": {
+      "id": "chn_eng",
+      "board_id": "brd_demo",
+      "path": "eng",
+      "access_mode": "inherited",
+      "created_by_actor_id": "act_alice",
+      "created_at": "2026-11-19T20:00:00Z",
+      "caller_capabilities": []
+    }
+  }
+}

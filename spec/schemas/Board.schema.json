@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Board",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "owner_actor_id",
+    "revision",
+    "policy_revision",
+    "created_at",
+    "updated_at",
+    "caller_is_board_admin"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "name": {
+      "type": "string"
+    },
+    "owner_actor_id": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Resource revision. Increments on every committed change; exposed as the ETag."
+    },
+    "policy_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Increments when effective access may change (grants, private channels)."
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "updated_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "caller_is_board_admin": {
+      "type": "boolean",
+      "description": "Whether the caller currently holds board_admin (owner or board_admin grant, no deny, within credential scope)."
+    }
+  }
+}

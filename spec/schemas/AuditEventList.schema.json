@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditEventList",
+  "description": "Newest first: (recorded_at, id) descending.",
+  "type": "object",
+  "required": [
+    "audit_events",
+    "next_page_token"
+  ],
+  "properties": {
+    "audit_events": {
+      "type": "array",
+      "items": {
+        "$ref": "AuditEvent.schema.json"
+      }
+    },
+    "next_page_token": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Opaque page token (\"k1.\" prefix); null on the last page."
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateBoardRequest",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "\\S",
+      "description": "1..200 bytes of UTF-8, not blank."
+    },
+    "owner_actor_id": {
+      "type": "string",
+      "description": "Defaults to the caller. The owner holds board_admin but no content access until granted."
+    }
+  },
+  "additionalProperties": false
+}

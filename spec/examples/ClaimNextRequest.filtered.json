@@ -1,0 +1,13 @@
+{
+  "subtree": "server",
+  "labels": {
+    "area": [
+      "api",
+      "db"
+    ],
+    "plan.ref": []
+  },
+  "assignee": "eligible",
+  "lease_seconds": 120,
+  "wait_ms": 10000
+}

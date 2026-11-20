@@ -1,0 +1,8 @@
+{
+  "type": "urn:abby:problem:precondition_required",
+  "title": "Precondition Required",
+  "status": 428,
+  "code": "precondition_required",
+  "detail": "If-Match with the current revision ETag is required",
+  "request_id": "req_example01"
+}

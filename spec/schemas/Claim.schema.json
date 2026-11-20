@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Claim",
+  "description": "Claim view: one execution attempt on one task. Never carries the proof (CLAIM-011). In an effective view a lapsed lease shows status expired, ended_at = expires_at and end_recorded_at null until the lapse is recorded (CLAIM-051).",
+  "type": "object",
+  "required": [
+    "id",
+    "task_id",
+    "actor_id",
+    "execution_id",
+    "run_id",
+    "epoch",
+    "brief_revision",
+    "status",
+    "revision",
+    "lease_seconds",
+    "acquired_at",
+    "expires_at",
+    "ended_at",
+    "end_recorded_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "actor_id": {
+      "type": "string",
+      "description": "The claimant."
+    },
+    "execution_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Server-issued execution ID; one per claim (CLAIM-003). The value to hand to external systems for fencing."
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Abby-Run-Id of the claiming request, if any. No authority."
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Task epoch of this claim; strictly increasing per task (CLAIM-003). A fencing token."
+    },
+    "brief_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The task's brief revision when the claim was acquired."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "released",
+        "expired",
+        "completed",
+        "failed",
+        "revoked"
+      ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Claim revision; +1 per renewal (CLAIM-023)."
+    },
+    "lease_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Lease granted by the latest claim or renewal."
+    },
+    "acquired_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "expires_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "ended_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "end_recorded_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "When the end was recorded. null while active, and for a lapse that is not yet materialized."
+    }
+  },
+  "if": {
+    "properties": {
+      "status": {
+        "const": "active"
+      }
+    },
+    "required": [
+      "status"
+    ]
+  },
+  "then": {
+    "properties": {
+      "ended_at": {
+        "type": "null"
+      },
+      "end_recorded_at": {
+        "type": "null"
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "ended_at": {
+        "$ref": "Timestamp.schema.json"
+      }
+    }
+  }
+}

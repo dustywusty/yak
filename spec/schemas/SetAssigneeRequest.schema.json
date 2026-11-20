@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SetAssigneeRequest",
+  "description": "Body of PUT /tasks/{task_id}/assignee (L16, TASK-050). null clears the assignment.",
+  "type": "object",
+  "required": [
+    "assignee_actor_id"
+  ],
+  "properties": {
+    "assignee_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Optional assignee: the only eligible claimant. Must be an actor that can read the task channel, else 400 validation_failed (TASK-051)."
+    }
+  },
+  "additionalProperties": false
+}

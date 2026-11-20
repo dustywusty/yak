@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClaimNextRequest",
+  "description": "Body of POST /tasks/claim-next (SEL-001..008).",
+  "type": "object",
+  "properties": {
+    "channel": {
+      "$ref": "ChannelPath.schema.json",
+      "description": "Exact channel path."
+    },
+    "subtree": {
+      "$ref": "ChannelPath.schema.json",
+      "description": "Channel path and all its descendants."
+    },
+    "labels": {
+      "type": "object",
+      "description": "Root-label filter: key to accepted values ([] = key present). Values for one key are ORed; keys are ANDed. Keys are case-insensitive; abby.task.state may be used.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "assignee": {
+      "type": "string",
+      "enum": [
+        "eligible",
+        "me",
+        "unassigned"
+      ],
+      "default": "eligible",
+      "description": "eligible: unassigned or assigned to the caller; me: assigned to the caller; unassigned: no assignee."
+    },
+    "lease_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Lease length in seconds. Default limits.claim_lease_default_seconds; outside [limits.claim_lease_min_seconds, limits.claim_lease_max_seconds] is 400 validation_failed, never clamped (CLAIM-020)."
+    },
+    "wait_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "0..limits.max_claim_wait_ms. Wait for a candidate without holding a lock (SEL-006)."
+    }
+  },
+  "additionalProperties": false
+}

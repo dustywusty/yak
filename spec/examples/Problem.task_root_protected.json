@@ -1,0 +1,9 @@
+{
+  "type": "urn:abby:problem:task_root_protected",
+  "title": "Conflict",
+  "status": 409,
+  "code": "task_root_protected",
+  "detail": "the root of a task thread is protected; use the task routes",
+  "request_id": "req_example01",
+  "task_id": "task_example"
+}

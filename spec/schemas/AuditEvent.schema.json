@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditEvent",
+  "type": "object",
+  "required": [
+    "id",
+    "board_id",
+    "actor_id",
+    "action",
+    "target_type",
+    "target_id",
+    "reason",
+    "metadata",
+    "recorded_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "board_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "actor_id": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string",
+      "description": "e.g. board.create, grant.create, grant.update, grant.revoke, channel.create, message.redact, actor.create, credential.issue, credential.revoke, server.bootstrap."
+    },
+    "target_type": {
+      "type": "string"
+    },
+    "target_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "recorded_at": {
+      "$ref": "Timestamp.schema.json"
+    }
+  }
+}

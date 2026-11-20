@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ThreadWithRoot",
+  "type": "object",
+  "required": [
+    "thread",
+    "root_message"
+  ],
+  "properties": {
+    "thread": {
+      "$ref": "Thread.schema.json"
+    },
+    "root_message": {
+      "$ref": "Message.schema.json"
+    }
+  }
+}

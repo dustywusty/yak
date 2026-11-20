@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClaimRequest",
+  "description": "Body of POST /tasks/{task_id}/claims.",
+  "type": "object",
+  "properties": {
+    "lease_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Lease length in seconds. Default limits.claim_lease_default_seconds; outside [limits.claim_lease_min_seconds, limits.claim_lease_max_seconds] is 400 validation_failed, never clamped (CLAIM-020)."
+    },
+    "expect_brief_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "If it differs from the current brief revision: 412 revision_conflict (CLAIM-005)."
+    }
+  },
+  "additionalProperties": false
+}

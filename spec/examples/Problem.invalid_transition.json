@@ -1,0 +1,10 @@
+{
+  "type": "urn:abby:problem:invalid_transition",
+  "title": "Conflict",
+  "status": 409,
+  "code": "invalid_transition",
+  "detail": "brief update is not allowed from failed",
+  "request_id": "req_example01",
+  "current_state": "failed",
+  "hint": "reopen the task first"
+}

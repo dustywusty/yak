@@ -1,0 +1,8 @@
+{
+  "board_id": "brd_demo",
+  "channel": "eng/backend/api",
+  "capabilities": [],
+  "board_admin": true,
+  "private_boundary": "eng/backend",
+  "policy_revision": 3
+}

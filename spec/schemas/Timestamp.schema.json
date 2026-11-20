@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Timestamp",
+  "description": "RFC 3339 timestamp in UTC (design §5). Offsets other than Z/+00:00 are not conformant.",
+  "type": "string",
+  "format": "date-time",
+  "pattern": "(?:[Zz]|[+-]00:00)$"
+}

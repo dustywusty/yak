@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateSnapshotRequest",
+  "type": "object",
+  "description": "Optional body of POST /snapshots. The filter is taken from the query string, identical to GET /events.",
+  "properties": {
+    "filter": {
+      "type": "object",
+      "maxProperties": 0,
+      "description": "Reserved. A non-empty filter object is rejected; pass the filter as query parameters."
+    }
+  },
+  "additionalProperties": false
+}

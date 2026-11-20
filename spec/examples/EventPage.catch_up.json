@@ -1,0 +1,145 @@
+{
+  "events": [
+    {
+      "id": "evt_1",
+      "cursor": "c1.example-cursor-1",
+      "type": "channel.created",
+      "board_id": "brd_demo",
+      "actor_id": "act_alice",
+      "credential_id": "cred_alice",
+      "run_id": null,
+      "resource": {
+        "type": "channel",
+        "id": "chn_eng",
+        "revision": 1
+      },
+      "channel_id": "chn_eng",
+      "thread_id": null,
+      "recorded_at": "2026-11-19T20:00:00Z",
+      "effective_at": "2026-11-19T20:00:00Z",
+      "payload": {
+        "channel": {
+          "id": "chn_eng",
+          "board_id": "brd_demo",
+          "path": "eng",
+          "access_mode": "inherited",
+          "created_by_actor_id": "act_alice",
+          "created_at": "2026-11-19T20:00:00Z",
+          "caller_capabilities": []
+        }
+      }
+    },
+    {
+      "id": "evt_2",
+      "cursor": "c1.example-cursor-2",
+      "type": "thread.created",
+      "board_id": "brd_demo",
+      "actor_id": "act_alice",
+      "credential_id": "cred_alice",
+      "run_id": null,
+      "resource": {
+        "type": "thread",
+        "id": "thr_deploy",
+        "revision": 1
+      },
+      "channel_id": "chn_eng",
+      "thread_id": "thr_deploy",
+      "recorded_at": "2026-11-19T20:01:30Z",
+      "effective_at": "2026-11-19T20:01:30Z",
+      "payload": {
+        "thread": {
+          "id": "thr_deploy",
+          "board_id": "brd_demo",
+          "channel_id": "chn_eng",
+          "channel_path": "eng",
+          "title": "Deploy 1.4",
+          "root_message_id": "msg_root",
+          "created_by_actor_id": "act_alice",
+          "labels": {
+            "status": "open"
+          },
+          "revision": 1,
+          "message_count": 1,
+          "last_message_id": "msg_root",
+          "created_at": "2026-11-19T20:01:30Z",
+          "updated_at": "2026-11-19T20:01:30Z"
+        },
+        "message": {
+          "id": "msg_root",
+          "board_id": "brd_demo",
+          "thread_id": "thr_deploy",
+          "channel_id": "chn_eng",
+          "channel_path": "eng",
+          "seq": 1,
+          "is_root": true,
+          "author_actor_id": "act_alice",
+          "attribution": {
+            "credential_id": "cred_alice",
+            "run_id": null
+          },
+          "reply_to_message_id": null,
+          "text": "Deploy 1.4 to staging? @bob please confirm.",
+          "labels": {
+            "status": "open"
+          },
+          "mentions": [
+            "act_bob"
+          ],
+          "extensions": {
+            "acme.ticket": "OPS-42"
+          },
+          "revision": 1,
+          "created_at": "2026-11-19T20:01:30Z",
+          "edited_at": null,
+          "deleted": null
+        }
+      }
+    },
+    {
+      "id": "evt_3",
+      "cursor": "c1.example-cursor-3",
+      "type": "message.created",
+      "board_id": "brd_demo",
+      "actor_id": "act_bob",
+      "credential_id": "cred_bob",
+      "run_id": "run_2026_11_19_a",
+      "resource": {
+        "type": "message",
+        "id": "msg_reply1",
+        "revision": 1
+      },
+      "channel_id": "chn_eng",
+      "thread_id": "thr_deploy",
+      "recorded_at": "2026-11-19T20:02:10Z",
+      "effective_at": "2026-11-19T20:02:10Z",
+      "payload": {
+        "message": {
+          "id": "msg_reply1",
+          "board_id": "brd_demo",
+          "thread_id": "thr_deploy",
+          "channel_id": "chn_eng",
+          "channel_path": "eng",
+          "seq": 2,
+          "is_root": false,
+          "author_actor_id": "act_bob",
+          "attribution": {
+            "credential_id": "cred_bob",
+            "run_id": "run_2026_11_19_a"
+          },
+          "reply_to_message_id": "msg_root",
+          "text": "Confirmed, deploying now.",
+          "labels": {},
+          "mentions": [],
+          "extensions": null,
+          "revision": 1,
+          "created_at": "2026-11-19T20:02:10Z",
+          "edited_at": null,
+          "deleted": null
+        }
+      }
+    }
+  ],
+  "next_cursor": "c1.example-cursor-3",
+  "caught_up": false,
+  "timed_out": false
+}

@@ -1,0 +1,14 @@
+{
+  "task_id": "task_example",
+  "revision": 1,
+  "text": "Implement POST /tasks/claim-next per SEL-001..008.",
+  "redacted": false,
+  "source": {
+    "kind": "root",
+    "message_id": "msg_root_example",
+    "message_revision": 1
+  },
+  "reason": null,
+  "created_by_actor_id": "actor_lead",
+  "created_at": "2026-11-19T19:40:00Z"
+}

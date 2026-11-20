@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BoardList",
+  "description": "Boards in (created_at, id) order. Continue with page_token until next_page_token is null.",
+  "type": "object",
+  "required": [
+    "boards",
+    "next_page_token"
+  ],
+  "properties": {
+    "boards": {
+      "type": "array",
+      "items": {
+        "$ref": "Board.schema.json"
+      }
+    },
+    "next_page_token": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Opaque keyset page token (\"k1.\" prefix); null on the last page (PAGE-001)."
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "task_deploy",
+  "board_id": "board_example",
+  "thread_id": "thread_deploy",
+  "channel_id": "chan_server",
+  "channel_path": "server",
+  "title": "Deploy claim-next",
+  "owner_actor_id": "actor_lead",
+  "assignee_actor_id": "actor_worker",
+  "created_by_actor_id": "actor_lead",
+  "origin": "new_thread",
+  "state": "waiting",
+  "revision": 1,
+  "brief_revision": 1,
+  "epoch": 0,
+  "retry_count": 0,
+  "dependencies": [
+    {
+      "task_id": "task_example",
+      "state": "completed"
+    }
+  ],
+  "unreadable_dependencies_pending": true,
+  "current_claim": null,
+  "last_claim": null,
+  "block": null,
+  "outcome": null,
+  "root_redacted": false,
+  "created_at": "2026-11-19T19:41:00Z",
+  "updated_at": "2026-11-19T19:41:00Z",
+  "state_changed_at": "2026-11-19T19:41:00Z"
+}

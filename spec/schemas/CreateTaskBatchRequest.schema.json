@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateTaskBatchRequest",
+  "description": "1..limits.max_batch_tasks items (more is 413 limit_exceeded), each with a new thread, created atomically in request order (BATCH-001..004).",
+  "type": "object",
+  "required": [
+    "tasks"
+  ],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "ref",
+          "thread"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,64}$",
+            "description": "Client-local reference, unique in the batch."
+          },
+          "thread": {
+            "type": "object",
+            "description": "The thread (and root message) created with the task. The root text becomes brief revision 1.",
+            "required": [
+              "channel",
+              "title",
+              "text"
+            ],
+            "properties": {
+              "channel": {
+                "$ref": "ChannelPath.schema.json"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "1..limits.max_title_bytes bytes, not blank."
+              },
+              "text": {
+                "type": "string",
+                "description": "Markdown; at most limits.max_text_bytes bytes of UTF-8. Copied as brief revision 1 (TASK-014)."
+              },
+              "labels": {
+                "type": "object",
+                "description": "Label keys are case-insensitive on input and normalized to lowercase; the 'abby.' prefix is reserved.",
+                "propertyNames": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+                  "not": {
+                    "pattern": "^[Aa][Bb][Bb][Yy]\\."
+                  }
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "extensions": {
+                "type": "object",
+                "propertyNames": {
+                  "pattern": "\\."
+                },
+                "description": "Namespaced extension data (keys contain '.', e.g. \"vendor.feature\")."
+              }
+            },
+            "additionalProperties": false
+          },
+          "assignee_actor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "description": "Optional assignee: the only eligible claimant. Must be an actor that can read the task channel, else 400 validation_failed (TASK-051)."
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/BatchDependency"
+            },
+            "description": "Each entry names an item of this batch (ref) or an existing task (task_id)."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "BatchDependency": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "ref"
+          ],
+          "properties": {
+            "ref": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]{1,64}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "task_id"
+          ],
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

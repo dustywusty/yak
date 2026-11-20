@@ -1,0 +1,16 @@
+{
+  "operations": [
+    {
+      "op": "set",
+      "key": "status",
+      "value": "done",
+      "expect": {
+        "value": "open"
+      }
+    },
+    {
+      "op": "unset",
+      "key": "priority"
+    }
+  ]
+}

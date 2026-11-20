@@ -1,0 +1,4 @@
+{
+  "status": "unavailable",
+  "reason": "schema version 0 is older than required 1"
+}

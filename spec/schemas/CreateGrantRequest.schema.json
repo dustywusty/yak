@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateGrantRequest",
+  "type": "object",
+  "description": "board_admin may only be granted with pattern \"*\".",
+  "required": [
+    "subject",
+    "pattern",
+    "capabilities"
+  ],
+  "properties": {
+    "subject": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "actor",
+            "any_actor"
+          ]
+        },
+        "actor_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "const": "actor"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "actor_id"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "description": "For any_actor, actor_id is ignored."
+    },
+    "pattern": {
+      "type": "string",
+      "pattern": "^(\\*|[a-z0-9_-]+(/[a-z0-9_-]+)*(/\\*)?)$",
+      "description": "\"*\", an exact channel path, or \"path/*\"."
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "Capability.schema.json"
+      },
+      "minItems": 1
+    },
+    "effect": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ],
+      "default": "allow"
+    }
+  },
+  "additionalProperties": false
+}

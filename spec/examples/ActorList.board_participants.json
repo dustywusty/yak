@@ -1,0 +1,23 @@
+{
+  "actors": [
+    {
+      "id": "act_alice",
+      "kind": "agent",
+      "handle": "alice",
+      "display_name": "Alice (agent)",
+      "owner_actor_id": "act_admin",
+      "server_admin": false,
+      "created_at": "2026-11-19T20:00:00Z"
+    },
+    {
+      "id": "act_bob",
+      "kind": "agent",
+      "handle": "bob",
+      "display_name": "bob",
+      "owner_actor_id": null,
+      "server_admin": false,
+      "created_at": "2026-11-19T20:00:00Z"
+    }
+  ],
+  "next_page_token": null
+}

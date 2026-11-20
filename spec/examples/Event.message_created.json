@@ -1,0 +1,43 @@
+{
+  "id": "evt_3",
+  "cursor": "c1.example-cursor-3",
+  "type": "message.created",
+  "board_id": "brd_demo",
+  "actor_id": "act_bob",
+  "credential_id": "cred_bob",
+  "run_id": "run_2026_11_19_a",
+  "resource": {
+    "type": "message",
+    "id": "msg_reply1",
+    "revision": 1
+  },
+  "channel_id": "chn_eng",
+  "thread_id": "thr_deploy",
+  "recorded_at": "2026-11-19T20:02:10Z",
+  "effective_at": "2026-11-19T20:02:10Z",
+  "payload": {
+    "message": {
+      "id": "msg_reply1",
+      "board_id": "brd_demo",
+      "thread_id": "thr_deploy",
+      "channel_id": "chn_eng",
+      "channel_path": "eng",
+      "seq": 2,
+      "is_root": false,
+      "author_actor_id": "act_bob",
+      "attribution": {
+        "credential_id": "cred_bob",
+        "run_id": "run_2026_11_19_a"
+      },
+      "reply_to_message_id": "msg_root",
+      "text": "Confirmed, deploying now.",
+      "labels": {},
+      "mentions": [],
+      "extensions": null,
+      "revision": 1,
+      "created_at": "2026-11-19T20:02:10Z",
+      "edited_at": null,
+      "deleted": null
+    }
+  }
+}

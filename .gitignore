@@ -1,0 +1,6 @@
+/abby
+*.token
+.env
+deploy/*.env
+!deploy/example.env
+.scratch/

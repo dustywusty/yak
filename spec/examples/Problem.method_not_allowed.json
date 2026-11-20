@@ -1,0 +1,8 @@
+{
+  "type": "urn:abby:problem:method_not_allowed",
+  "title": "Method Not Allowed",
+  "status": 405,
+  "code": "method_not_allowed",
+  "detail": "PUT is not supported on this path",
+  "request_id": "req_example01"
+}

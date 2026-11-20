@@ -1,0 +1,66 @@
+{
+  "task_id": "task_example",
+  "revision": 2,
+  "text": "Implement POST /tasks/claim-next per SEL-001..008, including wait_ms.",
+  "redacted": false,
+  "source": {
+    "kind": "brief_update",
+    "message_id": "msg_brief_notice",
+    "message_revision": 1
+  },
+  "reason": "wait_ms was missing from the scope",
+  "created_by_actor_id": "actor_lead",
+  "created_at": "2026-11-19T20:01:30Z",
+  "task": {
+    "id": "task_example",
+    "board_id": "board_example",
+    "thread_id": "thread_example",
+    "channel_id": "chan_server",
+    "channel_path": "server",
+    "title": "Implement claim-next",
+    "owner_actor_id": "actor_lead",
+    "assignee_actor_id": null,
+    "created_by_actor_id": "actor_lead",
+    "origin": "batch",
+    "state": "blocked",
+    "revision": 5,
+    "brief_revision": 2,
+    "epoch": 2,
+    "retry_count": 0,
+    "dependencies": [
+      {
+        "task_id": "task_schema",
+        "state": "completed"
+      }
+    ],
+    "unreadable_dependencies_pending": false,
+    "current_claim": null,
+    "last_claim": {
+      "id": "claim_example",
+      "task_id": "task_example",
+      "actor_id": "actor_worker",
+      "execution_id": "exec_example",
+      "run_id": "run_example",
+      "epoch": 2,
+      "brief_revision": 1,
+      "status": "revoked",
+      "revision": 3,
+      "lease_seconds": 120,
+      "acquired_at": "2026-11-19T20:00:00Z",
+      "expires_at": "2026-11-19T20:02:00Z",
+      "ended_at": "2026-11-19T20:01:30Z",
+      "end_recorded_at": "2026-11-19T20:01:30Z"
+    },
+    "block": {
+      "reason": "wait_ms was missing from the scope",
+      "cause": "brief_updated",
+      "by_actor_id": "actor_lead",
+      "at": "2026-11-19T20:01:30Z"
+    },
+    "outcome": null,
+    "root_redacted": false,
+    "created_at": "2026-11-19T19:40:00Z",
+    "updated_at": "2026-11-19T20:01:30Z",
+    "state_changed_at": "2026-11-19T20:01:30Z"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "audit_events": [
+    {
+      "id": "aud_1",
+      "board_id": "brd_demo",
+      "actor_id": "act_alice",
+      "action": "message.redact",
+      "target_type": "message",
+      "target_id": "msg_reply1",
+      "reason": "posted a secret",
+      "metadata": {
+        "thread_id": "thr_deploy",
+        "author_actor_id": "act_bob"
+      },
+      "recorded_at": "2026-11-19T20:04:45Z"
+    },
+    {
+      "id": "aud_2",
+      "board_id": null,
+      "actor_id": "act_admin",
+      "action": "actor.create",
+      "target_type": "actor",
+      "target_id": "act_alice",
+      "reason": null,
+      "metadata": {
+        "handle": "alice"
+      },
+      "recorded_at": "2026-11-19T20:00:00Z"
+    }
+  ],
+  "next_page_token": "k1.eyJ0IjoiMjAyNi0xMS0xOVQyMDowMDowMFoiLCJpZCI6ImF1ZF8yIn0"
+}

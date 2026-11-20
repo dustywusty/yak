@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BriefWithTask",
+  "description": "Response of POST /tasks/{task_id}/briefs: the new brief version plus the task view after the update.",
+  "allOf": [
+    {
+      "$ref": "Brief.schema.json"
+    },
+    {
+      "type": "object",
+      "required": [
+        "task"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "Task.schema.json"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "kind": "agent",
+  "handle": "alice",
+  "display_name": "Alice (agent)",
+  "owner_actor_id": "act_admin"
+}

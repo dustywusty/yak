@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReopenTaskRequest",
+  "description": "Body of POST /tasks/{task_id}/reopen (L13).",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional; 1..limits.max_text_bytes bytes (TASK-037)."
+    }
+  },
+  "additionalProperties": false
+}

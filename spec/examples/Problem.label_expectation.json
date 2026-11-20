@@ -1,0 +1,10 @@
+{
+  "type": "urn:abby:problem:revision_conflict",
+  "title": "Precondition Failed",
+  "status": 412,
+  "code": "revision_conflict",
+  "detail": "label \"status\" expectation failed",
+  "request_id": "req_example01",
+  "key": "status",
+  "current": "done"
+}

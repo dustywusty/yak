@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClaimResponse",
+  "description": "Successful claim (201) and the claimed result of claim-next. proof is returned once; a replay returns it only under CLAIM-041, otherwise proof null and proof_unavailable true.",
+  "type": "object",
+  "required": [
+    "outcome",
+    "claim",
+    "proof",
+    "proof_unavailable",
+    "brief",
+    "task"
+  ],
+  "properties": {
+    "outcome": {
+      "const": "claimed"
+    },
+    "claim": {
+      "$ref": "Claim.schema.json"
+    },
+    "proof": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Opaque high-entropy secret; present it as Abby-Claim-Proof on claimant operations. Never in a body or query."
+    },
+    "proof_unavailable": {
+      "type": "boolean"
+    },
+    "brief": {
+      "type": "object",
+      "description": "The brief version the claim binds (claim.brief_revision).",
+      "required": [
+        "revision",
+        "text",
+        "redacted"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redacted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "task": {
+      "$ref": "Task.schema.json"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "proof": {
+          "type": "string"
+        },
+        "proof_unavailable": {
+          "const": false
+        }
+      }
+    },
+    {
+      "properties": {
+        "proof": {
+          "type": "null"
+        },
+        "proof_unavailable": {
+          "const": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MessagePage",
+  "description": "Messages in seq order.",
+  "type": "object",
+  "required": [
+    "messages",
+    "next_page_token"
+  ],
+  "properties": {
+    "messages": {
+      "type": "array",
+      "items": {
+        "$ref": "Message.schema.json"
+      }
+    },
+    "next_page_token": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "Opaque page token (\"p1.\" prefix); null on the last page."
+    }
+  }
+}

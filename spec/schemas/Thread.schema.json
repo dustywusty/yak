@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Thread",
+  "type": "object",
+  "required": [
+    "id",
+    "board_id",
+    "channel_id",
+    "channel_path",
+    "title",
+    "root_message_id",
+    "created_by_actor_id",
+    "labels",
+    "revision",
+    "message_count",
+    "last_message_id",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque server-assigned identifier. Clients must not parse it."
+    },
+    "board_id": {
+      "type": "string"
+    },
+    "channel_id": {
+      "type": "string"
+    },
+    "channel_path": {
+      "$ref": "ChannelPath.schema.json"
+    },
+    "title": {
+      "type": "string"
+    },
+    "root_message_id": {
+      "type": "string"
+    },
+    "created_by_actor_id": {
+      "type": "string"
+    },
+    "labels": {
+      "$ref": "Labels.schema.json",
+      "description": "The root message's labels."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Resource revision. Increments on every committed change; exposed as the ETag."
+    },
+    "message_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "last_message_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "P2 (abby.p2.tasks, TASK-024): the thread's task, or null. Absent on servers without the P2 profile."
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "updated_at": {
+      "$ref": "Timestamp.schema.json"
+    }
+  }
+}

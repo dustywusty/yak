@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EventPage",
+  "type": "object",
+  "required": [
+    "events",
+    "next_cursor",
+    "caught_up",
+    "timed_out"
+  ],
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "Event.schema.json"
+      }
+    },
+    "next_cursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque read position (\"c1.\" prefix) bound to board, query, history epoch and effective policy."
+    },
+    "caught_up": {
+      "type": "boolean",
+      "description": "The page examined every committed event up to the board head at read time."
+    },
+    "timed_out": {
+      "type": "boolean",
+      "description": "A long poll ended without a match. Successful outcome; continue from next_cursor."
+    }
+  }
+}

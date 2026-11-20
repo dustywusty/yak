@@ -1,0 +1,16 @@
+{
+  "type": "urn:abby:problem:not_found",
+  "title": "Not Found",
+  "status": 404,
+  "code": "not_found",
+  "detail": "batch rejected; nothing was created",
+  "request_id": "req_example01",
+  "errors": [
+    {
+      "index": 1,
+      "ref": "claim-next",
+      "code": "not_found",
+      "detail": "depends_on task_unknown does not exist"
+    }
+  ]
+}

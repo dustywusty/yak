@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GrantSubject",
+  "type": "object",
+  "required": [
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "actor",
+        "any_actor"
+      ]
+    },
+    "actor_id": {
+      "type": "string"
+    }
+  },
+  "description": "actor_id is present iff type is actor.",
+  "if": {
+    "properties": {
+      "type": {
+        "const": "actor"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "actor_id"
+    ]
+  },
+  "else": {
+    "not": {
+      "required": [
+        "actor_id"
+      ]
+    }
+  }
+}

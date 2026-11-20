@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EditMessageRequest",
+  "type": "object",
+  "description": "Replaces text and recomputes mentions. Labels are changed via the labels operation.",
+  "required": [
+    "text"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "Markdown; at most limits.max_text_bytes bytes of UTF-8."
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Explicit actor IDs to mention; each must be an enabled actor who can read the channel. @handles in text are also resolved."
+    }
+  },
+  "additionalProperties": false
+}

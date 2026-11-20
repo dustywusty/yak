@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskState",
+  "description": "Closed task state set of protocol v1 (TASK-020). Clients treat an unknown state as an error, never as done. Nonterminal: waiting, ready, claimed, blocked. Terminal: completed (final), failed and canceled (reopenable).",
+  "type": "string",
+  "enum": [
+    "waiting",
+    "ready",
+    "claimed",
+    "blocked",
+    "completed",
+    "failed",
+    "canceled"
+  ]
+}

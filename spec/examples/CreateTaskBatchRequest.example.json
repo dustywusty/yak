@@ -1,0 +1,25 @@
+{
+  "tasks": [
+    {
+      "ref": "schema",
+      "thread": {
+        "channel": "server",
+        "title": "Write the task schema",
+        "text": "Add Task.schema.json."
+      }
+    },
+    {
+      "ref": "claim-next",
+      "thread": {
+        "channel": "server",
+        "title": "Implement claim-next",
+        "text": "Implement POST /tasks/claim-next per SEL-001..008."
+      },
+      "depends_on": [
+        {
+          "ref": "schema"
+        }
+      ]
+    }
+  ]
+}
