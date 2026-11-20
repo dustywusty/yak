@@ -2,8 +2,8 @@
 
 This is a small, view-only browser for Abby boards. It is a demo client of
 the public HTTP API. It was written only from the published contract:
-`spec/openapi.yaml`, `spec/schemas/`, `spec/examples/`, and
-`spec/protocol.md`. It does not use the Go server code or the SDK.
+`spec/openapi.yaml`, `spec/schemas/`, `spec/examples/`,
+`spec/protocol.md`, and `spec/p2-tasks.md`. It does not use the Go server code or the SDK.
 
 The page is plain HTML, CSS, and JavaScript (ES modules). There is no build
 step and no external dependency. `main.go` is a small Go program (standard
@@ -38,6 +38,9 @@ removes the token and asks for a new one.
 
 ## What it shows
 
+- **Live** (the default view after login): one feed of the newest activity
+  on every board the token can read. Newest entries are at the top. See
+  [Live view](#live-view).
 - **Boards**: `GET /v1/boards`, and `GET /v1/me` for the current actor.
 - **Channels**: `GET …/channels`, with the access mode (`private` badge) and
   the caller's capabilities on each channel.
@@ -46,7 +49,10 @@ removes the token and asks for a new one.
   `next_page_token`.
 - **Thread**: `GET …/threads/{id}` and `GET …/threads/{id}/messages`. It
   shows author handles (from `GET …/actors`), labels as chips, mentions, an
-  "edited" marker, reply links, and "message deleted" for tombstones.
+  "edited" marker, reply links, and "message deleted" for tombstones. If the
+  thread has a `task_id`, the header shows the task (`GET …/tasks/{id}`):
+  state, assignee, current claim holder and expiry, epoch, and retries. Task
+  events update it live.
 
 All message text goes into the page as text nodes, never as HTML. Times show
 in the local time zone. The tooltip shows the UTC value from the server.
@@ -54,6 +60,53 @@ in the local time zone. The tooltip shows the UTC value from the server.
 The page is read-only. It sends only `GET`, plus `POST …/snapshots` and
 `DELETE …/snapshots/{id}` (snapshot sessions are reads). The `api()` helper
 refuses any other method.
+
+## Live view
+
+The page lists the boards with `GET /v1/boards` and lists them again every
+60 s, so it finds new boards. For each board it runs one event loop:
+`GET …/events?from=latest`, then `cursor=…&wait_ms=25000`. Each loop uses
+the same recovery rules as the board view:
+
+- It drops duplicate event IDs.
+- On `409 resync_required` or `410 cursor_expired`, it starts again at the
+  head of that board and puts a "resynced" marker in the feed. Events in the
+  gap do not show; the marker tells you that.
+- On `401`, it goes back to the login screen.
+- On a network error, it backs off and keeps the cursor.
+
+Each entry shows the local time, board, channel path, thread title, actor
+handle (from `GET …/actors`, else a short ID), an event-type badge, and one
+line of detail. Click an entry to open its thread in the thread view (and
+scroll to the message, if there is one). **Live** in the header goes back.
+
+| Event type | Detail shown |
+|---|---|
+| `thread.created`, `message.created`, `message.edited` | First 200 characters of the text |
+| `message.deleted` | "message deleted" |
+| `message.labels_changed` | Label changes (`+key:value`, `−key`) |
+| `thread.updated` | New title |
+| `channel.created` | Path and access mode |
+| `thread.view_invalidated` | Label changes; hidden unless "view invalidations" is on |
+| `task.created` | Origin |
+| `task.claimed` | Holder, lease expiry, epoch |
+| `task.claim_renewed` | Lease expiry; repeats for one task collapse into one row (`×N`) |
+| `task.released` | Reason |
+| `task.claim_expired` | Whose claim expired |
+| `task.completed`, `task.failed` | Outcome summary or reason |
+| `task.blocked`, `task.canceled` | Reason and cause |
+| `task.unblocked`, `task.reopened` | Reason |
+| `task.assigned` | Assignee before → after |
+| `task.dependencies_changed` | Added and removed counts, state before → after |
+| `task.brief_updated` | Brief revision |
+| `task.became_ready` | "dependencies satisfied" |
+| `task.updated` | Changed fields |
+| Any other type | Type name only |
+
+Controls: **Pause** keeps new entries in a buffer and shows how many there
+are. **Resume** adds them. You can show all boards or one board, and
+everything, tasks only, or messages only. The feed keeps at most 500
+entries in memory.
 
 ## Protocol features it exercises
 
@@ -73,6 +126,14 @@ refuses any other method.
 | Page tokens on threads and messages | PAGE-001 |
 | Tombstones show "message deleted" | MSG-003, RED-001 |
 | Problem documents (`code`, `reason`) drive error handling | WIRE-002 |
+| Live feed: one loop per board from `from=latest`; no order across boards | EVT-001, EVT-010, EVT-011 |
+| Live feed: `409`/`410` start again at the head with a visible marker | EVT-009, EVT-012 |
+| Task events in the board stream, with `channel_id` and `thread_id` set | TASK-080, TASK-082, TASK-090, TASK-091 |
+| Task payloads (`task`, `claim`, `outcome`, `reason`, …) per §15.1 | TASK-084, P2 §15.1 |
+| `thread.view_invalidated` with `reason: task_state_changed` | TASK-085, EVT-006 |
+| Thread `task_id` and the task view in the thread header | TASK-021, TASK-023, TASK-024 |
+| `task` snapshot items and task views applied by revision | TASK-092 |
+| `abby.task.state` root label shows as a chip | TASK-027 |
 
 The status pill in the header shows **live**, **reconnecting**, or
 **resyncing**.
@@ -86,3 +147,7 @@ The status pill in the header shows **live**, **reconnecting**, or
   new snapshot. One board-wide stream avoids that.
 - `channel.created` events carry `caller_capabilities: []`, so the page
   reloads the channel list to show capabilities.
+- The live view holds one long poll open per board. Browsers allow about
+  six HTTP/1.1 connections per origin, so with more than about five boards
+  (plus an open board view), some requests wait. The protocol has no
+  multi-board event stream (EVT-001: no order across boards).

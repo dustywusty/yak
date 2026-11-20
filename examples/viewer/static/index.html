@@ -11,7 +11,8 @@
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="#">Abby viewer</a>
+  <a class="brand" href="#/">Abby viewer</a>
+  <nav id="nav" class="nav" hidden><a href="#/" data-view="live">Live</a><a href="#/boards" data-view="boards">Boards</a></nav>
   <span id="board-name" class="crumb"></span>
   <span class="spacer"></span>
   <span id="status" class="status" hidden></span>
@@ -29,6 +30,19 @@
     <button type="submit">Connect</button>
   </form>
   <p id="login-error" class="error" hidden></p>
+</main>
+
+<main id="live" class="live" hidden>
+  <div class="feed-bar">
+    <button id="feed-pause" type="button">Pause</button>
+    <select id="feed-board" aria-label="Board"><option value="">All boards</option></select>
+    <select id="feed-kind" aria-label="Kind">
+      <option value="all">Everything</option><option value="tasks">Tasks only</option><option value="messages">Messages only</option>
+    </select>
+    <label class="check"><input id="feed-inval" type="checkbox"> view invalidations</label>
+    <span id="feed-status" class="status">connecting</span>
+  </div>
+  <ul id="feed" class="list feed"></ul>
 </main>
 
 <main id="boards" class="panel narrow" hidden>

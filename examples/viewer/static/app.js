@@ -2,6 +2,8 @@
 // spec/openapi.yaml, spec/schemas and spec/protocol.md. All user content is
 // inserted as text nodes, never as HTML.
 
+import { createFeed } from './feed.js';
+
 const TOKEN_KEY = 'abby-viewer-token';
 const WAIT_MS = 25000;     // EVT-011: long-poll budget, below limits.max_wait_ms
 const PAGE = 200;          // PAGE-001: limits.max_page_size in the reference discovery
@@ -11,6 +13,7 @@ const S = {
   token: null, me: null, board: null, channels: [], actors: new Map(),
   threads: new Map(),      // thread id -> Thread
   msgs: new Map(),         // thread id -> Map(message id -> Message)
+  tasks: new Map(),        // task id -> Task (P2), newest revision wins
   list: [],                // thread ids from GET /threads for the current filter
   seen: new Set(),         // EVT-003: event ids already applied
   cursor: null, gen: 0, abort: new AbortController(), sel: {}, listGen: 0,
@@ -26,7 +29,7 @@ class ApiError extends Error {
   }
 }
 
-async function api(method, path, params = {}) {
+async function api(method, path, params = {}, signal = S.abort.signal) {
   // Read-only guard: only GET, plus snapshot sessions (which are reads).
   if (method !== 'GET' && !/\/snapshots(\/[^/]+)?$/.test(path)) {
     throw new Error(`viewer is read-only: refusing ${method} ${path}`);
@@ -41,7 +44,7 @@ async function api(method, path, params = {}) {
     res = await fetch(url, {
       method,
       headers: { Authorization: `Bearer ${S.token}`, Accept: 'application/json' },
-      signal: S.abort.signal,
+      signal,
       cache: 'no-store',
     });
   } catch (e) {
@@ -82,6 +85,7 @@ function loadToken() {
 
 function needToken(message) {
   stopLive();
+  feed.stop();
   S.token = null; S.me = null; S.board = null;
   for (const id of ['board-list', 'channel-list', 'thread-list', 'thread-view']) $(id).replaceChildren();
   try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* storage blocked */ }
@@ -134,6 +138,7 @@ async function snapshot(gen) {
         for (const it of page.items) {
           if (it.type === 'thread') threads.set(it.id, it.data);
           else if (it.type === 'message') bucket(msgs, it.data.thread_id).set(it.id, it.data);
+          else if (it.type === 'task') noteTask(it.data); // TASK-092
         }
         token = page.next_page_token;
         cursor = page.continuation_cursor;
@@ -240,8 +245,16 @@ function apply(ev) {
       refetchThread(p.thread.id);
       return true;
     default:
+      if (ev.type.startsWith('task.') && p.task) { noteTask(p.task); return true; } // P2 task events
       return false; // forward compatibility: ignore unknown types
   }
+}
+
+// Apply task views by revision (TASK-092); a renewal keeps the revision but moves the expiry.
+function noteTask(t) {
+  const cur = S.tasks.get(t.id);
+  if (!cur || t.revision >= cur.revision) S.tasks.set(t.id, t);
+  if (S.board && t.thread_id === S.sel.t) renderThread();
 }
 
 function putMessage(m) {
@@ -315,11 +328,18 @@ async function loadThread(id) {
     S.threads.set(id, r.thread);
     S.msgs.set(id, new Map(messages.map((m) => [m.id, m])));
     S.threadError = null;
+    if (r.thread.task_id) { // TASK-024: a task thread; show its task view
+      const task = await api('GET', `${B}/tasks/${enc(r.thread.task_id)}`).catch(() => null);
+      if (task) noteTask(task);
+    }
   } catch (e) {
     if (e.name === 'AbortError') return;
     S.threadError = e.status === 404 ? 'Thread not found or not visible.' : e.message;
   }
   renderThread();
+  if (S.sel.m && id === S.sel.t) {
+    document.getElementById(`m-${S.sel.m}`)?.scrollIntoView({ block: 'start' });
+  }
 }
 
 async function refreshView() {
@@ -327,15 +347,16 @@ async function refreshView() {
   render();
 }
 
-// ---------- routing: #/b/<board>?ch=<path>&sub=0|1&label=<clauses>&t=<thread> ----------
+// ---------- routing: #/ (live), #/boards, #/b/<board>?ch=&sub=0|1&label=&t=<thread>&m=<message> ----------
 
 function parseRoute() {
   const [path, query = ''] = location.hash.slice(1).split('?');
+  if (path === '/boards') return { view: 'boards' };
   const m = /^\/b\/([^/]+)$/.exec(path);
-  if (!m) return {};
+  if (!m) return { view: 'live' };
   const q = new URLSearchParams(query);
-  return { board: decodeURIComponent(m[1]), ch: q.get('ch') || '', sub: q.get('sub') !== '0',
-    label: q.get('label') || '', t: q.get('t') || '' };
+  return { view: 'board', board: decodeURIComponent(m[1]), ch: q.get('ch') || '', sub: q.get('sub') !== '0',
+    label: q.get('label') || '', t: q.get('t') || '', m: q.get('m') || '' };
 }
 
 function href(r) {
@@ -344,6 +365,7 @@ function href(r) {
   if (!r.sub) q.set('sub', '0');
   if (r.label) q.set('label', r.label);
   if (r.t) q.set('t', r.t);
+  if (r.m) q.set('m', r.m);
   const qs = q.toString();
   return `#/b/${enc(r.board)}${qs ? `?${qs}` : ''}`;
 }
@@ -352,10 +374,12 @@ async function onRoute() {
   if (!S.token) return showLogin();
   try {
     if (!S.me) { S.me = await api('GET', '/v1/me'); renderTop(); }
+    feed.start();
     const r = parseRoute();
-    if (!r.board) {
-      stopLive(); S.board = null;
-      show('boards'); renderTop();
+    feed.setVisible(r.view === 'live');
+    if (r.view !== 'board') { stopLive(); S.board = null; show(r.view); renderTop(); }
+    if (r.view === 'live') return;
+    if (r.view === 'boards') {
       const { boards } = await api('GET', '/v1/boards');
       renderBoards(boards);
       return;
@@ -368,18 +392,18 @@ async function onRoute() {
     if (!S.board || S.board.id !== r.board) {
       stopLive();
       S.board = await api('GET', `/v1/boards/${enc(r.board)}`);
-      S.list = []; S.threads = new Map(); S.msgs = new Map();
+      S.list = []; S.threads = new Map(); S.msgs = new Map(); S.tasks = new Map();
       renderTop(); render();
       live(S.gen);
       return;
     }
     if (prev.ch !== r.ch || prev.sub !== r.sub || prev.label !== r.label) loadList();
-    if (r.t && prev.t !== r.t) loadThread(r.t);
+    if (r.t && (prev.t !== r.t || prev.m !== r.m)) loadThread(r.t);
     render();
   } catch (e) {
     if (e.name === 'AbortError' || e.status === 401) return;
     banner(e.status === 404 ? 'Board not found or not visible.' : `Error: ${e.message}`);
-    if (e.status === 404) location.hash = '#/';
+    if (e.status === 404) location.hash = '#/boards';
   }
 }
 
@@ -409,7 +433,9 @@ const chips = (labels) => h('span', { class: 'chips' },
   Object.entries(labels || {}).map(([k, v]) => h('span', { class: 'chip' }, v === '' ? k : `${k}: ${v}`)));
 
 function show(id) {
-  for (const s of ['login', 'boards', 'board']) $(s).hidden = s !== id;
+  for (const s of ['login', 'live', 'boards', 'board']) $(s).hidden = s !== id;
+  $('nav').hidden = id === 'login';
+  for (const a of $('nav').children) a.classList.toggle('sel', a.dataset.view === id);
 }
 
 function renderTop() {
@@ -473,17 +499,33 @@ function renderThread() {
     h('h1', {}, t.title),
     h('div', { class: 'meta' }, `#${t.channel_path} · started by `, actor(t.created_by_actor_id), ' · ', time(t.created_at)),
     chips(t.labels),
+    taskBox(t.task_id && S.tasks.get(t.task_id)),
     ...msgs.map((m) => message(m, byId)));
   view.parentElement.scrollTop = scroll;
 }
 
+// P2 task header: state, assignee, current claim and expiry, epoch (TASK-021, TASK-023).
+function taskBox(task) {
+  if (!task) return null;
+  const c = task.current_claim;
+  const lapsed = c && Date.parse(c.expires_at) < Date.now();
+  return h('div', { class: 'task' },
+    h('span', { class: `state state-${task.state}` }, task.state),
+    ' assignee ', task.assignee_actor_id ? actor(task.assignee_actor_id) : 'none',
+    ` · epoch ${task.epoch} · retries ${task.retry_count}`,
+    c ? h('div', {}, 'claimed by ', actor(c.actor_id), ' until ', time(c.expires_at), lapsed ? ' (lapsed)' : '') : null,
+    task.block ? h('div', {}, `blocked: ${task.block.reason ?? ''}`) : null,
+    task.outcome ? h('div', {}, `${task.outcome.kind}: ${task.outcome.summary ?? task.outcome.reason ?? ''}`) : null);
+}
+
 function message(m, byId) {
   const parent = m.reply_to_message_id && byId.get(m.reply_to_message_id);
-  return h('article', { class: m.deleted ? 'msg deleted' : 'msg', id: `m-${m.id}` },
+  const cls = `msg${m.deleted ? ' deleted' : ''}${m.id === S.sel.m ? ' target' : ''}`;
+  return h('article', { class: cls, id: `m-${m.id}` },
     h('header', {}, actor(m.author_actor_id), ' ', time(m.created_at), h('span', { class: 'muted' }, ` #${m.seq}`),
       m.edited_at && !m.deleted ? h('span', { class: 'edited', title: `edited ${fmt(m.edited_at)}` }, ' (edited)') : null),
     m.reply_to_message_id ? h('button', { type: 'button', class: 'reply-link', onclick: () =>
-      document.getElementById(`m-${m.reply_to_message_id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) },
+      document.getElementById(`m-${m.reply_to_message_id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) },
       `↪ reply to #${parent ? parent.seq : '?'}`) : null,
     m.deleted
       ? h('p', { class: 'body muted' }, m.deleted.kind === 'redaction' ? 'message deleted (redacted)' : 'message deleted')
@@ -539,6 +581,12 @@ let labelTimer;
 $('label-filter').addEventListener('input', (ev) => {
   clearTimeout(labelTimer);
   labelTimer = setTimeout(() => { location.hash = href({ ...S.sel, label: ev.target.value.trim() }); }, 400);
+});
+
+const feed = createFeed({
+  api, h, time, href,
+  onTask: noteTask,
+  onUnauthorized: () => needToken('The server rejected the token (401). Paste a valid token.'),
 });
 
 window.addEventListener('hashchange', onRoute);
