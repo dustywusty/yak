@@ -862,7 +862,64 @@ async function op17010StoreActorsCase() {
  assert('no browser exceptions',errors.length===0,errors.join(' | '));
  console.log(`OP17-010 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17013ProjectionCase() {
+ let assertions=0, fixtures=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-013: ${name}`,ok)};
+ for (const kind of ['thread','channels','unknown']) for (const variant of ['reverse','snapshot','dispose',...(kind==='channels'?[]:['payload','message','revision'])]) {
+  await freshIdentityFixture('window.__op.enableProjectionProbe();'); fixtures++;
+  const name=`${kind} ${variant}`;
+  try {
+   await ev(`(async()=>{
+    const T=window.__op, {createStore}=await import('/skin-kit.js');
+    T.probe=createStore({api:T.projectionApi,boardId:'brd_test',onChange:()=>T.projectionChanges++});
+    T.projectionEvent=(id)=>({id,type:${JSON.stringify(kind==='channels'?'channel.created':kind==='unknown'?'message.created':'thread.view_invalidated')},thread_id:${JSON.stringify(kind==='unknown'?'unknown':'th')},payload:${kind==='unknown'?"{message:{id,thread_id:'unknown',seq:1,created_at:'2026-11-20T00:00:00Z'}}":"{}"}});
+    T.projectionReply=(label,revision='9007199254740993')=>${kind==='channels'?"({channels:[{path:label}]})":`({thread:{...T.projectionThread,id:${JSON.stringify(kind==='unknown'?'unknown':'th')},labels:{gate:label},message_count:1,revision}})`};
+    T.projectionSend=(events)=>T.projectionPolls.at(-1).resolve({events,next_cursor:'projection-cursor'});
+   })()`);
+   await until('window.__op.projectionPolls.length===1');
+   await ev("window.__op.deferProjection=true;window.__op.projectionSend([window.__op.projectionEvent('first')])");
+   await until('window.__op.projectionReads.length===1 && window.__op.projectionPolls.length===2');
+   if (variant==='reverse') {
+    await ev("window.__op.projectionSend([window.__op.projectionEvent('second')])");
+    await until('window.__op.projectionReads.length===2');
+    await ev("window.__op.projectionReads[1].resolve(window.__op.projectionReply('new'))");await sleep(50);
+    assert(`${name}: newer response publishes`,await ev(kind==='channels'?"window.__op.probe.S.channels[0].path==='new'":"window.__op.probe.S.threads.get(window.__op.projectionReply('x').thread.id).labels.gate==='new'"));
+   } else if (variant==='snapshot') {
+    await ev("window.__op.deferProjection=false;window.__op.projectionThread.labels={gate:'replacement'};window.__op.projectionPolls.at(-1).reject(Object.assign(new Error('resync'),{status:409,problem:{code:'resync_required'}}))");
+    await until('window.__op.projectionSnapshots===2 && window.__op.projectionPolls.length===3');
+    assert(`${name}: generation aborts old read`,await ev('window.__op.projectionReads[0].signal.aborted'));
+   } else if (variant==='dispose') {
+    await ev('window.__op.probe.stop()');
+    assert(`${name}: disposal aborts old read`,await ev('window.__op.projectionReads[0].signal.aborted'));
+   } else {
+    await ev(`window.__op.projectionSend([{id:'payload',type:'message.created',payload:${variant==='message'?`{message:{id:'new-message',thread_id:${JSON.stringify(kind==='unknown'?'unknown':'th')},seq:9,created_at:'2026-11-20T00:00:00Z'},thread:window.__op.projectionReply('payload').thread}`:"{thread:window.__op.projectionReply('payload').thread}"}}])`);
+    await until('window.__op.probe.S.seen.has("payload")');
+    if (variant==='message') {
+     // A subsequent message-only update must also invalidate a read of a known thread.
+     await ev("window.__op.projectionSend([{id:'third',type:'thread.view_invalidated',thread_id:window.__op.projectionReply('x').thread.id}])");
+     await until('window.__op.projectionReads.length===2');
+     await ev("window.__op.projectionSend([{id:'message-only',type:'message.created',payload:{message:{id:'latest',thread_id:window.__op.projectionReply('x').thread.id,seq:10,created_at:'2026-11-20T00:00:01Z'}}}])");
+     await until('window.__op.probe.S.seen.has("message-only")');
+    }
+    if (variant==='revision') {
+     await ev("window.__op.projectionSend([{id:'revision-read',type:'thread.view_invalidated',thread_id:window.__op.projectionReply('x').thread.id}])");
+     await until('window.__op.projectionReads.length===2');
+     await ev("window.__op.projectionReads[1].resolve(window.__op.projectionReply('lower','9007199254740992'))");await sleep(50);
+     assert(`${name}: latest read rejects exact lower revision`,await ev("window.__op.probe.S.threads.get(window.__op.projectionReply('x').thread.id).labels.gate==='payload'"));
+    }
+   }
+   await ev('window.__op.beforeProjection=JSON.stringify({threads:[...window.__op.probe.S.threads],channels:window.__op.probe.S.channels});window.__op.beforeChanges=window.__op.projectionChanges');
+   await ev("window.__op.projectionReads.forEach(r=>r.resolve(window.__op.projectionReply('old','9007199254740993')))");await sleep(80);
+   assert(`${name}: old read cannot mutate state`,await ev('JSON.stringify({threads:[...window.__op.probe.S.threads],channels:window.__op.probe.S.channels})===window.__op.beforeProjection'));
+   assert(`${name}: old read cannot notify`,await ev('window.__op.projectionChanges===window.__op.beforeChanges'));
+   assert(`${name}: only snapshot lifecycle writes`,await ev("window.__op.writes.length===window.__op.projectionSnapshots*2 && window.__op.writes.every(w=>w.path.includes('/snapshots'))"));
+  } finally { await ev('window.__op.probe?.stop()'); }
+ }
+ assert('all fresh variants executed',fixtures===15 && assertions>=45);
+ assert('no browser exceptions',errors.length===0);
+ console.log(`OP17-013 executed ${assertions} assertions across ${fixtures} fresh projection fixtures`);
+}
+const operatorCases = new Map([['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

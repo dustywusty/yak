@@ -129,7 +129,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const abort = new AbortController();
   // Each replacement snapshot owns its refresh requests and bookkeeping.
   // A task revision orders rows only within one snapshot generation.
-  const newRefresh = () => ({ abort: new AbortController(), reads: new Set(), retry: new Map(), ready: false });
+  const newRefresh = () => ({ abort: new AbortController(), reads: new Set(), retry: new Map(), tickets: new Map(), ready: false });
   let refresh = newRefresh();
   const currentRefresh = (generation) => generation === refresh && !abort.signal.aborted;
   const invalidateRefresh = () => { refresh.abort.abort(); refresh = newRefresh(); };
@@ -156,6 +156,28 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
     if (!cur) S.order.push(t.id);
     if (!cur || compareRevision(t.revision, cur.revision) >= 0) S.tasks.set(t.id, t);
   };
+
+  // Tickets order resource reads and event payloads within one generation.
+  // Revision checks additionally protect rows returned by a lagging server.
+  const nextTicket = (generation, key) => {
+    const ticket = (generation.tickets.get(key) || 0) + 1;
+    generation.tickets.set(key, ticket);
+    return ticket;
+  };
+  const readProjection = (key, path, publish) => {
+    const generation = refresh;
+    const ticket = nextTicket(generation, key);
+    api('GET', path, {}, generation.abort.signal).then((r) => {
+      if (!currentRefresh(generation) || generation.tickets.get(key) !== ticket) return;
+      if (publish(r) !== false) onChange();
+    }).catch(() => {});
+  };
+  const readThread = (id) => readProjection(`thread:${id}`, `${B}/threads/${enc(id)}`, (r) => {
+    const cur = S.threads.get(r.thread.id);
+    if (cur?.revision != null && r.thread.revision != null
+      && compareRevision(r.thread.revision, cur.revision) < 0) return false;
+    S.threads.set(r.thread.id, r.thread);
+  });
 
   async function snapshot() {
     invalidateRefresh();
@@ -207,7 +229,11 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
     if (S.seen.size > 5000) S.seen.delete(S.seen.values().next().value);
     S.events++;
     const p = ev.payload || {};
-    if (p.thread) S.threads.set(p.thread.id, p.thread);
+    if (p.thread) {
+      nextTicket(refresh, `thread:${p.thread.id}`);
+      S.threads.set(p.thread.id, p.thread);
+    }
+    if (p.message) nextTicket(refresh, `thread:${p.message.thread_id}`);
     if (p.message && !S.threads.has(p.message.thread_id)) {
       // A thread we have not seen: use thread_title from the event (EVT-013) at once,
       // then read the thread. Events recorded before the upgrade have no thread_title.
@@ -217,7 +243,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
           title: p.thread_title, labels: {}, message_count: m.seq, last_message_id: m.id, root_message_id: null,
           created_by_actor_id: m.author_actor_id, created_at: m.created_at, updated_at: m.created_at, task_id: p.task_id ?? null });
       }
-      get(`${B}/threads/${enc(m.thread_id)}`).then((r) => { S.threads.set(r.thread.id, r.thread); onChange(); }).catch(() => {});
+      readThread(m.thread_id);
     }
     if (p.message) {
       bucket(p.message.thread_id).set(p.message.id, p.message);
@@ -227,8 +253,8 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
       }
     }
     if (p.task) putTask(p.task);
-    if (ev.type === 'channel.created') get(`${B}/channels`).then((r) => { S.channels = r.channels; onChange(); }).catch(() => {});
-    if (ev.type === 'thread.view_invalidated') get(`${B}/threads/${enc(ev.thread_id)}`).then((r) => { S.threads.set(r.thread.id, r.thread); onChange(); }).catch(() => {});
+    if (ev.type === 'channel.created') readProjection('channels', `${B}/channels`, (r) => { S.channels = r.channels; });
+    if (ev.type === 'thread.view_invalidated') readThread(ev.thread_id);
     onEvent(ev);
     return true;
   }

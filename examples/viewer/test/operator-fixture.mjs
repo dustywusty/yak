@@ -156,6 +156,29 @@ export function operatorFixture() {
     };
   };
 
+  // OP17-013: deferred projection reads deliberately survive cancellation.
+  T.enableProjectionProbe = () => {
+    T.projectionReads = []; T.projectionPolls = []; T.projectionChanges = 0;
+    T.projectionSnapshots = 0;
+    T.projectionThread = { ...thread, labels:{gate:'snapshot'}, revision:'9007199254740991' };
+    T.projectionApi = async (method,path,params,signal) => {
+      if (method === 'POST') { T.writes.push({method,path}); T.projectionSnapshots++; return {id:'projection-snapshot'}; }
+      if (method === 'DELETE') { T.writes.push({method,path}); return {}; }
+      if (path.endsWith('/actors')) return {actors, next_page_token:null};
+      if (path === '/v1/me') return {actor:actors[0]};
+      if (/\/snapshots\//.test(path)) return {items:[{type:'thread',id:'th',data:structuredClone(T.projectionThread)}],next_page_token:null,continuation_cursor:'projection-cursor'};
+      if (path.endsWith('/events')) return new Promise((resolve,reject) => {
+        T.projectionPolls.push({resolve,reject,signal});
+        signal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')),{once:true});
+      });
+      if (path.endsWith('/channels') && !T.deferProjection) return {channels:[{path:'snapshot'}]};
+      if (path.endsWith('/channels') || /\/threads\//.test(path)) return new Promise(resolve => {
+        T.projectionReads.push({path,signal,resolve});
+      });
+      return {id:B,name:'projection probe'};
+    };
+  };
+
   // OP17-009: deferred actor pages can settle even after cancellation/removal.
   T.enableFeedPagination = (variant) => {
     T.actorReads = []; T.feedReads = []; T.feedDraws = 0;
