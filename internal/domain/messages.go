@@ -64,6 +64,8 @@ type ThreadView struct {
 	LastMessageID string            `json:"last_message_id"`
 	CreatedAt     time.Time         `json:"created_at"`
 	UpdatedAt     time.Time         `json:"updated_at"`
+	// TaskID is the thread's task, or null (P2 TASK-024).
+	TaskID *string `json:"task_id"`
 }
 
 // ThreadWithRoot is the response to thread creation and thread reads.
@@ -80,9 +82,16 @@ func (m *MessageView) facet(rootLabels map[string]string) events.Facet {
 	return f
 }
 
+// taskStateLabelSQL is the computed root label abby.task.state of thread
+// alias t: the effective task state (ADR-0004), or {} for a thread without a
+// task. It is never stored in message_labels (ADR-0016 §5, TASK-027..029).
+const taskStateLabelSQL = `COALESCE((SELECT jsonb_build_object('abby.task.state', abby_task_effective_state(tk.state, tk.claim_expires_at, statement_timestamp()))
+	FROM tasks tk WHERE tk.thread_id=t.id), '{}'::jsonb)`
+
 const msgCols = `m.id, m.board_id, m.thread_id, t.channel_id, m.seq, (t.root_message_id = m.id), m.author_actor_id, m.credential_id, m.run_id,
 	m.reply_to_message_id, m.text, m.extensions, m.revision, m.created_at, m.edited_at, m.deleted_at, m.deleted_by, m.deletion_kind,
-	COALESCE((SELECT jsonb_object_agg(key, value) FROM message_labels WHERE message_id=m.id), '{}'::jsonb),
+	COALESCE((SELECT jsonb_object_agg(key, value) FROM message_labels WHERE message_id=m.id), '{}'::jsonb)
+	  || CASE WHEN t.root_message_id = m.id THEN ` + taskStateLabelSQL + ` ELSE '{}'::jsonb END,
 	COALESCE((SELECT array_agg(actor_id ORDER BY actor_id) FROM message_mentions WHERE message_id=m.id), '{}')`
 
 func scanMessage(r pgx.Row, chans map[string]channelRow) (MessageView, error) {
@@ -119,12 +128,13 @@ func loadMessage(ctx context.Context, q querier, boardID, id string, chans map[s
 }
 
 const threadCols = `t.id, t.board_id, t.channel_id, t.title, t.root_message_id, t.created_by, t.revision, t.message_count, t.last_message_id, t.created_at, t.updated_at,
-	COALESCE((SELECT jsonb_object_agg(key, value) FROM message_labels WHERE message_id=t.root_message_id), '{}'::jsonb), t.created_position`
+	COALESCE((SELECT jsonb_object_agg(key, value) FROM message_labels WHERE message_id=t.root_message_id), '{}'::jsonb) || ` + taskStateLabelSQL + `,
+	t.created_position, (SELECT tk.id FROM tasks tk WHERE tk.thread_id=t.id)`
 
 func scanThread(r pgx.Row, chans map[string]channelRow) (ThreadView, int64, error) {
 	var t ThreadView
 	var pos int64
-	err := r.Scan(&t.ID, &t.BoardID, &t.ChannelID, &t.Title, &t.RootMessageID, &t.CreatedBy, &t.Revision, &t.MessageCount, &t.LastMessageID, &t.CreatedAt, &t.UpdatedAt, &t.Labels, &pos)
+	err := r.Scan(&t.ID, &t.BoardID, &t.ChannelID, &t.Title, &t.RootMessageID, &t.CreatedBy, &t.Revision, &t.MessageCount, &t.LastMessageID, &t.CreatedAt, &t.UpdatedAt, &t.Labels, &pos, &t.TaskID)
 	if err != nil {
 		return t, 0, err
 	}
@@ -330,31 +340,53 @@ func (s *Service) CreateThread(ctx context.Context, p *Principal, boardID string
 				return nil, err
 			}
 		}
-		mentions, err := b.resolveMentions(ch.Path, req.Text, req.Mentions)
+		body, err := b.insertThread(ch, req, "", "")
 		if err != nil {
 			return nil, err
 		}
-		tid, mid := ids.New("thr"), ids.New("msg")
-		text := req.Text
-		m := MessageView{ID: mid, BoardID: boardID, ThreadID: tid, ChannelID: ch.ID, ChannelPath: ch.Path, Seq: 1, IsRoot: true,
-			AuthorActorID: p.ActorID, Text: &text, Labels: labels, Mentions: mentions, Extensions: req.Extensions, Revision: 1, CreatedAt: b.now}
-		t := ThreadView{ID: tid, BoardID: boardID, ChannelID: ch.ID, ChannelPath: ch.Path, Title: req.Title, RootMessageID: mid, CreatedBy: p.ActorID,
-			Labels: labels, Revision: 1, MessageCount: 1, LastMessageID: mid, CreatedAt: b.now, UpdatedAt: b.now}
-		pos := b.head + 1
-		if _, err := b.Exec(ctx, `INSERT INTO threads(id, board_id, channel_id, title, root_message_id, created_by, last_message_id, created_position, activity_position, created_at, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$5,$7,$7,$8,$8)`, tid, boardID, ch.ID, req.Title, mid, p.ActorID, pos, b.now); err != nil {
-			return nil, err
-		}
-		if err := b.insertMessage(&m, labels); err != nil {
-			return nil, err
-		}
-		body := ThreadWithRoot{Thread: t, Root: m}
-		if _, err := b.emit(PendingEvent{Type: "thread.created", ChannelID: ch.ID, ThreadID: tid, ResourceType: "thread", ResourceID: tid, Revision: 1,
-			Payload: map[string]any{"thread": t, "message": m}, Facets: []events.Facet{m.facet(labels)}}); err != nil {
-			return nil, err
-		}
-		return &Result{Status: 201, ResourceType: "thread", ResourceID: tid, Body: body}, nil
+		return &Result{Status: 201, ResourceType: "thread", ResourceID: body.Thread.ID, Body: body}, nil
 	})
+}
+
+// insertThread creates a thread and its root message and emits
+// thread.created. For a task thread (taskID set) the views already carry the
+// computed root label abby.task.state and task_id (TASK-085: no separate
+// view invalidation is needed for L1).
+func (b *btx) insertThread(ch channelRow, req CreateThreadRequest, taskID, taskState string) (ThreadWithRoot, error) {
+	mentions, err := b.resolveMentions(ch.Path, req.Text, req.Mentions)
+	if err != nil {
+		return ThreadWithRoot{}, err
+	}
+	labels := maps.Clone(req.Labels)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	viewLabels := maps.Clone(labels)
+	var tidPtr *string
+	if taskID != "" {
+		viewLabels[TaskStateLabel] = taskState
+		tidPtr = &taskID
+	}
+	boardID := b.board.ID
+	tid, mid := ids.New("thr"), ids.New("msg")
+	text := req.Text
+	m := MessageView{ID: mid, BoardID: boardID, ThreadID: tid, ChannelID: ch.ID, ChannelPath: ch.Path, Seq: 1, IsRoot: true,
+		AuthorActorID: b.p.ActorID, Text: &text, Labels: viewLabels, Mentions: mentions, Extensions: req.Extensions, Revision: 1, CreatedAt: b.now}
+	t := ThreadView{ID: tid, BoardID: boardID, ChannelID: ch.ID, ChannelPath: ch.Path, Title: req.Title, RootMessageID: mid, CreatedBy: b.p.ActorID,
+		Labels: viewLabels, Revision: 1, MessageCount: 1, LastMessageID: mid, CreatedAt: b.now, UpdatedAt: b.now, TaskID: tidPtr}
+	pos := b.head + 1
+	if _, err := b.Exec(b.ctx, `INSERT INTO threads(id, board_id, channel_id, title, root_message_id, created_by, last_message_id, created_position, activity_position, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$5,$7,$7,$8,$8)`, tid, boardID, ch.ID, req.Title, mid, b.p.ActorID, pos, b.now); err != nil {
+		return ThreadWithRoot{}, err
+	}
+	if err := b.insertMessage(&m, labels); err != nil {
+		return ThreadWithRoot{}, err
+	}
+	if _, err := b.emit(PendingEvent{Type: "thread.created", ChannelID: ch.ID, ThreadID: tid, ResourceType: "thread", ResourceID: tid, Revision: 1,
+		Payload: map[string]any{"thread": t, "message": m}, Facets: []events.Facet{m.facet(viewLabels)}}); err != nil {
+		return ThreadWithRoot{}, err
+	}
+	return ThreadWithRoot{Thread: t, Root: m}, nil
 }
 
 func (s *Service) GetThread(ctx context.Context, p *Principal, boardID, threadID string) (*ThreadWithRoot, error) {
@@ -614,6 +646,9 @@ func (s *Service) EditMessage(ctx context.Context, p *Principal, boardID, messag
 		if !b.policy.Has(m.ChannelPath, authz.Read) {
 			return nil, NotFound("message")
 		}
+		if err := b.rootProtected(m); err != nil {
+			return nil, err
+		}
 		if m.AuthorActorID != p.ActorID || !b.policy.Has(m.ChannelPath, authz.Post) {
 			return nil, Forbidden("only the author with current read and post may edit")
 		}
@@ -670,6 +705,9 @@ func (s *Service) DeleteMessage(ctx context.Context, p *Principal, boardID, mess
 		if !b.policy.Has(m.ChannelPath, authz.Read) {
 			return nil, NotFound("message")
 		}
+		if err := b.rootProtected(m); err != nil {
+			return nil, err
+		}
 		kind := "author"
 		if m.AuthorActorID == p.ActorID {
 			if !b.policy.Has(m.ChannelPath, authz.Post) {
@@ -691,37 +729,65 @@ func (s *Service) DeleteMessage(ctx context.Context, p *Principal, boardID, mess
 		if m.Revision != ifMatch {
 			return nil, E(412, "revision_conflict", "message revision is %d", m.Revision)
 		}
-		t, err := loadThread(ctx, b, boardID, m.ThreadID, b.chans, false)
-		if err != nil {
+		if out, err = b.tombstoneMessage(m, kind, reason); err != nil {
 			return nil, err
 		}
-		m.Revision++
-		m.Text, m.Mentions, m.Extensions = nil, []string{}, nil
-		m.Deleted = &DeletionView{Kind: kind, At: b.now, ByActorID: p.ActorID}
-		if _, err := b.Exec(ctx, `UPDATE messages SET text=NULL, extensions=NULL, revision=$2, deleted_at=$3, deleted_by=$4, deletion_kind=$5 WHERE id=$1`,
-			m.ID, m.Revision, b.now, p.ActorID, kind); err != nil {
-			return nil, err
-		}
-		if _, err := b.Exec(ctx, `DELETE FROM message_mentions WHERE message_id=$1`, m.ID); err != nil {
-			return nil, err
-		}
-		if err := b.scrubMessage(m, t.Labels); err != nil {
-			return nil, err
-		}
-		if kind == "redaction" {
-			if err := b.audit("message.redact", "message", m.ID, reason, map[string]any{"thread_id": m.ThreadID, "author_actor_id": m.AuthorActorID}); err != nil {
-				return nil, err
-			}
-		}
-		inval := events.Facet{Invalidation: true, ChannelPath: m.ChannelPath, ThreadID: m.ThreadID}
-		if _, err := b.emit(PendingEvent{Type: "message.deleted", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
-			Revision: m.Revision, Payload: map[string]any{"message": m}, Facets: []events.Facet{inval}}); err != nil {
-			return nil, err
-		}
-		out = m
 		return &Result{}, nil
 	})
 	return &out, err
+}
+
+// tombstoneMessage deletes a message (kind "author" or "redaction"), scrubs
+// every retained copy of its content, audits a redaction, and emits
+// message.deleted.
+func (b *btx) tombstoneMessage(m MessageView, kind, reason string) (MessageView, error) {
+	t, err := loadThread(b.ctx, b, b.board.ID, m.ThreadID, b.chans, false)
+	if err != nil {
+		return m, err
+	}
+	m.Revision++
+	m.Text, m.Mentions, m.Extensions = nil, []string{}, nil
+	m.Deleted = &DeletionView{Kind: kind, At: b.now, ByActorID: b.p.ActorID}
+	if _, err := b.Exec(b.ctx, `UPDATE messages SET text=NULL, extensions=NULL, revision=$2, deleted_at=$3, deleted_by=$4, deletion_kind=$5 WHERE id=$1`,
+		m.ID, m.Revision, b.now, b.p.ActorID, kind); err != nil {
+		return m, err
+	}
+	if _, err := b.Exec(b.ctx, `DELETE FROM message_mentions WHERE message_id=$1`, m.ID); err != nil {
+		return m, err
+	}
+	if err := b.scrubMessage(m, t.Labels); err != nil {
+		return m, err
+	}
+	if kind == "redaction" {
+		if err := b.audit("message.redact", "message", m.ID, reason, map[string]any{"thread_id": m.ThreadID, "author_actor_id": m.AuthorActorID}); err != nil {
+			return m, err
+		}
+	}
+	inval := events.Facet{Invalidation: true, ChannelPath: m.ChannelPath, ThreadID: m.ThreadID}
+	if _, err := b.emit(PendingEvent{Type: "message.deleted", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
+		Revision: m.Revision, Payload: map[string]any{"message": m}, Facets: []events.Facet{inval}}); err != nil {
+		return m, err
+	}
+	return m, nil
+}
+
+// rootProtected rejects P1 edits and deletions of a task thread's root
+// (BRIEF-010; amends AUTH-020 for task threads).
+func (b *btx) rootProtected(m MessageView) error {
+	if !m.IsRoot {
+		return nil
+	}
+	var taskID string
+	err := b.QueryRow(b.ctx, `SELECT id FROM tasks WHERE thread_id=$1`, m.ThreadID).Scan(&taskID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	e := E(409, "task_root_protected", "the root of a task thread changes only through task operations")
+	e.Extra = map[string]any{"task_id": taskID}
+	return e
 }
 
 // scrubMessage replaces every retained projection of a message's content with
@@ -857,17 +923,28 @@ func (s *Service) MutateLabels(ctx context.Context, p *Principal, boardID, messa
 				delete(after, op.Key)
 			}
 		}
-		if len(after) > s.Cfg.MaxLabelsPerMessage {
+		stored := 0
+		for k := range after {
+			if k != TaskStateLabel {
+				stored++
+			}
+		}
+		if stored > s.Cfg.MaxLabelsPerMessage {
 			return nil, E(413, "limit_exceeded", "at most %d labels per message", s.Cfg.MaxLabelsPerMessage)
 		}
 		if maps.Equal(before, after) {
 			out = m
 			return &Result{}, nil
 		}
-		if _, err := b.Exec(ctx, `DELETE FROM message_labels WHERE message_id=$1`, m.ID); err != nil {
+		// Clients never write abby.* keys (validated above): server labels
+		// stay as stored, and the computed abby.task.state is never stored.
+		if _, err := b.Exec(ctx, `DELETE FROM message_labels WHERE message_id=$1 AND key NOT LIKE 'abby.%'`, m.ID); err != nil {
 			return nil, err
 		}
 		for k, v := range after {
+			if strings.HasPrefix(k, "abby.") {
+				continue
+			}
 			if _, err := b.Exec(ctx, `INSERT INTO message_labels(message_id, key, value) VALUES ($1,$2,$3)`, m.ID, k, v); err != nil {
 				return nil, err
 			}
@@ -938,6 +1015,11 @@ func (s *Service) PatchThread(ctx context.Context, p *Principal, boardID, thread
 		}
 		if !b.policy.Has(t.ChannelPath, authz.Read) {
 			return nil, NotFound("thread")
+		}
+		if t.TaskID != nil {
+			e := E(409, "task_root_protected", "the title of a task thread changes only through PATCH .../tasks/{id}")
+			e.Extra = map[string]any{"task_id": *t.TaskID}
+			return nil, e
 		}
 		if !b.policy.Has(t.ChannelPath, authz.Post) || (t.CreatedBy != p.ActorID && !b.policy.Has(t.ChannelPath, authz.ChannelManage)) {
 			return nil, Forbidden("thread edits require post and root authorship or channel_manage")

@@ -88,7 +88,8 @@ For replay, the server also stores the secret encrypted with AES-256-GCM:
 
 - Key: from operator configuration (`ABBY_CLAIM_REPLAY_KEYS`, a keyring of
   `key_id:base64key`, first entry used to encrypt). Never stored in the
-  database.
+  database. The reference server also accepts `ABBY_CLAIM_PROOF_KEY`
+  (one base64 key, ID `k1`) when the keyring variable is unset.
 - Associated data: `board_id ‖ task_id ‖ claim_id ‖ actor_id ‖ epoch`, so
   a ciphertext copied to another row does not decrypt.
 - Stored columns: `proof_ciphertext`, `proof_key_id`.
@@ -103,7 +104,7 @@ proof_unavailable: true`. A replay never writes: no new claim, no event,
 no change to `expires_at`.
 
 If no key is configured, the server stores no ciphertext and advertises
-`capabilities.claim_proof_replay: false`. Replays then always return
+no `abby.tasks.claim_proof_replay` capability. Replays then always return
 `proof_unavailable: true`; the lost claim lapses within one lease (≤ 300 s)
 or a manager blocks the task.
 
