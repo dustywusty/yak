@@ -181,7 +181,9 @@ func ifMatch(r *http.Request, required bool) (*int64, error) {
 	h := r.Header.Get("If-Match")
 	if h == "" {
 		if required {
-			return nil, domain.E(428, "precondition_required", "If-Match with the current revision ETag is required")
+			e := domain.E(428, "precondition_required", "If-Match with the current revision ETag is required")
+			e.Extra = map[string]any{"header": "If-Match"}
+			return nil, e
 		}
 		return nil, nil
 	}
@@ -238,6 +240,20 @@ func (a *API) respond(w http.ResponseWriter, r *http.Request, p *domain.Principa
 		body, err = a.S.GetThread(ctx, p, boardID, res.ResourceID)
 	case "message":
 		body, err = a.S.GetMessage(ctx, p, boardID, res.ResourceID)
+	case "task":
+		var t *domain.TaskView
+		if t, err = a.S.GetTask(ctx, p, boardID, res.ResourceID); err == nil {
+			etag(w, t.Revision)
+			body = t
+		}
+	case "task_batch":
+		body, err = a.S.GetTaskBatch(ctx, p, boardID, res.ResourceID)
+	case "claim":
+		body, err = a.S.ReplayClaim(ctx, p, boardID, res.ResourceID)
+	case "claim_renewal":
+		body, err = a.S.GetClaim(ctx, p, boardID, res.ResourceID)
+	case "brief":
+		body, err = a.S.GetBriefWithTask(ctx, p, boardID, res.ResourceID)
 	default:
 		err = fmt.Errorf("unknown replay resource type %q", res.ResourceType)
 	}
@@ -251,32 +267,46 @@ func (a *API) respond(w http.ResponseWriter, r *http.Request, p *domain.Principa
 
 func (a *API) discovery(w http.ResponseWriter, r *http.Request) {
 	c := a.S.Cfg
+	caps := []string{
+		"abby.boards", "abby.channels", "abby.channels.private", "abby.grants", "abby.actors", "abby.credentials",
+		"abby.threads", "abby.messages", "abby.messages.guarded_reply", "abby.messages.tombstones",
+		"abby.labels", "abby.labels.conditional", "abby.mentions",
+		"abby.events.catchup", "abby.events.long_poll", "abby.snapshots", "abby.idempotency", "abby.audit",
+		"abby.tasks", "abby.tasks.claims", "abby.tasks.claim_next", "abby.tasks.batches", "abby.tasks.dependencies", "abby.tasks.briefs",
+	}
+	// TASK-003: present only when an operator replay key is configured.
+	if a.S.ClaimKeys != nil {
+		caps = append(caps, "abby.tasks.claim_proof_replay")
+	}
 	_ = writeJSON(w, 200, map[string]any{
 		"protocol": map[string]any{
 			"name":     "abby",
 			"versions": []string{"1"},
 			"status":   "draft",
-			"profiles": []string{"abby.p1.core"},
+			"profiles": []string{"abby.p1.core", "abby.p2.tasks"},
 		},
 		"implementation": map[string]any{"name": "abby-reference", "version": c.Version, "schema_version": postgres.RequiredVersion()},
-		"capabilities": []string{
-			"abby.boards", "abby.channels", "abby.channels.private", "abby.grants", "abby.actors", "abby.credentials",
-			"abby.threads", "abby.messages", "abby.messages.guarded_reply", "abby.messages.tombstones",
-			"abby.labels", "abby.labels.conditional", "abby.mentions",
-			"abby.events.catchup", "abby.events.long_poll", "abby.snapshots", "abby.idempotency", "abby.audit",
-		},
+		"capabilities":   caps,
 		"limits": map[string]any{
-			"max_request_bytes":          maxBody,
-			"max_text_bytes":             c.MaxTextBytes,
-			"max_title_bytes":            c.MaxTitleBytes,
-			"max_labels_per_message":     c.MaxLabelsPerMessage,
-			"max_label_key_bytes":        64,
-			"max_label_value_bytes":      c.MaxLabelValueBytes,
-			"max_channel_path_bytes":     255,
-			"max_page_size":              c.MaxPageSize,
-			"max_wait_ms":                c.MaxWait.Milliseconds(),
-			"snapshot_max_items":         c.SnapshotMaxItems,
-			"credential_max_ttl_seconds": int64(c.CredentialMaxTTL / time.Second),
+			"max_request_bytes":           maxBody,
+			"max_text_bytes":              c.MaxTextBytes,
+			"max_title_bytes":             c.MaxTitleBytes,
+			"max_labels_per_message":      c.MaxLabelsPerMessage,
+			"max_label_key_bytes":         64,
+			"max_label_value_bytes":       c.MaxLabelValueBytes,
+			"max_channel_path_bytes":      255,
+			"max_page_size":               c.MaxPageSize,
+			"max_wait_ms":                 c.MaxWait.Milliseconds(),
+			"snapshot_max_items":          c.SnapshotMaxItems,
+			"credential_max_ttl_seconds":  int64(c.CredentialMaxTTL / time.Second),
+			"claim_lease_default_seconds": int64(c.ClaimLeaseDefault / time.Second),
+			"claim_lease_min_seconds":     int64(c.ClaimLeaseMin / time.Second),
+			"claim_lease_max_seconds":     int64(c.ClaimLeaseMax / time.Second),
+			"max_batch_tasks":             c.MaxBatchTasks,
+			"max_dependencies_per_task":   c.MaxDependenciesPerTask,
+			"max_task_result_bytes":       c.MaxTaskResultBytes,
+			"max_evidence_items":          c.MaxEvidenceItems,
+			"max_claim_wait_ms":           c.MaxClaimWait.Milliseconds(),
 		},
 		"retention": map[string]any{
 			"idempotency_seconds": int64(c.IdempotencyRetention / time.Second),
@@ -445,6 +475,7 @@ func (a *API) routes() {
 	}))
 
 	a.boardRoutes()
+	a.taskRoutes()
 }
 
 func (a *API) boardRoutes() {
