@@ -103,7 +103,7 @@ ADR-0016. They use only the public HTTP API through `sdk/go/abby`
 | `task claims ID` | `GET …/claims` (history, no proofs) |
 | `task claim ID [--lease D] [--expect-brief-revision N] [--proof-file F]` | `POST …/tasks/{id}/claims` |
 | `task next [--channel] [--subtree] [--label k\|k:v]… [--assignee eligible\|me\|unassigned] [--wait D] [--lease D] [--proof-file F]` | `POST …/tasks/claim-next` |
-| `task renew ID [--claim C] [--lease D]` | `POST …/claims/{claim}/renew` (claim ID defaults to the current claim) |
+| `task renew ID [--claim C] [--lease D]` | `POST …/claims/{claim}/renew` (claim ID defaults to the current claim; without `--lease` the claim keeps its current lease) |
 | `task release ID [--reason]` | `POST …/release` |
 | `task complete ID [--summary] [--evidence kind:ref[:note]]… [--commit SHA]… [--data JSON]` | `POST …/complete` |
 | `task fail ID --reason R [--evidence …]… [--commit SHA]… [--data JSON]` | `POST …/fail` |
@@ -188,7 +188,9 @@ The runner implements spec §17 (RUN-001..007, PAR-033).
    environment of the command. If `--run-id`/`ABBY_RUN_ID` is not set, the
    runner makes a run ID and sends it as `Abby-Run-Id`.
 4. **Renew.** The runner renews at one third of the granted lease, ±10 %
-   random jitter. Each renewal has a new key; retries of one renewal use
+   random jitter. It sends `--lease` on each renewal if it was given;
+   otherwise it omits `lease_seconds`, and the claim keeps the lease it was
+   granted. Each renewal has a new key; retries of one renewal use
    its key. The local deadline is the monotonic time when the first
    attempt of the confirmed request was sent, plus the granted lease. The
    runner never compares `expires_at` with the local clock.

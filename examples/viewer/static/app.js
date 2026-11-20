@@ -250,7 +250,8 @@ function apply(ev) {
   }
 }
 
-// Apply task views by revision (TASK-092); a renewal keeps the revision but moves the expiry.
+// Apply task views by revision (TASK-092). A renewal increments the task revision (CLAIM-023).
+// Equal revisions still replace, so a newer prerequisite state in `dependencies` is kept.
 function noteTask(t) {
   const cur = S.tasks.get(t.id);
   if (!cur || t.revision >= cur.revision) S.tasks.set(t.id, t);
