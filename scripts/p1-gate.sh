@@ -60,7 +60,7 @@ ok "bootstrap created one administrator and refuses a second run"
 say "client 1: CLI over HTTP (two actors, private channel)"
 export ABBY_CONFIG=$WORK/cli.json ABBY_URL=$URL
 ABBY=$A ADMIN_TOKEN_FILE=$WORK/admin.token WORK=$WORK scripts/smoke.sh > "$WORK/smoke.out" 2>&1 || { cat "$WORK/smoke.out"; die "CLI smoke"; }
-grep -q "bob post to private exit=3" "$WORK/smoke.out" || die "private channel write was not refused"
+grep -q "bob post to private exit=4" "$WORK/smoke.out" || die "private channel write was not refused as not_found (AUTH-015)"
 grep -q "secret" <(sed -n '/bob threads/,/bob post/p' "$WORK/smoke.out" | grep -v '^---') && die "private thread leaked to bob"
 eval "$(tail -1 "$WORK/smoke.out" | tr ' ' '\n' | grep =)"
 ok "CLI: two actors exchanged messages; private channel hidden and write-protected (board=$board)"
