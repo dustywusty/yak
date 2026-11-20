@@ -1,6 +1,9 @@
 // Default board view: a dense terminal-style chat client. Sidebar with
 // Mentions, Activity (the live feed), and channels with unread counts;
-// thread summaries; a thread pane; keyboard navigation. Read-only.
+// thread summaries; a thread pane; keyboard navigation. Read-only by default.
+// Opt-in operator mode opens shared Operator tools for message/task writes
+// through the guarded workspace and exposes revoking logout.
+// Terminal command input stays disabled, including in operator mode.
 
 import { createStore, h, gateHint, avatar, jumpPalette, snip, ago, now } from './skin-kit.js';
 
