@@ -114,3 +114,66 @@ test('OP17-001 other methods and encoded non-key segments remain refused', () =>
   for (const method of ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']) assert.equal(allowedRequest(method, path, 'c'), false, `${method} ${path}`);
  }
 });
+
+// Execute the production transport without booting the DOM or owning a token.
+async function op17029Transport(fetch) {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
+ const error = source.slice(source.indexOf('class ApiError'), source.indexOf('\nasync function api('));
+ const transport = source.slice(source.indexOf('async function write('), source.indexOf('\nsession = new OperatorSession'));
+ return runInNewContext(`${error}\n${transport}\nwrite`, { fetch, S: { operatorEnabled: true, token: 'synthetic' }, session: { active: true, me: me() }, allowedRequest, AbortController, setTimeout, clearTimeout });
+}
+for (const [name, status, response] of [
+ ['claim headers then rejected body read', 200, () => ({ ok: true, status: 200, json: async () => { throw new TypeError('stream interrupted'); } })],
+ ['broken 200 JSON', 200, () => new Response('{broken', { status: 200 })],
+ ['truncated 201 body', 201, () => new Response('{"id":', { status: 201 })],
+]) {
+ test(`OP17-029 ${name} retains the same intent/index/key for replay`, async () => {
+  const calls = []; let first = true;
+  const send = await op17029Transport(async (path, options) => {
+   calls.push({ path, headers: options.headers });
+   if (first) { first = false; return response(); }
+   return Response.json({ claim: { id: 'q', lease_seconds: 300 }, proof: 'synthetic-proof' });
+  });
+  const s = new OperatorSession({ send, schedule: () => 0 }); s.start(me(), server, now);
+  try {
+   const i = s.intent(taskIntent('claim', '/v1/boards/b', { id: 't', brief_revision: 1 }));
+   await assert.rejects(s.perform(i), e => e.status === 0 && e.problem.code === 'network');
+   assert.equal(i.index, 0); assert.equal(i.done, undefined); assert.equal(i.busy, false);
+   assert.equal(s.claims.size, 0); assert.equal(s.notice, null); assert.ok(s.pending.has(i)); assert.equal(s.pending.size, 1);
+   await s.perform(i);
+   assert.equal(i.done, true); assert.equal(i.index, 1); assert.equal(s.pending.size, 0);
+   assert.equal(s.claims.get('/v1/boards/b/tasks/t').proof, 'synthetic-proof');
+   assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]);
+  } finally { await s.end({ unauthorized: true }); }
+ });
+}
+for (const status of [401, 412]) for (const broken of ['json', 'stream', 'null']) {
+ test(`OP17-029 malformed ${status} ${broken} retains the known HTTP rejection`, async () => {
+  let calls = 0;
+  const send = await op17029Transport(async () => { calls++; return broken === 'stream' ? { ok: false, status, json: async () => { throw new TypeError('stream interrupted'); } } : new Response(broken === 'null' ? 'null' : '{broken', { status }); });
+  const s = new OperatorSession({ send }); s.start(me(), server, now);
+  try {
+   const i = s.intent(taskIntent('flag', '/v1/boards/b', { id: 't', revision: 2 }, { value: true }));
+   await assert.rejects(s.perform(i), e => e.status === status && typeof e.problem === 'object');
+   assert.equal(calls, 1); assert.equal(i.index, 0); assert.equal(i.done, undefined);
+   assert.equal(s.active, status !== 401);
+   if (status === 401) { await s.perform(i); assert.equal(calls, 1); assert.equal(s.pending.size, 0); }
+   else assert.ok(s.pending.has(i));
+  } finally { await s.end({ unauthorized: true }); }
+ });
+}
+test('OP17-029 204 succeeds without reading a body', async () => {
+ let reads = 0;
+ const send = await op17029Transport(async () => ({ ok: true, status: 204, json: async () => { reads++; throw new Error('must not read'); } }));
+ assert.equal(await send('POST', '/v1/boards/b/tasks', {}), null); assert.equal(reads, 0);
+});
+test('OP17-029 replay without proof explicitly completes as proof unavailable', async () => {
+ const send = await op17029Transport(async () => Response.json({ claim: { id: 'q' } }));
+ const s = new OperatorSession({ send }); s.start(me(), server, now);
+ try {
+  const i = s.intent(taskIntent('claim', '/v1/boards/b', { id: 't', brief_revision: 1 })); await s.perform(i);
+  assert.equal(i.done, true); assert.equal(s.claims.size, 0); assert.match(s.notice, /proof unavailable/);
+ } finally { await s.end({ unauthorized: true }); }
+});

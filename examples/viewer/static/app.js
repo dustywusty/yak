@@ -237,9 +237,14 @@ async function write(method, path, body, headers = {}, options = {}) {
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
     const res = await fetch(path, { method, headers: { ...headers, Authorization: `Bearer ${S.token}`, Accept: 'application/json', ...(body != null ? { 'Content-Type': 'application/json' } : {}) }, body: body == null ? undefined : JSON.stringify(body), credentials: 'omit', cache: 'no-store', signal: controller.signal, ...options });
-    const result = res.status === 204 ? null : await res.json().catch(() => ({}));
-    if (!res.ok) throw new ApiError(res.status, result);
-    return result;
+    if (!res.ok) {
+      // A known HTTP rejection stays known even if its problem body is lost.
+      const problem = await res.json().catch(() => null);
+      throw new ApiError(res.status, problem && typeof problem === 'object' ? problem : { code: 'http_error', detail: `HTTP ${res.status}` });
+    }
+    // Successful JSON bodies are part of the write result. Losing one leaves
+    // the outcome uncertain, so perform() must retain this intent's receipt.
+    return res.status === 204 ? null : await res.json();
   } catch (e) {
     if (e instanceof ApiError) throw e;
     throw new ApiError(0, { code: 'network', detail: 'Request outcome unknown. Retry this same intent.' });

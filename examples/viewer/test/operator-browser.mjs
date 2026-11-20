@@ -134,7 +134,49 @@ async function identityNavigationCase() {
  assert('browser has no exceptions', errors.length===0, errors.join(' | '));
  console.log(`OP17-003 executed ${assertions} assertions across fresh login, restoration, two logout entries and two rejected credentials`);
 }
-const operatorCases = new Map([['OP17-003', identityNavigationCase]]);
+async function responseBodyFailureCase() {
+ let assertions = 0;
+ const assert = (name, ok) => { assertions++; check(`OP17-029: ${name}`, ok); };
+ for (const fault of ['stream200', 'broken200', 'truncated201', 'empty204', 'broken401', 'broken412']) {
+  await freshIdentityFixture("window.__op.task.state='ready';");
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-body-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'"); await open();
+   await ev(`window.__op.responseFailure=${JSON.stringify(fault)}`);
+   await click('Work on this now (while this tab is open)'); await confirm('Claim');
+   if (fault === 'broken401') {
+    await until("!document.body.dataset.operator");
+    assert('malformed 401 ends without release/revoke/retry', await count() === 1);
+    assert('malformed 401 clears session UI', await ev("!document.querySelector('.op-workspace') && !sessionStorage.length"));
+   } else if (fault === 'broken412') {
+    await until("document.querySelector('.op-receipts').textContent.includes('No retry was sent')");
+    assert('malformed 412 is a known rejection', await ev("!document.querySelector('.op-receipts').textContent.includes('Retry same intent') && !document.querySelector('.op-receipts').textContent.includes('Saved.') && window.__op.writes.length===1"));
+   } else if (fault === 'empty204') {
+    await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+    assert('204 succeeds with explicit proof unavailable notice', await ev("document.querySelector('#operator-identity').textContent.includes('proof unavailable') && window.__op.writes.length===1"));
+   } else {
+    assert(`${fault} keeps receipt uncertain without completion or proof`, await ev("document.querySelector('.op-receipts').textContent.includes('Retry same intent') && !document.querySelector('.op-receipts').textContent.includes('Saved.') && !document.querySelector('#operator-identity').textContent.includes('proof unavailable') && !document.querySelector('.op-lease') && window.__op.writes.length===1"));
+    assert(`${fault} prevents a new intent`, await ev("[...document.querySelectorAll('[data-op-write]')].every(b=>b.disabled)"));
+    // Continue other variants even against the unfixed transport during RED.
+    if (await ev("document.querySelector('.op-receipts').textContent.includes('Retry same intent')")) {
+     await click('Retry same intent');
+     await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+     assert(`${fault} replay uses the same request and key`, await ev("window.__op.writes.length===2 && JSON.stringify(window.__op.writes[0])===JSON.stringify(window.__op.writes[1])"));
+     assert(`${fault} replay obtains a usable proof`, await ev("!!document.querySelector('.op-lease') && !document.querySelector('#operator-identity').textContent.includes('proof unavailable')"));
+     await click('Release'); await confirm('Release');
+     assert(`${fault} release carries recovered proof`, await ev("window.__op.writes.at(-1).headers['Yak-Claim-Proof']==='fake-secret-proof'"));
+    }
+   }
+  } finally {
+   if (await ev("document.body.dataset.operator==='true'")) {
+    await ev("document.querySelector('#operator-logout').click()"); await until("!document.body.dataset.operator");
+   }
+  }
+ }
+ assert('browser has no exceptions', errors.length === 0);
+ console.log(`OP17-029 executed ${assertions} assertions across six fresh body-failure fixtures`);
+}
+const operatorCases = new Map([['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

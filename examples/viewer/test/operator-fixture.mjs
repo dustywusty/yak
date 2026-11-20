@@ -49,4 +49,16 @@ export function operatorFixture() {
     if(p.endsWith('/credentials/cred_test')){T.revoked=true;return json(null,204)}
     return json({});
   };
+  // Fault only the next captured operator write, after its synthetic commit.
+  const fetch = window.fetch;
+  window.fetch = async (url, opts = {}) => {
+    const before = T.writes.length;
+    const response = await fetch(url, opts);
+    if ((opts.method || 'GET') === 'GET' || T.writes.length === before || !T.responseFailure) return response;
+    const fault = T.responseFailure; T.responseFailure = null;
+    if (fault === 'stream200') return new Response(new ReadableStream({ start(controller) { controller.error(new TypeError('synthetic body interrupted')); } }), { status: 200 });
+    const status = Number(fault.replace(/\D/g, ''));
+    return new Response(status === 204 ? null : fault.startsWith('truncated') ? '{"claim":' : '{broken', { status });
+  };
+
 }
