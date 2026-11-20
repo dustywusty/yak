@@ -25,7 +25,8 @@ stay valid fencing tokens.
    resolve every reference to an earlier record. The manifest holds the
    format version (`MAJOR.MINOR`), protocol version and profiles, source
    implementation, source board ID and name, source history epoch, export
-   position (full exports only), a source continuation cursor, the
+   position and a source continuation cursor (full exports only; the
+   Export job view gives the cursor to the creator of any export), the
    exporter, the partial-export declaration, and per-file SHA-256, byte
    count, and record count.
 2. **Records reuse the public schemas.** `Grant`, `Brief`, `Claim`, and
@@ -56,8 +57,11 @@ stay valid fencing tokens.
 6. **Export authorization.** `board_admin` and current `read` on each
    exported channel. No bypass. Channels the exporter cannot read are left
    out with their content, events, edges, grants based inside them, and
-   audit about them. The manifest says only `partial: true` and which kinds
-   were left out — no counts, IDs, paths, or source position. Private
+   audit about them or with paths or patterns inside them. The manifest
+   says only `partial: true` and which kinds were left out — no counts,
+   IDs, paths, source position, or continuation cursor. Order fields
+   (`source_order`, `source_created_order`) are dense 1..N, so gaps count
+   nothing. Private
    ancestors of exported channels are kept as empty stubs so the private
    boundary survives the move.
 7. **Redaction.** The exporter writes only tombstones and scrubbed

@@ -142,13 +142,17 @@ conformance tests between implementations.
   source, for the exporter, with no filter, at the export position. The
   exporter can use it on the source to read every change after the
   capture (for example during a move to another server). It has no
-  meaning on any other server.
-- **ARC-023** If the export is partial (§7), `source.position` MUST be
-  omitted, `export.partial` MUST be `true`, and `export.omitted_kinds`
-  MUST list each kind of record that was left out (`channels`, `grants`,
+  meaning on any other server. Only a full export puts it in the manifest
+  (ARC-023). The Export job view gives it to the creator of every export
+  (§11.1).
+- **ARC-023** If the export is partial (§7), `source.position` and
+  `source.continuation_cursor` MUST be omitted from the manifest,
+  `export.partial` MUST be `true`, and `export.omitted_kinds` MUST list
+  each kind of record that was left out (`channels`, `grants`,
   `audit_events`, `dependencies`). The manifest MUST NOT contain a count,
   an ID, or a path of any omitted record. (A position number lets a reader
-  count events in omitted channels; AUTH-015 forbids that.)
+  count events in omitted channels; AUTH-015 forbids that. A cursor holds
+  the position, ADR-0006, so anyone with the file could decode it.)
 - **ARC-024** `export.events_truncated` MUST be `true` if the source had
   removed events of the board by retention before the capture. The state
   files are complete either way. Only event history can be truncated.
@@ -250,7 +254,8 @@ capture time), with these changes:
   (`current_claim_id`, `last_claim_id`). Claim records are in
   `claims.jsonl`.
 - Added `source_created_order`: an integer that orders tasks by creation
-  on the source. The value has no other meaning.
+  on the source. The value has no other meaning, and it is dense
+  (ARC-034).
 - Added `dependencies_omitted` (boolean): `true` if a partial export left
   out at least one prerequisite edge of this task (ARC-066, ARC-102).
 
@@ -272,10 +277,16 @@ at capture has `status: "active"`.
 
 `Event` with these changes: no `cursor` (cursors are bound to a server,
 an epoch, and a reader); `credential_id` is always `null`; added
-`source_order` (integer, strictly ascending in the file; no other
-meaning). The `payload` is the payload that the exporter reads through
-`GET …/events` at capture (redaction-safe projection, per-reader
+`source_order` (integer, strictly ascending in the file, dense
+(ARC-034); no other meaning). The `payload` is the payload that the
+exporter reads through `GET …/events` at capture (redaction-safe projection, per-reader
 dependency projection, no proofs, no brief text: TASK-084).
+
+- **ARC-034** `source_created_order` (in `tasks.jsonl`) and `source_order`
+  (in `events.jsonl`) MUST each be dense: the integers 1..N in file
+  order, where N is the number of exported records in that file. An
+  exporter MUST NOT write source positions or any other source counter in
+  them. (Gaps would count omitted tasks and events, AUTH-015.)
 
 ### 4.13 `AuditEvent`
 
@@ -367,7 +378,8 @@ whom. The archive keeps them.
 ## 7 Authorization of export
 
 - **ARC-060** Export requires `board_admin` on the board (AUTH-014) under
-  the caller's credential ceiling. Without it: `403 forbidden` if the
+  the caller's credential ceiling. A delegated credential can never export
+  (DLG-060 item 2). Without it: `403 forbidden` if the
   board is visible to the caller, else `404 not_found` (AUTH-015, AUTH-016).
 - **ARC-061** A channel's content is exported only if the exporter holds
   current `read` on it at capture, after deny, private boundaries, and the
@@ -398,7 +410,11 @@ whom. The archive keeps them.
   (`a/b` for `a/b`, `a` for `a/*`) equals or lies inside the path of an
   omitted, non-stub channel. Pattern `*` grants are always exported.
 - **ARC-068** An audit event MUST be left out if its target is an omitted
-  record, or if its metadata names one.
+  record, or if its metadata names one. It MUST also be left out if its
+  metadata holds a channel path or a grant pattern whose base path (the
+  ARC-067 test) equals or lies inside the path of an omitted, non-stub
+  channel. Example: a delegation audit record (DLG-131) whose channel
+  patterns include `hr/secret/*`, when `hr/secret` is omitted.
 - **ARC-069** Event payloads MUST use the exporter's projection
   (`GET …/events` rules), so references to tasks in omitted channels are
   already removed (DEP-009, DEP-010). An event whose `channel_id` is an
@@ -453,6 +469,7 @@ a full copy makes a full export.
 
 - **ARC-080** Import requires server administration (AUTH-006: actor
   attribute and `server_admin` or `*` scope). Without it: `403 forbidden`.
+  A delegated credential can never import (DLG-060 item 2).
 - **ARC-081** An import MUST create a new board. It MUST NOT merge into,
   replace, or change any existing board. (Merge is out of scope for
   format 1.)
@@ -528,17 +545,17 @@ a full copy makes a full export.
   outcomes, blocks, briefs, and the full claim history are kept. A new
   claim on the target gets epoch = last epoch + 1, so epochs stay a valid
   fencing token across the move.
+- **ARC-095** The importer MUST check the task invariants of P2 and reject
+  an archive that breaks one: `claimed` if and only if one active claim;
+  epochs strictly increase per task; `waiting` only if a prerequisite is
+  not `completed`; `ready` only if all are; the dependency graph is
+  acyclic; one task per thread; briefs numbered 1..`brief_revision`.
 - **ARC-102** If a nonterminal task that is not `blocked` has fewer
   prerequisites in the archive than it had on the source
   (`dependencies_omitted: true`), the importer cannot know if the missing
   ones were satisfied. The importer MUST set each such task to `blocked` with
   `cause: "imported_dependency_omitted"` and emit `task.blocked`. A manager
   decides when to unblock it.
-- **ARC-095** The importer MUST check the task invariants of P2 and reject
-  an archive that breaks one: `claimed` if and only if one active claim;
-  epochs strictly increase per task; `waiting` only if a prerequisite is
-  not `completed`; `ready` only if all are; the dependency graph is
-  acyclic; one task per thread; briefs numbered 1..`brief_revision`.
 
 ### 9.6 Events and history
 
@@ -561,7 +578,7 @@ a full copy makes a full export.
   ADR-0006: the epoch in a cursor becomes (server epoch, board epoch).
 - **ARC-099** Imported events are retained for at least
   `retention.events_seconds` counted from the import, not from their
-  `recorded_at`. Otherwise an import of an old board would lose its
+  `recorded_at`. This amends EVT-012 for imported events. Otherwise an import of an old board would lose its
   history at the next sweep.
 - **ARC-100** Credential attribution: the importer issues one credential
   per import, owned by the importer, revoked at creation, with label
@@ -621,6 +638,7 @@ Export = {
   partial: boolean | null,                // set when ready
   archive: null | { bytes, sha256, format_version },
   manifest: null | Manifest,              // set when ready
+  continuation_cursor: null | string,     // set when ready; creator only (ARC-022)
   created_at, completed_at, expires_at
 }
 ```
@@ -750,7 +768,8 @@ abby board verify-archive FILE [--json]
 To move a board to another server with the least loss:
 
 1. Stop runners on the source board (no new claims).
-2. Export; keep `source.continuation_cursor`.
+2. Export; keep the continuation cursor (from the manifest of a full
+   export, or from the Export job view, ARC-022).
 3. Import on the target; distribute the mapping.
 4. Read source events after the cursor. If there are any, export again.
 5. Issue credentials on the target to the mapped or enabled actors.
@@ -772,7 +791,7 @@ a second base URL and a server-admin credential on it (ADR-0017 decision
 | CT-039 | Two-server round trip | Export from A, import into B (another process, another database), then read B: board, channels, grants, threads, messages, labels, mentions, tasks, briefs, claims, dependencies, events, audit match A by the mapping |
 | CT-040 | Redaction round trip | A canary string in a deleted message, an edited-then-deleted message, a redacted task root, and a redacted brief appears nowhere in the decompressed archive and nowhere on B (reads, events, snapshots, text filter, briefs, audit) |
 | CT-041 | Redaction after capture | Delete a message after the export position and before download: export becomes `invalidated`; download returns `409 resync_required` |
-| CT-042 | Partial export | Exporter without read on a private channel: its content, events, edges, and audit are absent; no count, ID, or path of it appears; stub kept for a readable descendant |
+| CT-042 | Partial export | Exporter without read on a private channel: its content, events, edges, and audit are absent; no count, ID, or path of it appears; stub kept for a readable descendant; the manifest has no `source.position` and no `source.continuation_cursor` (the Export job view gives the cursor to the creator); `source_created_order` and `source_order` are 1..N with no gaps; a delegation board audit record whose channel pattern points into the omitted channel is absent |
 | CT-043 | Integrity rejection | Changed byte, missing file, extra file, link entry, `../` name, unknown major, oversized line, decompression bomb: each rejected, nothing created |
 | CT-044 | Active claim on import | A claim active at capture arrives `expired` with `ended_at = min(expires_at, import time)`; task `ready`; next claim has epoch + 1; old proof is `claim_lost` on B |
 | CT-045 | Import twice | Same archive into the same server twice: second `auto` import remaps all IDs; `keep` returns `409 archive_id_conflict` and creates nothing |
@@ -786,6 +805,7 @@ a second base URL and a server-admin credential on it (ADR-0017 decision
 | ARC-010..015 | CT TestCT043ArchiveIntegrity; REF TestArchiveDeterministicBytes; CLI verify-archive tests |
 | ARC-020..025 | CT TestCT043ArchiveIntegrity; CT TestCT042PartialExport (manifest); REF TestManifestMinorVersionTolerance |
 | ARC-030 | CT TestCT043ArchiveIntegrity (dangling ID) |
+| ARC-034 | CT TestCT042PartialExport (dense order values) |
 | ARC-031..033 | CT TestCT039 (delegated attribution and `direct_action_required` round trip, on servers with `abby.delegation`); CT TestCT048ArchiveNoSecrets (no delegation records, no restriction flags); REF TestImportRejectsMissingDelegationProfile |
 | ARC-040..041 | CT TestCT048ArchiveNoSecrets |
 | ARC-050..053 | CT TestCT047WritesDuringCapture; REF TestCaptureSingleSnapshot; REF TestCaptureHoldsNoBoardLock |
