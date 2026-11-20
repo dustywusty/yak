@@ -62,6 +62,7 @@ const FAKE = () => {
   threads.find((t) => t.id === 'thr_review').labels.kind = 'review';
   threads.find((t) => t.id === 'thr_deploy').labels.needs = 'owner';
   const T = window.__fake = { channels: ['ops', 'ops/deploy', 'review', 'activity'], queue: [], calls: {}, posts: 0, deletes: 0, slowSnapshot: 0, resync: false, tasks, disconnected: false, taskReads: 0, holdTask: null, heldTasks: [] };
+  const boards = ['demo', 'Release planning'].map((name, i) => ({ id: i ? 'brd_planning' : B, name, owner_actor_id: 'act_alice', revision: 1, policy_revision: 1, created_at: iso(-9e6), updated_at: iso(-9e6), caller_is_board_admin: false }));
   const json = (body, status = 200) => new Response(body == null ? null : JSON.stringify(body), { status, headers: { 'Content-Type': status >= 400 ? 'application/problem+json' : 'application/json' } });
   const count = (k) => { T.calls[k] = (T.calls[k] || 0) + 1; };
   window.fetch = async (url, opts = {}) => {
@@ -70,9 +71,21 @@ const FAKE = () => {
     if (p === '/v1/server') return new Response(JSON.stringify({ limits: { max_page_size: 200, max_wait_ms: 30000 } }), { headers: { Date: new Date().toUTCString() } });
     if (!/^Bearer yak\.test\.token$/.test(opts.headers?.Authorization || '')) return json({ code: 'unauthenticated', status: 401, detail: 'no token' }, 401);
     count(`${m} ${p.replace(B, 'B').replace(/snp_\w+/, 'S')}`);
-    if (p === '/v1/me') return json({ actor: actors[2], credential: { id: 'cred_v', actor_id: 'act_view', scopes: ['read'], board_ids: [B] } });
-    if (p === '/v1/boards') return json({ boards: [{ id: B, name: 'demo', owner_actor_id: 'act_alice', revision: 1, policy_revision: 1, created_at: iso(-9e6), updated_at: iso(-9e6), caller_is_board_admin: false }] });
-    if (p === `/v1/boards/${B}`) return json({ id: B, name: 'demo', owner_actor_id: 'act_alice', revision: 1, policy_revision: 1, created_at: iso(-9e6), updated_at: iso(-9e6), caller_is_board_admin: false });
+    if (p === '/v1/me') return json({ actor: actors[2], credential: { id: 'cred_v', actor_id: 'act_view', scopes: ['read'], board_ids: boards.map((b) => b.id) } });
+    if (p === '/v1/boards') return json({ boards });
+    if (p === `/v1/boards/${B}`) return json(boards[0]);
+    // A second, empty board makes the picker useful in repeatable previews.
+    if (p.startsWith('/v1/boards/brd_planning')) {
+      if (p === '/v1/boards/brd_planning') return json(boards[1]);
+      if (p.endsWith('/actors')) return json({ actors });
+      if (p.endsWith('/channels')) return json({ channels: [] });
+      if (p.endsWith('/snapshots') && m === 'POST') return json({ id: 'snp_planning', board_id: boards[1].id, item_count: 0, created_at: iso(0), expires_at: iso(6e5) }, 201);
+      if (p.endsWith('/snapshots/snp_planning')) return m === 'DELETE' ? new Response(null, { status: 204 }) : json({ snapshot: { id: 'snp_planning' }, items: [], next_page_token: null, continuation_cursor: 'c1.planning' });
+      if (p.endsWith('/events')) {
+        await new Promise((r) => setTimeout(r, 300));
+        return json({ events: [], next_cursor: 'c1.planning', caught_up: true, timed_out: true });
+      }
+    }
     if (p.endsWith('/actors')) return json({ actors });
     if (p.endsWith('/channels')) return json({ channels: T.channels.map(chan) });
     if (p.endsWith('/snapshots') && m === 'POST') { T.posts++; return json({ id: `snp_${T.posts}`, board_id: B, item_count: 7, created_at: iso(0), expires_at: iso(6e5) }, 201); }
@@ -475,6 +488,11 @@ try {
   const mobile = await ev(`({ overflow: document.documentElement.scrollWidth > innerWidth, activity: document.querySelector('#term .t-agent-activity').getBoundingClientRect().height, chat: document.querySelector('.t-scroll').getBoundingClientRect().height })`);
   check('390px layout keeps activity and chat usable without horizontal overflow', !mobile.overflow && mobile.activity >= 100 && mobile.chat >= 150, JSON.stringify(mobile));
 
+  await go('#/boards');
+  check('picker lists both synthetic boards', await ev(`document.querySelectorAll('#board-list a').length === 2 && document.getElementById('board-list').textContent.includes('Release planning')`));
+  await ev(`document.querySelector('#board-list a[href*="brd_planning"]').click();1`);
+  await sleep(800);
+  check('second board opens its own empty Chat without leaking demo tasks', await ev(`location.hash.includes('brd_planning') && document.querySelector('.t-foot').textContent.includes('Release planning') && !document.querySelector('#term').textContent.includes('Build the viewer bundle') && document.getElementById('banner').hidden`));
   await go('#/irc?b=brd_test');
   await ev(`document.querySelector('.i-win #forget').click();1`);
   check('IRC Forget token restores login and stops the skin', await ev(`!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !!document.querySelector('body > .top') && !document.body.dataset.skin`));
