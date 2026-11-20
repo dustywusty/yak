@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -329,4 +330,97 @@ func TestOP17002(t *testing.T) {
 		t.Fatal("no header assertions executed")
 	}
 	t.Logf("OP17-002 executed %d response assertions across %d cases", assertions, len(cases)*2)
+}
+
+// TestOP17038 checks route refusal precedence without weakening write-origin checks.
+func TestOP17038(t *testing.T) {
+	var upstreamCalls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []struct {
+		name, method, path string
+		readonly, operator bool
+	}{
+		{"snapshot-create", "POST", "/v1/boards/b/snapshots", true, true},
+		{"snapshot-delete", "DELETE", "/v1/boards/b/snapshots/s", true, true},
+		{"read", "GET", "/v1/me", true, true},
+		{"task-create", "POST", "/v1/boards/b/tasks", false, true},
+		{"unsupported-route", "POST", "/v1/delegations", false, false},
+		{"unsupported-method", "PATCH", "/v1/boards/b/snapshots/s", false, false},
+	}
+	origins := []struct{ name, value string }{
+		{"absent", ""}, {"same", "http://localhost"}, {"foreign", "https://foreign.invalid"},
+	}
+	fetchSites := []struct{ name, value string }{
+		{"absent", ""}, {"same-origin", "same-origin"}, {"same-site", "same-site"}, {"cross-site", "cross-site"},
+	}
+	cases, assertions := 0, 0
+	for _, operator := range []bool{false, true} {
+		mode := "readonly"
+		if operator {
+			mode = "operator"
+		}
+		handler := viewerHandler(target, operator)
+		for _, route := range routes {
+			for _, origin := range origins {
+				for _, fetchSite := range fetchSites {
+					t.Run(mode+"/"+route.name+"/origin-"+origin.name+"/fetch-"+fetchSite.name, func(t *testing.T) {
+						cases++
+						supported := route.readonly
+						if operator {
+							supported = route.operator
+						}
+						wantStatus, wantCalls := http.StatusNoContent, int64(1)
+						if !supported {
+							wantStatus, wantCalls = http.StatusMethodNotAllowed, 0
+							if operator {
+								wantStatus = http.StatusForbidden
+							}
+						} else if route.method != "GET" && (origin.name == "foreign" || fetchSite.name == "same-site" || fetchSite.name == "cross-site") {
+							wantStatus, wantCalls = http.StatusForbidden, 0
+						}
+						r := httptest.NewRequest(route.method, "http://localhost"+route.path, nil)
+						if origin.value != "" {
+							r.Header.Set("Origin", origin.value)
+						}
+						if fetchSite.value != "" {
+							r.Header.Set("Sec-Fetch-Site", fetchSite.value)
+						}
+						w := httptest.NewRecorder()
+						before := upstreamCalls.Load()
+						handler.ServeHTTP(w, r)
+						assertions++
+						if w.Code != wantStatus {
+							t.Errorf("status = %d, want %d", w.Code, wantStatus)
+						}
+						assertions++
+						if calls := upstreamCalls.Load() - before; calls != wantCalls {
+							t.Errorf("upstream calls = %d, want %d", calls, wantCalls)
+						}
+						if wantCalls == 0 {
+							wantCode := "forbidden"
+							if wantStatus == http.StatusMethodNotAllowed {
+								wantCode = "method_not_allowed"
+							}
+							assertions++
+							if !strings.Contains(w.Body.String(), `"code":"`+wantCode+`"`) {
+								t.Errorf("problem body = %s, want code %q", w.Body.String(), wantCode)
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+	if cases != 144 || assertions == 0 {
+		t.Fatalf("incomplete matrix: cases=%d assertions=%d", cases, assertions)
+	}
+	t.Logf("OP17-038 executed %d cases and %d assertions", cases, assertions)
 }

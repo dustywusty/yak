@@ -162,10 +162,6 @@ func viewerHandler(target *url.URL, operator bool) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" && ((r.Header.Get("Origin") != "" && r.Header.Get("Origin") != "http://"+r.Host) || (r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin")) {
-			routeProblem(w, 403, "forbidden")
-			return
-		}
 		// A reaction key is a path segment, never a query or fragment.
 		reactionSuffix := (r.Method == "PUT" || r.Method == "DELETE") && reactionRoute.MatchString(r.URL.EscapedPath()) && (r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.Fragment != "" || strings.Contains(r.RequestURI, "#"))
 		if reactionSuffix || !allowedRoute(r.Method, r.URL.EscapedPath(), operator) {
@@ -174,6 +170,11 @@ func viewerHandler(target *url.URL, operator bool) http.Handler {
 			} else {
 				routeProblem(w, 403, "forbidden")
 			}
+			return
+		}
+		// Refuse unsupported routes first so read-only refusals always return 405.
+		if r.Method != "GET" && ((r.Header.Get("Origin") != "" && r.Header.Get("Origin") != "http://"+r.Host) || (r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin")) {
+			routeProblem(w, 403, "forbidden")
 			return
 		}
 		// ReverseProxy appends upstream headers. Let ModifyResponse (or the
