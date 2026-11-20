@@ -658,3 +658,118 @@ test('OP17-004 ordinary release 401 prevents subsequent release and revoke',asyn
  const f=op17004Session(()=>Promise.reject(Object.assign(new Error('unauthorized'),{status:401})));
  await f.s.end();assert.equal(f.calls.length,1);op17004Cleared(f);
 });
+
+const { int01DataCases, int01Task } = await import('./wire-json.test.mjs');
+async function int01ReadTransport(fetch) {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
+ const first = source.indexOf('class ApiError'), last = source.indexOf('// ---------- token');
+ assert.ok(first >= 0 && last > first);
+ return runInNewContext(`${source.slice(first, last)}\napi`, { parseWireJSON, stringifyWireJSON, fetch, S: { abort: new AbortController() }, session: null, location: { origin: 'http://synthetic.invalid' }, performance, URL, DOMException });
+}
+for (const envelope of ['task', 'list', 'snapshot', 'event']) {
+ test(`OP17-043 INT-01 production read ${envelope} opaque matrix`, async () => {
+  for (const { name, raw } of int01DataCases) {
+   const task = int01Task(raw);
+   const [path, text, select] = {
+    task: ['/tasks/t', task, d => d],
+    list: ['/tasks', `{"items":[${task}]}`, d => d.items[0]],
+    snapshot: ['/snapshots/s', `{"items":[{"type":"task","data":${task}}]}`, d => d.items[0].data],
+    event: ['/events', `{"events":[{"type":"task.completed","resource":{"revision":9223372036854775807},"payload":{"task":${task},"outcome":{"data":${raw}}}}]}`, d => d.events[0].payload.task]
+   }[envelope];
+   const request = await int01ReadTransport(async (url, options) => {
+    assert.equal(url.pathname, `/v1/boards/b${path}`); assert.equal(options.method, 'GET');
+    return new Response(text);
+   });
+   const result = await request('GET', `/v1/boards/b${path}`), decoded = select(result);
+   assert.deepEqual(decoded.outcome.data, JSON.parse(raw), name);
+   assert.equal(decoded.revision, '9007199254740993');
+   assert.equal(decoded.brief_revision, '9223372036854775807');
+   if (envelope === 'event') {
+    assert.deepEqual(result.events[0].payload.outcome.data, JSON.parse(raw), name);
+    assert.equal(result.events[0].resource.revision, '9223372036854775807');
+   }
+  }
+ });
+}
+for (const type of ['task.completed', 'task.failed', 'task.reopened']) {
+ for (const embedding of type === 'task.reopened' ? ['previous_outcome'] : ['task', 'outcome']) {
+  test(`OP17-043 INT-01 production ${type} independent ${embedding}`, async () => {
+   for (const raw of [...int01DataCases.map(c => c.raw), 'null']) {
+    const currentTask = type === 'task.reopened' ? int01Task('null').replace('"outcome":{"data":null}', '"outcome":null') : int01Task('null');
+    const payload = embedding === 'task' ? `"task":${int01Task(raw)},"outcome":{"data":null}` : `"task":${currentTask},"${embedding}":{"data":${raw}}`;
+    const request = await int01ReadTransport(async () => new Response(`{"events":[{"type":"${type}","payload":{${payload}}}]}`));
+    const p = (await request('GET', '/v1/boards/b/events')).events[0].payload;
+    assert.deepEqual((embedding === 'task' ? p.task.outcome : p[embedding]).data, JSON.parse(raw));
+    assert.equal(p.task.revision, '9007199254740993');
+    if (type === 'task.reopened') assert.equal(p.task.outcome, null);
+   }
+  });
+ }
+}
+test('OP17-043 INT-01 production message and audit opaque envelopes', async () => {
+ for (const { raw } of int01DataCases) {
+  const message = `{"revision":9007199254740993,"extensions":{"vendor.feature":${raw}}}`;
+  for (const [text, select] of [
+   [message, d => d], [`{"messages":[${message}]}`, d => d.messages[0]],
+   [`{"items":[{"type":"message","data":${message}}]}`, d => d.items[0].data],
+   [`{"events":[{"resource":{"revision":9223372036854775807},"payload":{"message":${message}}}]}`, d => d.events[0].payload.message]
+  ]) {
+   const request = await int01ReadTransport(async () => new Response(text));
+   const decoded = await request('GET', '/v1/boards/b/events');
+   if (decoded.events) assert.equal(decoded.events[0].resource.revision, '9223372036854775807');
+   const result = select(decoded);
+   assert.equal(result.revision, '9007199254740993');
+   assert.deepEqual(result.extensions['vendor.feature'], JSON.parse(raw));
+  }
+  const request = await int01ReadTransport(async () => new Response(`{"audit_events":[{"metadata":${raw}}]}`));
+  assert.deepEqual((await request('GET', '/v1/audit-events')).audit_events[0].metadata, JSON.parse(raw));
+ }
+});
+for (const type of ['task.completed', 'task.failed']) {
+ test(`OP17-043 INT-01 production store snapshot and ${type} advance without reconnect`, { timeout: 3000 }, async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { runInNewContext } = await import('node:vm');
+  const source = await readFile(new URL('../static/skin-kit.js', import.meta.url), 'utf8');
+  const raw = int01DataCases.find(c => c.name === 'reported combined object').raw;
+  const calls = [], statuses = [], observations = [];
+  let resolveDone, rejectDone, store, timeout;
+  const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+  const request = await int01ReadTransport(async (url, options) => {
+   calls.push(`${options.method} ${url.pathname}`);
+   if (url.pathname.endsWith('/events')) {
+    assert.equal(url.searchParams.get('cursor'), 'snapshot-cursor');
+    return new Response(`{"events":[{"id":"e","type":"${type}","payload":{"task":${int01Task(raw).replace('9007199254740993', '9007199254740994')},"outcome":{"data":${raw}}}}],"next_cursor":"event-cursor"}`);
+   }
+   if (url.pathname.endsWith('/snapshots/s')) return options.method === 'DELETE' ? new Response(null, { status: 204 }) : new Response(`{"items":[{"id":"t","type":"task","data":${int01Task(raw)}}],"next_page_token":null,"continuation_cursor":"snapshot-cursor"}`);
+   if (url.pathname.endsWith('/snapshots')) return new Response('{"id":"s"}');
+   if (url.pathname.endsWith('/actors')) return new Response('{"actors":[],"next_page_token":null}');
+   if (url.pathname.endsWith('/channels')) return new Response('{"channels":[]}');
+   if (url.pathname === '/v1/me') return new Response('{"actor":{"id":"a"}}');
+   assert.equal(url.pathname, '/v1/boards/b'); return new Response('{"id":"b"}');
+  });
+  const create = runInNewContext(`${source.slice(source.indexOf('export function createStore('), source.indexOf('// The gate label')).replace('export function', 'function')}\ncreateStore`, {
+   compareRevision, enc: encodeURIComponent, AbortController, DOMException, setInterval, clearInterval, setTimeout, clearTimeout,
+   clock: { limits: { max_page_size: 200, max_wait_ms: 1 } }, now: Date.now, syncClock: async () => {},
+   sleep: async () => {}, console
+  });
+  try {
+   timeout = setTimeout(() => rejectDone(new Error(`store stalled: ${statuses}`)), 1000);
+   store = create({ api: request, boardId: 'b', onStatus: status => { statuses.push(status); if (status === 'reconnecting') rejectDone(new Error('valid data caused reconnect')); }, onChange: () => {
+    try {
+     const task = store.S.tasks.get('t');
+     assert.deepEqual(task.outcome.data, JSON.parse(raw));
+     assert.equal(task.brief_revision, '9223372036854775807');
+     observations.push([store.S.cursor, task.revision]);
+     if (store.S.cursor === 'event-cursor') { store.stop(); resolveDone(); }
+    } catch (error) { rejectDone(error); }
+   } });
+   await done;
+   assert.deepEqual(observations, [['snapshot-cursor', '9007199254740993'], ['event-cursor', '9007199254740994']]);
+   assert.equal(statuses.includes('reconnecting'), false);
+   assert.equal(calls.filter(c => c === 'POST /v1/boards/b/snapshots').length, 1);
+   assert.equal(calls.filter(c => c === 'GET /v1/boards/b/events').length, 1);
+  } finally { clearTimeout(timeout); store?.stop(); }
+ });
+}

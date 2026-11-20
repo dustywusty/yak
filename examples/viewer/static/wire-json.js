@@ -29,7 +29,7 @@ function transformJSON(text, transform) {
     }
     throw new SyntaxError('Unterminated JSON string');
   };
-  function value(key, depth) {
+  function value(key, depth, opaque = false) {
     space();
     const start = pos;
     if (text[pos] === '{') {
@@ -37,7 +37,13 @@ function transformJSON(text, transform) {
       if (text[pos] !== '}') for (;;) {
         space();
         if (text[pos] !== '"') throw new SyntaxError('Expected property name');
-        const name = string(); take(':'); value(name, depth + 1); space();
+        const name = string(); take(':');
+        // Structural exceptions for Message.extensions, AuditEvent.metadata,
+        // and direct Outcome.data / previous_outcome.data, at any wrapper depth.
+        // This is boundary recognition, not validation of the enclosing schema.
+        const childOpaque = opaque || name === 'extensions' || name === 'metadata' ||
+          (name === 'data' && (key === 'outcome' || key === 'previous_outcome'));
+        value(name, depth + 1, childOpaque); space();
         if (text[pos] !== ',') break;
         pos++;
       }
@@ -45,7 +51,7 @@ function transformJSON(text, transform) {
     } else if (text[pos] === '[') {
       pos++; space();
       if (text[pos] !== ']') for (;;) {
-        value(undefined, depth + 1); space();
+        value(undefined, depth + 1, opaque); space();
         if (text[pos] !== ',') break;
         pos++;
       }
@@ -55,7 +61,7 @@ function transformJSON(text, transform) {
       while (pos < text.length && !/[\t\n\r ,}\]]/.test(text[pos])) pos++;
       if (pos === start) throw new SyntaxError('Expected JSON value');
     }
-    const raw = text.slice(start, pos), replacement = transform(key, raw, depth);
+    const raw = text.slice(start, pos), replacement = transform(key, raw, depth, opaque);
     if (replacement !== raw) edits.push({ start, end: pos, replacement });
   }
   value(undefined, 0); space();
@@ -68,9 +74,9 @@ function transformJSON(text, transform) {
 
 export function parseWireJSON(text) {
   if (typeof text !== 'string') throw new TypeError('Expected JSON text');
-  const exact = transformJSON(text, (key, raw) => {
+  const exact = transformJSON(text, (key, raw, depth, opaque) => {
     // String values are user content (for example a label named revision).
-    if ((key === 'revision' || key === 'brief_revision') && raw[0] !== '"') return JSON.stringify(decimalRevision(raw));
+    if (!opaque && (key === 'revision' || key === 'brief_revision') && raw[0] !== '"') return JSON.stringify(decimalRevision(raw));
     return raw;
   });
   return JSON.parse(exact);
