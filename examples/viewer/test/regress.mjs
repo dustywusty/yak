@@ -180,6 +180,11 @@ try {
   check('feed status is live', s.status.startsWith('live'), s.status);
 
   const activity = () => ev(`document.querySelector('.t-agent-activity')?.textContent || ''`);
+  const until = async (expr) => {
+    for (let n = 0; n < 50; n++) { if (await ev(expr)) return; await sleep(100); }
+    throw new Error(`condition not reached: ${expr}`);
+  };
+
   check('prominent working and waiting summary', (await activity()).includes('Working now') && (await activity()).includes('Waiting'), await activity());
   check('counts actors separately from multiple claims', (await activity()).includes('1 working actor') && (await activity()).includes('2 claimed tasks'), await activity());
   check('unclaimed agents are named without a process-status guess', (await activity()).includes('No active claimed task: bot-b'), await activity());
@@ -221,7 +226,8 @@ try {
   await sleep(1200);
   check('disconnected elapsed clocks freeze', frozen === await ev(`document.querySelector('[data-activity-task="task_wait"] time').textContent`));
   await ev(`window.__fake.disconnected = false; window.__taskEvent('task_second', { state: 'ready', current_claim: null }, 'task.released'); 1`);
-  await sleep(1800);
+  // Reconnect may still be in the second retry's 2–2.5 s backoff.
+  await until(`(() => { const text = document.querySelector('.t-agent-activity')?.textContent || ''; return text.includes('1 claimed task') && !text.includes('Last known'); })()`);
   check('reconnect removes released claim', (await activity()).includes('1 claimed task') && !(await activity()).includes('Last known'), await activity());
   await ev(`window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() - 1000).toISOString() } }); window.__fake.tasks[0] = { ...window.__fake.tasks[0], state: 'ready', current_claim: null, revision: 99 }; 1`);
   await sleep(1500);
@@ -232,10 +238,6 @@ try {
   check('resnapshot restores authoritative activity', await ev(`window.__fake.posts > ${snapshotsBeforeResync}`) && (await activity()).includes('0 claimed tasks') && !(await activity()).includes('Last known'), await activity());
   // Hold a valid renewal response across an authoritative snapshot that
   // removes the task. A revision cannot order a response against absence.
-  const until = async (expr) => {
-    for (let n = 0; n < 50; n++) { if (await ev(expr)) return; await sleep(100); }
-    throw new Error(`condition not reached: ${expr}`);
-  };
   await go('#/boards');
   await go('#/b/brd_test?v=activity');
   await ev(`window.__fake.holdTask = 'task_work'; window.__fake.heldTasks = [];
