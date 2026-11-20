@@ -213,7 +213,7 @@ func clientCmds() []*cobra.Command {
 	actorCreate.Flags().String("display-name", "", "display name")
 	addIdem(actorCreate)
 	actor.AddCommand(actorCreate, &cobra.Command{Use: "list", Short: "List all actors", RunE: func(cmd *cobra.Command, args []string) error {
-		return callPrint(cmd, abby.Request{Method: "GET", Path: "/v1/actors"})
+		return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/actors"}, "actors")
 	}})
 	cmds = append(cmds, actor)
 
@@ -257,7 +257,7 @@ func clientCmds() []*cobra.Command {
 		if a != "" {
 			q.Set("actor_id", a)
 		}
-		return callPrint(cmd, abby.Request{Method: "GET", Path: "/v1/credentials", Query: q})
+		return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/credentials", Query: q}, "credentials")
 	}}
 	credList.Flags().String("actor", "", "actor ID (server administrators)")
 	cred.AddCommand(credCreate, credList, &cobra.Command{Use: "revoke ID", Short: "Revoke a credential", Args: cobra.ExactArgs(1),
@@ -278,7 +278,7 @@ func clientCmds() []*cobra.Command {
 	addIdem(boardCreate)
 	board.AddCommand(boardCreate,
 		&cobra.Command{Use: "list", Short: "List visible boards", RunE: func(cmd *cobra.Command, args []string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: "/v1/boards"})
+			return callPrintPages(cmd, abby.Request{Method: "GET", Path: "/v1/boards"}, "boards")
 		}},
 		boardCmd("show", "Show the selected board", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
 			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "")})
@@ -311,7 +311,7 @@ func clientCmds() []*cobra.Command {
 	chCreate.Flags().Bool("private", false, "create a private channel (allow-inheritance boundary)")
 	addIdem(chCreate)
 	channel.AddCommand(chCreate, boardCmd("list", "List channels", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-		return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/channels")})
+		return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/channels")}, "channels")
 	}))
 	cmds = append(cmds, channel)
 
@@ -345,7 +345,7 @@ func clientCmds() []*cobra.Command {
 	addIdem(grCreate)
 	grant.AddCommand(grCreate,
 		boardCmd("list", "List grants", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/grants")})
+			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/grants")}, "grants")
 		}),
 		boardCmd("revoke ID", "Revoke a grant", cobra.ExactArgs(1), func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
 			return callPrint(cmd, abby.Request{Method: "DELETE", Path: abby.BoardPath(b, "/grants/"+url.PathEscape(args[0]))})
@@ -357,10 +357,10 @@ func clientCmds() []*cobra.Command {
 			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/permissions"), Query: url.Values{"channel": {args[0]}}})
 		}),
 		boardCmd("actors", "List board participants visible to you", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/actors")})
+			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/actors")}, "actors")
 		}),
 		boardCmd("audit", "Show board audit events (board_admin)", cobra.NoArgs, func(cmd *cobra.Command, args []string, c *abby.Client, b string) error {
-			return callPrint(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/audit-events")})
+			return callPrintPages(cmd, abby.Request{Method: "GET", Path: abby.BoardPath(b, "/audit-events")}, "audit_events")
 		}),
 	)
 
@@ -463,7 +463,10 @@ func clientCmds() []*cobra.Command {
 			return err
 		}
 		var all []map[string]any
-		q := url.Values{"limit": {"200"}}
+		q := url.Values{}
+		if l := pageLimit(cmd.Context(), c); l != "" {
+			q.Set("limit", l)
+		}
 		for {
 			var page struct {
 				Messages []map[string]any `json:"messages"`
@@ -753,7 +756,10 @@ func eventCmds() []*cobra.Command {
 		if _, err := c.Do(cmd.Context(), abby.Request{Method: "POST", Path: abby.BoardPath(b, "/snapshots"), Query: q}, &info); err != nil {
 			return err
 		}
-		pq := url.Values{"limit": {"200"}}
+		pq := url.Values{}
+		if l := pageLimit(cmd.Context(), c); l != "" {
+			pq.Set("limit", l)
+		}
 		var items []json.RawMessage
 		for {
 			var pg struct {

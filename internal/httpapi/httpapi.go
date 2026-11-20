@@ -374,11 +374,15 @@ func (a *API) routes() {
 		return a.respond(w, r, p, "", res)
 	}))
 	m.HandleFunc("GET /v1/actors", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListAllActors(r.Context(), p)
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"actors": l})
+		l, next, err := a.S.ListAllActors(r.Context(), p, pg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"actors": l, "next_page_token": next})
 	}))
 	m.HandleFunc("GET /v1/actors/{actor_id}", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
 		v, err := a.S.GetActor(r.Context(), p, r.PathValue("actor_id"))
@@ -405,11 +409,15 @@ func (a *API) routes() {
 		return a.respond(w, r, p, "", res)
 	}))
 	m.HandleFunc("GET /v1/credentials", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListCredentials(r.Context(), p, r.URL.Query().Get("actor_id"))
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"credentials": l})
+		l, next, err := a.S.ListCredentials(r.Context(), p, r.URL.Query().Get("actor_id"), pg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"credentials": l, "next_page_token": next})
 	}))
 	m.HandleFunc("DELETE /v1/credentials/{credential_id}", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
 		c, err := a.S.RevokeCredential(r.Context(), p, r.PathValue("credential_id"))
@@ -419,11 +427,15 @@ func (a *API) routes() {
 		return writeJSON(w, 200, c)
 	}))
 	m.HandleFunc("GET /v1/audit-events", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListAudit(r.Context(), p, "", 200)
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"audit_events": l})
+		l, next, err := a.S.ListAudit(r.Context(), p, "", pg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"audit_events": l, "next_page_token": next})
 	}))
 
 	// boards
@@ -443,11 +455,15 @@ func (a *API) routes() {
 		return a.respond(w, r, p, "", res)
 	}))
 	m.HandleFunc("GET /v1/boards", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListBoards(r.Context(), p)
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"boards": l})
+		l, next, err := a.S.ListBoards(r.Context(), p, pg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"boards": l, "next_page_token": next})
 	}))
 	m.HandleFunc("GET /v1/boards/{board_id}", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
 		b, err := a.S.GetBoard(r.Context(), p, r.PathValue("board_id"))
@@ -499,11 +515,15 @@ func (a *API) boardRoutes() {
 		return a.respond(w, r, p, bid(r), res)
 	}))
 	m.HandleFunc("GET "+B+"/channels", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListChannels(r.Context(), p, bid(r))
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"channels": l})
+		l, next, err := a.S.ListChannels(r.Context(), p, bid(r), pg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"channels": l, "next_page_token": next})
 	}))
 	m.HandleFunc("GET "+B+"/channels/{channel_id}", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
 		c, err := a.S.GetChannel(r.Context(), p, bid(r), r.PathValue("channel_id"))
@@ -520,18 +540,26 @@ func (a *API) boardRoutes() {
 		return writeJSON(w, 200, v)
 	}))
 	m.HandleFunc("GET "+B+"/actors", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.BoardActors(r.Context(), p, bid(r))
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"actors": l})
+		l, next, err := a.S.BoardActors(r.Context(), p, bid(r), pg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"actors": l, "next_page_token": next})
 	}))
 	m.HandleFunc("GET "+B+"/audit-events", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListAudit(r.Context(), p, bid(r), 200)
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"audit_events": l})
+		l, next, err := a.S.ListAudit(r.Context(), p, bid(r), pg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"audit_events": l, "next_page_token": next})
 	}))
 
 	// grants
@@ -551,11 +579,15 @@ func (a *API) boardRoutes() {
 		return a.respond(w, r, p, bid(r), res)
 	}))
 	m.HandleFunc("GET "+B+"/grants", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		l, err := a.S.ListGrants(r.Context(), p, bid(r), r.URL.Query().Get("include_revoked") == "true")
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		return writeJSON(w, 200, map[string]any{"grants": l})
+		l, next, err := a.S.ListGrants(r.Context(), p, bid(r), r.URL.Query().Get("include_revoked") == "true", pg)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, 200, map[string]any{"grants": l, "next_page_token": next})
 	}))
 	m.HandleFunc("GET "+B+"/grants/{grant_id}", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
 		g, err := a.S.GetGrant(r.Context(), p, bid(r), r.PathValue("grant_id"))

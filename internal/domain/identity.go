@@ -225,19 +225,32 @@ func (s *Service) GetActor(ctx context.Context, p *Principal, id string) (*Actor
 	return getActor(ctx, s.DB, id)
 }
 
-func (s *Service) ListAllActors(ctx context.Context, p *Principal) ([]ActorView, error) {
-	if err := requireServerAdmin(p); err != nil {
-		return nil, err
-	}
-	rows, err := s.DB.Query(ctx, `SELECT id, kind, handle, display_name, owner_actor_id, server_admin, created_at FROM actors ORDER BY created_at, id`)
+// ListAllActors returns one page of all actors in (created_at, id) order
+// (server administrators only).
+func (s *Service) ListAllActors(ctx context.Context, p *Principal, pg PageRequest) ([]ActorView, *string, error) {
+	after, err := pg.after()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (ActorView, error) {
+	has, t, id := after.sqlArgs()
+	if err := requireServerAdmin(p); err != nil {
+		return nil, nil, err
+	}
+	rows, err := s.DB.Query(ctx, `SELECT id, kind, handle, display_name, owner_actor_id, server_admin, created_at FROM actors
+		WHERE NOT $1 OR (created_at, id) > ($2, $3) ORDER BY created_at, id LIMIT $4`, has, t, id, pg.Limit+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	l, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (ActorView, error) {
 		var a ActorView
 		err := r.Scan(&a.ID, &a.Kind, &a.Handle, &a.DisplayName, &a.OwnerActorID, &a.ServerAdmin, &a.CreatedAt)
 		return a, err
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	l, next := trimPage(l, pg.Limit, func(a ActorView) keyRef { return keyRef{a.CreatedAt, a.ID} })
+	return l, next, nil
 }
 
 // MeView answers GET /v1/me.
@@ -363,22 +376,35 @@ func (s *Service) CreateCredential(ctx context.Context, p *Principal, idem *Idem
 	})
 }
 
-func (s *Service) ListCredentials(ctx context.Context, p *Principal, actorID string) ([]CredentialView, error) {
+// ListCredentials returns one page of an actor's credentials in
+// (created_at, id) order.
+func (s *Service) ListCredentials(ctx context.Context, p *Principal, actorID string, pg PageRequest) ([]CredentialView, *string, error) {
+	after, err := pg.after()
+	if err != nil {
+		return nil, nil, err
+	}
+	has, t, id := after.sqlArgs()
 	if actorID == "" {
 		actorID = p.ActorID
 	}
 	if actorID != p.ActorID && !p.ServerAdmin {
-		return nil, Forbidden("server administration required")
+		return nil, nil, Forbidden("server administration required")
 	}
-	rows, err := s.DB.Query(ctx, `SELECT id, actor_id, label, scopes, board_ids, created_at, expires_at, revoked_at FROM credentials WHERE actor_id=$1 ORDER BY created_at, id`, actorID)
+	rows, err := s.DB.Query(ctx, `SELECT id, actor_id, label, scopes, board_ids, created_at, expires_at, revoked_at FROM credentials
+		WHERE actor_id=$1 AND (NOT $2 OR (created_at, id) > ($3, $4)) ORDER BY created_at, id LIMIT $5`, actorID, has, t, id, pg.Limit+1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (CredentialView, error) {
+	l, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (CredentialView, error) {
 		var c CredentialView
 		err := r.Scan(&c.ID, &c.ActorID, &c.Label, &c.Scopes, &c.BoardIDs, &c.CreatedAt, &c.ExpiresAt, &c.RevokedAt)
 		return c, err
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	l, next := trimPage(l, pg.Limit, func(c CredentialView) keyRef { return keyRef{c.CreatedAt, c.ID} })
+	return l, next, nil
 }
 
 // RevokeCredential revokes the caller's own credential or, for a server

@@ -231,7 +231,22 @@ Every MUST maps to a check in the traceability table at the end.
 
 - **PAGE-001** Lists use opaque `page_token`s and `limit` (1–`max_page_size`).
   Threads are ordered by creation, messages by sequence; both are stable
-  under concurrent activity.
+  under concurrent activity. Every list response carries `next_page_token`
+  (string, or `null` on the last page). A malformed `page_token` or a
+  `limit` out of range is `400 validation_failed`.
+  - Administrative lists use keyset tokens (`k1.` prefix). A token names
+    the last item returned, so a page boundary never skips or repeats an
+    existing item, also while items are inserted concurrently.
+  - Boards, channels, board participants (`GET …/actors`), grants,
+    credentials, and all actors (`GET /v1/actors`) are ordered by
+    `(created_at, id)` ascending.
+  - Audit events (`GET …/audit-events` and `GET /v1/audit-events`) are
+    ordered newest first by `(recorded_at, id)` descending. The token
+    resumes in that direction.
+  - Lists filtered per caller (boards, channels, participants) apply the
+    visibility filter before the page is cut. Hidden items are never
+    returned and never cause a gap or a repeat. A page can be shorter than
+    `limit` only on the last page.
 
 ## 9 Error catalog (P1)
 
@@ -287,4 +302,4 @@ Every MUST maps to a check in the traceability table at the end.
 | EVT-012 | REF TestRetentionAndEpoch (retention sweep → 410) |
 | SNAP-001..003 | CT TestCT015SnapshotThenReplay, TestCT016, TestCT017 |
 | SNAP-004 | REF TestSnapshotItemLimit |
-| PAGE-001 | CT TestCT015 (paging); CLI `threads`/`read` follow tokens |
+| PAGE-001 | CT TestCT015 (paging), TestPAGA* (boards, channels, participants), TestPAGB* (grants, credentials, actors, audit); REF TestKeysetPage*, TestKeysetPagingBreaksTimestampTies; CLI `threads`/`read`/`board list`/`channel list`/`actors`/`grant list`/`credential list`/`actor list`/`audit` follow tokens |

@@ -3,7 +3,6 @@ package domain
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -85,31 +84,47 @@ func (s *Service) GetBoard(ctx context.Context, p *Principal, boardID string) (*
 	return &bv, nil
 }
 
-// ListBoards returns boards whose metadata the caller may see.
-func (s *Service) ListBoards(ctx context.Context, p *Principal) ([]BoardView, error) {
-	rows, err := s.DB.Query(ctx, `SELECT DISTINCT b.id FROM boards b LEFT JOIN grants g ON g.board_id=b.id AND g.revoked_at IS NULL
-		WHERE b.owner_actor_id=$1 OR (g.effect='allow' AND (g.subject_type='any_actor' OR g.subject_actor_id=$1)) ORDER BY b.id`, p.ActorID)
-	if err != nil {
-		return nil, err
+// ListBoards returns one page of boards whose metadata the caller may see,
+// in (created_at, id) order (PAGE-001).
+func (s *Service) ListBoards(ctx context.Context, p *Principal, pg PageRequest) ([]BoardView, *string, error) {
+	fetch := func(after *keyRef, n int) ([]keyRef, error) {
+		return s.fetchKeys(ctx, `SELECT b.id, b.created_at FROM boards b
+			WHERE (b.owner_actor_id=$1 OR EXISTS (SELECT 1 FROM grants g WHERE g.board_id=b.id AND g.revoked_at IS NULL
+				AND g.effect='allow' AND (g.subject_type='any_actor' OR g.subject_actor_id=$1)))
+			AND ($2::text[] IS NULL OR b.id = ANY($2::text[]))
+			AND (NOT $3 OR (b.created_at, b.id) > ($4, $5))
+			ORDER BY b.created_at, b.id LIMIT $6`, after, n, p.ActorID, p.BoardIDs)
 	}
-	idList, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return nil, err
-	}
-	out := []BoardView{}
-	for _, id := range idList {
-		bv, err := s.GetBoard(ctx, p, id)
+	// GetBoard below is the authority on visibility; the query only narrows
+	// the candidates (credential board_ids included) so that pages stay cheap.
+	return keysetPage(pg, fetch, func(k keyRef) (BoardView, bool, error) {
+		bv, err := s.GetBoard(ctx, p, k.ID)
 		var de *Error
 		if errors.As(err, &de) && de.Status == 404 {
-			continue
+			return BoardView{}, false, nil
 		}
 		if err != nil {
-			return nil, err
+			return BoardView{}, false, err
 		}
-		out = append(out, *bv)
+		return *bv, true, nil
+	})
+}
+
+// fetchKeys runs a keyset candidate query. The query takes its fixed
+// arguments first, then $k+1 (has-after flag), $k+2 (after created_at),
+// $k+3 (after id), and $k+4 (limit), where k = len(fixed).
+func (s *Service) fetchKeys(ctx context.Context, sql string, after *keyRef, n int, fixed ...any) ([]keyRef, error) {
+	has, at, aid := after.sqlArgs()
+	args := append(fixed, has, at, aid, n)
+	rows, err := s.DB.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
 	}
-	slices.SortFunc(out, func(a, b BoardView) int { return a.CreatedAt.Compare(b.CreatedAt) })
-	return out, nil
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (keyRef, error) {
+		var k keyRef
+		err := r.Scan(&k.ID, &k.T)
+		return k, err
+	})
 }
 
 type PatchBoardRequest struct {
@@ -223,20 +238,27 @@ func (b *btx) bumpPolicy() error {
 	return err
 }
 
-func (s *Service) ListChannels(ctx context.Context, p *Principal, boardID string) ([]ChannelView, error) {
+// ListChannels returns one page of the channels the caller may read, in
+// (created_at, id) order (PAGE-001).
+func (s *Service) ListChannels(ctx context.Context, p *Principal, boardID string, pg PageRequest) ([]ChannelView, *string, error) {
 	v, err := s.viewBoard(ctx, s.DB, p, boardID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	admin := v.policy.IsBoardAdmin()
-	out := []ChannelView{}
+	byID := map[string]channelRow{}
+	keys := make([]keyRef, 0, len(v.chans))
 	for _, c := range v.chans {
-		if admin || v.policy.Has(c.Path, authz.Read) {
-			out = append(out, channelViewOf(boardID, c, v.policy))
-		}
+		byID[c.ID] = c
+		keys = append(keys, keyRef{T: c.CreatedAt, ID: c.ID})
 	}
-	slices.SortFunc(out, func(a, b ChannelView) int { return strings.Compare(a.Path, b.Path) })
-	return out, nil
+	return keysetPage(pg, sliceFetch(keys), func(k keyRef) (ChannelView, bool, error) {
+		c := byID[k.ID]
+		if !admin && !v.policy.Has(c.Path, authz.Read) {
+			return ChannelView{}, false, nil
+		}
+		return channelViewOf(boardID, c, v.policy), true, nil
+	})
 }
 
 func (s *Service) GetChannel(ctx context.Context, p *Principal, boardID, channelID string) (*ChannelView, error) {
@@ -378,19 +400,33 @@ func scanGrant(r pgx.Row) (GrantView, error) {
 	return g, err
 }
 
-func (s *Service) ListGrants(ctx context.Context, p *Principal, boardID string, includeRevoked bool) ([]GrantView, error) {
+// ListGrants returns one page of the board's grants in (created_at, id)
+// order and the token for the next page (nil on the last page).
+func (s *Service) ListGrants(ctx context.Context, p *Principal, boardID string, includeRevoked bool, pg PageRequest) ([]GrantView, *string, error) {
+	after, err := pg.after()
+	if err != nil {
+		return nil, nil, err
+	}
+	has, t, id := after.sqlArgs()
 	v, err := s.viewBoard(ctx, s.DB, p, boardID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !v.policy.IsBoardAdmin() {
-		return nil, Forbidden("board_admin required")
+		return nil, nil, Forbidden("board_admin required")
 	}
-	rows, err := s.DB.Query(ctx, `SELECT `+grantCols+` FROM grants WHERE board_id=$1 AND ($2 OR revoked_at IS NULL) ORDER BY created_at, id`, boardID, includeRevoked)
+	rows, err := s.DB.Query(ctx, `SELECT `+grantCols+` FROM grants WHERE board_id=$1 AND ($2 OR revoked_at IS NULL)
+		AND (NOT $3 OR (created_at, id) > ($4, $5)) ORDER BY created_at, id LIMIT $6`,
+		boardID, includeRevoked, has, t, id, pg.Limit+1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (GrantView, error) { return scanGrant(r) })
+	l, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (GrantView, error) { return scanGrant(r) })
+	if err != nil {
+		return nil, nil, err
+	}
+	l, next := trimPage(l, pg.Limit, func(g GrantView) keyRef { return keyRef{g.CreatedAt, g.ID} })
+	return l, next, nil
 }
 
 func (s *Service) GetGrant(ctx context.Context, p *Principal, boardID, grantID string) (*GrantView, error) {
@@ -498,20 +534,13 @@ func (s *Service) RevokeGrant(ctx context.Context, p *Principal, boardID, grantI
 
 // BoardActors lists participants visible to the caller: actors that can read
 // at least one existing channel the caller can read, plus the caller. Board
-// administrators see every actor with a grant on the board.
-func (s *Service) BoardActors(ctx context.Context, p *Principal, boardID string) ([]ActorView, error) {
+// administrators see every actor with a grant on the board. One page is
+// returned, in actor (created_at, id) order (PAGE-001); the visibility filter
+// is applied while scanning, so pages never skip or repeat a visible actor.
+func (s *Service) BoardActors(ctx context.Context, p *Principal, boardID string, pg PageRequest) ([]ActorView, *string, error) {
 	v, err := s.viewBoard(ctx, s.DB, p, boardID)
 	if err != nil {
-		return nil, err
-	}
-	rows, err := s.DB.Query(ctx, `SELECT DISTINCT subject_actor_id FROM grants WHERE board_id=$1 AND revoked_at IS NULL AND subject_actor_id IS NOT NULL
-		UNION SELECT owner_actor_id FROM boards WHERE id=$1`, boardID)
-	if err != nil {
-		return nil, err
-	}
-	cands, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	admin := v.policy.IsBoardAdmin()
 	var readable []string
@@ -520,14 +549,20 @@ func (s *Service) BoardActors(ctx context.Context, p *Principal, boardID string)
 			readable = append(readable, c.Path)
 		}
 	}
-	out := []ActorView{}
-	for _, id := range cands {
-		visible := admin || id == p.ActorID
+	fetch := func(after *keyRef, n int) ([]keyRef, error) {
+		return s.fetchKeys(ctx, `SELECT a.id, a.created_at FROM actors a
+			WHERE a.id IN (SELECT subject_actor_id FROM grants WHERE board_id=$1 AND revoked_at IS NULL AND subject_actor_id IS NOT NULL
+				UNION SELECT owner_actor_id FROM boards WHERE id=$1)
+			AND (NOT $2 OR (a.created_at, a.id) > ($3, $4))
+			ORDER BY a.created_at, a.id LIMIT $5`, after, n, boardID)
+	}
+	return keysetPage(pg, fetch, func(k keyRef) (ActorView, bool, error) {
+		visible := admin || k.ID == p.ActorID
 		if !visible {
-			other := &Principal{ActorID: id, Scopes: []string{authz.AllScopes}}
+			other := &Principal{ActorID: k.ID, Scopes: []string{authz.AllScopes}}
 			pol, _, err := s.loadPolicy(ctx, s.DB, other, &v.board)
 			if err != nil {
-				return nil, err
+				return ActorView{}, false, err
 			}
 			for _, path := range readable {
 				if pol.Has(path, authz.Read) {
@@ -536,16 +571,15 @@ func (s *Service) BoardActors(ctx context.Context, p *Principal, boardID string)
 				}
 			}
 		}
-		if visible {
-			a, err := getActor(ctx, s.DB, id)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, *a)
+		if !visible {
+			return ActorView{}, false, nil
 		}
-	}
-	slices.SortFunc(out, func(a, b ActorView) int { return strings.Compare(a.Handle, b.Handle) })
-	return out, nil
+		a, err := getActor(ctx, s.DB, k.ID)
+		if err != nil {
+			return ActorView{}, false, err
+		}
+		return *a, true, nil
+	})
 }
 
 // ---- audit ----
@@ -562,26 +596,40 @@ type AuditView struct {
 	RecordedAt time.Time      `json:"recorded_at"`
 }
 
-func (s *Service) ListAudit(ctx context.Context, p *Principal, boardID string, limit int) ([]AuditView, error) {
+// ListAudit returns one page of audit events, newest first: (recorded_at,
+// id) descending, with the keyset applied in that direction. boardID ""
+// lists server-wide events (server administrators only).
+func (s *Service) ListAudit(ctx context.Context, p *Principal, boardID string, pg PageRequest) ([]AuditView, *string, error) {
+	after, err := pg.after()
+	if err != nil {
+		return nil, nil, err
+	}
+	has, t, id := after.sqlArgs()
 	if boardID != "" {
 		v, err := s.viewBoard(ctx, s.DB, p, boardID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !v.policy.IsBoardAdmin() {
-			return nil, Forbidden("board_admin required")
+			return nil, nil, Forbidden("board_admin required")
 		}
 	} else if err := requireServerAdmin(p); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err := s.DB.Query(ctx, `SELECT id, board_id, actor_id, action, target_type, target_id, reason, metadata, recorded_at FROM audit_events
-		WHERE ($1='' OR board_id=$1) ORDER BY recorded_at DESC, id LIMIT $2`, boardID, limit)
+		WHERE ($1='' OR board_id=$1) AND (NOT $2 OR (recorded_at, id) < ($3, $4))
+		ORDER BY recorded_at DESC, id DESC LIMIT $5`, boardID, has, t, id, pg.Limit+1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (AuditView, error) {
+	l, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (AuditView, error) {
 		var a AuditView
 		err := r.Scan(&a.ID, &a.BoardID, &a.ActorID, &a.Action, &a.TargetType, &a.TargetID, &a.Reason, &a.Metadata, &a.RecordedAt)
 		return a, err
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	l, next := trimPage(l, pg.Limit, func(a AuditView) keyRef { return keyRef{a.RecordedAt, a.ID} })
+	return l, next, nil
 }
