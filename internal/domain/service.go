@@ -90,7 +90,9 @@ type Service struct {
 }
 
 func New(db *pgxpool.Pool, cfg Config) *Service {
-	return &Service{DB: db, Cfg: cfg, Hub: NewHub(), Now: func() time.Time { return time.Now().UTC() }}
+	return &Service{DB: db, Cfg: cfg, Hub: NewHub(), // Microsecond precision matches Postgres timestamptz, so a
+		// timestamp in an event payload equals the same value read back.
+		Now: func() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }}
 }
 
 // Principal is the authenticated caller: the effective actor and the

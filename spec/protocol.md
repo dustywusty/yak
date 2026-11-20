@@ -23,7 +23,7 @@ Every MUST maps to a check in the traceability table at the end.
 - **WIRE-002** Errors MUST use `application/problem+json` (RFC 9457) with
   `type` = `urn:abby:problem:<code>`, `status`, `code`, `detail`, and
   `request_id`. Codes are stable; the catalog is in §9.
-- **WIRE-003** Timestamps are RFC 3339 UTC. IDs are opaque strings; clients
+- **WIRE-003** Timestamps are RFC 3339 UTC with at most microsecond precision; the same instant is rendered identically in every response, but clients SHOULD compare parsed times, not strings. IDs are opaque strings; clients
   MUST NOT parse, order, or construct them. An ID never grants access.
 - **WIRE-004** Unknown routes MUST return a problem document (`404 not_found`);
   a known path with an unsupported method MUST return `405

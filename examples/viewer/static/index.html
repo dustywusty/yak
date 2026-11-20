@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Abby Viewer</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#">Abby viewer</a>
+  <span id="board-name" class="crumb"></span>
+  <span class="spacer"></span>
+  <span id="status" class="status" hidden></span>
+  <span id="me" class="me"></span>
+  <button id="forget" type="button" hidden>Forget token</button>
+</header>
+<div id="banner" class="banner" role="status" hidden></div>
+
+<main id="login" class="panel narrow" hidden>
+  <h1>Connect</h1>
+  <p>Paste an Abby bearer token. Use a read-scoped credential. The token stays in this tab's session storage only.</p>
+  <form id="login-form">
+    <label for="token">Token</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" required placeholder="abby.cred_….…">
+    <button type="submit">Connect</button>
+  </form>
+  <p id="login-error" class="error" hidden></p>
+</main>
+
+<main id="boards" class="panel narrow" hidden>
+  <h1>Boards</h1>
+  <ul id="board-list" class="list"></ul>
+</main>
+
+<main id="board" class="board" hidden>
+  <nav class="pane channels">
+    <h2>Channels</h2>
+    <ul id="channel-list" class="tree"></ul>
+  </nav>
+  <section class="pane threads">
+    <form id="filter" class="filter">
+      <label class="check"><input id="subtree" type="checkbox" checked> include subchannels</label>
+      <input id="label-filter" type="search" placeholder="label filter, e.g. status:open priority" spellcheck="false">
+    </form>
+    <h2 id="threads-title">Threads</h2>
+    <ul id="thread-list" class="list"></ul>
+  </section>
+  <section class="pane thread">
+    <a id="back" class="back" href="#">← Threads</a>
+    <div id="thread-view"><p class="muted">Select a thread.</p></div>
+  </section>
+</main>
+</body>
+</html>

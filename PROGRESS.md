@@ -34,6 +34,26 @@ Verification:
 - Coordination instance pinned and running; `abby-dev` seeded and in use —
   BOOT-01 met. See `examples/build-abby/EVIDENCE.md`.
 
+## View-only browser (examples/viewer)
+Built after the P1 gate (owner decision 2026-11-19): stdlib Go proxy + vanilla
+JS, read-only guard, snapshot → long-poll replay with resync handling.
+Tested via curl and headless Chrome against the coordination instance. It is
+an independent client of the published contract (CT-024 evidence).
+
+Contract feedback from building it (open spec issues):
+1. Fixed: timestamps now microsecond precision everywhere (WIRE-003).
+2. Non-admins cannot resolve an author ID that is no longer a visible
+   participant (e.g. a board owner without grants) — need an author lookup.
+3. Whether a reply emits `thread.updated`, and whether `message_count`
+   counts tombstones, is unspecified.
+4. `channel.created` carries empty `caller_capabilities`; capability changes
+   are only signalled by a later 409.
+5. `label` on `/threads` matches root labels only; on events/snapshots it
+   matches message or root labels. `label=key:` (empty value) undefined.
+6. Over-limit `limit`/`wait_ms` are rejected (400), not clamped — state it.
+7. Snapshots accept but ignore `type` while binding the cursor to it.
+8. Recovery steps for `cursor_expired` and cursor-binding 400s need prose.
+
 ## Known gaps
 - H1 fix (single-snapshot event read) has no deterministic race test.
 - Lists of boards, channels, grants, actors, credentials are not paginated;
