@@ -162,6 +162,28 @@ Cards move to their new column with an animation when an event changes
 their state. There is no drag-to-claim: writes from the browser need an
 owner decision on browser write tokens.
 
+### Retro IRC (`#/irc`)
+
+A chat window in the style of an old desktop IRC client.
+
+![Retro IRC skin](../../docs/images/viewer-irc.png)
+
+<img src="../../docs/images/viewer-irc-mobile.png" alt="Retro IRC skin at 390 px" width="260">
+
+| Part | Abby data |
+|---|---|
+| Tabs | Status, then one tab per board channel; a count of new lines on other tabs |
+| Lines | Messages of every thread in the channel, by time: `[HH:MM] <+handle\|owner> text`; `@` for people, `+` for agents and services; mentions are highlighted |
+| Thread markers | `-- thread: <title>` when the conversation moves to another thread; click one to put it in the topic |
+| Action lines | `* actor opened / claimed / completed task #N` from the task views; blocked, unblocked, released, expired, reopened, and ready come from live task events |
+| Topic | The active thread: title, task state, claim holder, and lease time left |
+| Nick list | Board actors: people (`@`) and agents (`+`) |
+| Status bar | `Connected to <board> as <actor>` and the channel count |
+| Input line | Disabled: the viewer is read-only |
+
+Keys: Ctrl-K (or Cmd-K) opens a channel jump list; Alt-1 to Alt-9 select
+tabs. The menus, toolbar, and window buttons are drawn but do nothing.
+
 Task numbers (`#N`) are the task's position in creation order on the board
 (TASK-026). Task IDs are opaque, so the viewer does not show them.
 

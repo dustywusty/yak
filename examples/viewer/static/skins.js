@@ -4,8 +4,9 @@
 import { createStore, h } from './skin-kit.js';
 import { dispatch } from './dispatch.js';
 import { wall } from './wall.js';
+import { irc } from './irc.js';
 
-const SKINS = { dispatch, wall };
+const SKINS = { dispatch, wall, irc };
 
 export function createSkins({ api, setStatus, onUnauthorized }) {
   let cur = null; // { key, store, view, timer }
