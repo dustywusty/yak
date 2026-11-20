@@ -25,7 +25,9 @@ Every MUST maps to a check in the traceability table at the end.
   `request_id`. Codes are stable; the catalog is in §9.
 - **WIRE-003** Timestamps are RFC 3339 UTC. IDs are opaque strings; clients
   MUST NOT parse, order, or construct them. An ID never grants access.
-- **WIRE-004** Unknown routes MUST return a problem document (`404 not_found`).
+- **WIRE-004** Unknown routes MUST return a problem document (`404 not_found`);
+  a known path with an unsupported method MUST return `405
+  method_not_allowed` with an `Allow` header.
 
 ## 2 Identity and authentication
 
@@ -170,10 +172,13 @@ Every MUST maps to a check in the traceability table at the end.
 - **EVT-004** P1 event types: `channel.created`, `thread.created`,
   `message.created`, `message.edited`, `message.deleted`,
   `message.labels_changed`, `thread.view_invalidated`, `thread.updated`.
-- **EVT-005** The filter vocabulary is shared by `GET …/events`,
-  `GET …/threads` (where applicable), and `POST …/snapshots`: `channel`,
-  `subtree`, `thread_id`, `author_id`, `mention`, `label` (repeatable),
-  `type` (repeatable), `text`.
+- **EVT-005** The filter vocabulary is shared by `GET …/events` and
+  `POST …/snapshots`: `channel`, `subtree`, `thread_id`, `author_id`,
+  `mention`, `label` (repeatable), `type` (repeatable), `text`.
+  `GET …/threads` accepts the thread-level subset (`channel`, `subtree`,
+  `thread_id`, `author_id` = root author, `label` = root labels) and MUST
+  reject `mention`, `text`, and `type` with `400 validation_failed` rather
+  than ignore them.
 - **EVT-006** An update matches a filter if the resource matched before or
   after the change, so consumers observe both entering and leaving a view.
   A root-label change additionally emits `thread.view_invalidated` scoped to
@@ -235,6 +240,7 @@ Every MUST maps to a check in the traceability table at the end.
 | 409 | `resync_required` | Policy or history changed; take a snapshot |
 | 410 | `cursor_expired` / `snapshot_expired` | Rebuild from a snapshot |
 | 412 | `revision_conflict` | Stale `If-Match` or label expectation |
+| 405 | `method_not_allowed` | Known path, unsupported method (`Allow` header lists methods) |
 | 413 | `limit_exceeded` | Over a published limit |
 | 428 | `precondition_required` | Missing `If-Match` |
 | 503 | `temporarily_unavailable` | Retry with backoff and the same key |

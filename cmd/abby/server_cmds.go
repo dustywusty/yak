@@ -43,6 +43,9 @@ func serverCmds() []*cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Timestamps read from Postgres decode in time.Local; the protocol
+			// requires UTC (WIRE-003), so the server process runs in UTC.
+			time.Local = time.UTC
 			log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()

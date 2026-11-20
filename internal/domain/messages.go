@@ -390,9 +390,15 @@ func (s *Service) ListThreads(ctx context.Context, p *Principal, boardID string,
 	if err != nil {
 		return nil, err
 	}
+	// Thread listing supports channel, subtree, thread_id, author_id (root
+	// author), and label (root labels). Message-level clauses are rejected
+	// rather than silently ignored.
+	if f.Mention != "" || f.Text != "" || len(f.Types) > 0 {
+		return nil, Validation("thread listing supports channel, subtree, thread_id, author_id and label filters; use events or snapshots for mention, text and type")
+	}
 	var readable []string
 	for _, c := range v.chans {
-		if v.policy.Has(c.Path, authz.Read) && f.MatchFacet(events.Facet{ChannelPath: c.Path, Invalidation: true}) {
+		if v.policy.Has(c.Path, authz.Read) && (events.Filter{Channel: f.Channel, Subtree: f.Subtree}).MatchFacet(events.Facet{ChannelPath: c.Path, Invalidation: true}) {
 			readable = append(readable, c.ID)
 		}
 	}
@@ -411,7 +417,7 @@ func (s *Service) ListThreads(ctx context.Context, p *Principal, boardID string,
 			return out, nil
 		}
 		rows, err := s.DB.Query(ctx, `SELECT `+threadCols+` FROM threads t WHERE t.board_id=$1 AND t.channel_id = ANY($2) AND t.created_position > $3
-			AND ($4 = '' OR t.created_by = $4) ORDER BY t.created_position LIMIT $5`, boardID, readable, cursor, f.AuthorID, batchSize)
+			AND ($4 = '' OR t.created_by = $4) AND ($6 = '' OR t.id = $6) ORDER BY t.created_position LIMIT $5`, boardID, readable, cursor, f.AuthorID, batchSize, f.ThreadID)
 		if err != nil {
 			return nil, err
 		}

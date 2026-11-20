@@ -301,6 +301,21 @@ func (a *API) routes() {
 	})
 	m.HandleFunc("GET /v1/server", a.discovery)
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Distinguish a known path with the wrong method (405) from an
+		// unknown path (404).
+		var allow []string
+		for _, meth := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+			r2 := r.Clone(r.Context())
+			r2.Method = meth
+			if _, pat := a.mux.Handler(r2); pat != "/" {
+				allow = append(allow, meth)
+			}
+		}
+		if len(allow) > 0 {
+			w.Header().Set("Allow", strings.Join(allow, ", "))
+			a.problem(w, r, domain.E(405, "method_not_allowed", "%s is not supported on this path", r.Method))
+			return
+		}
 		a.problem(w, r, domain.E(404, "not_found", "no such route"))
 	})
 
