@@ -156,6 +156,18 @@ func (f *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		prev, replay := f.committed[rc.Key]
 		f.mu.Unlock()
 		state := map[string]string{"complete": "completed", "fail": "failed", "release": "ready"}[op]
+		// Like the real server (CLAIM-031): unknown evidence kinds are a
+		// 400 and reserve no key.
+		evs, _ := body["evidence"].([]any)
+		if res, ok := body["result"].(map[string]any); ok {
+			evs, _ = res["evidence"].([]any)
+		}
+		for _, e := range evs {
+			if k, _ := e.(map[string]any)["kind"].(string); !validEvidenceKind(k) {
+				problem(w, 400, "validation_failed")
+				return
+			}
+		}
 		if replay && prev == op {
 			w.Header().Set("Idempotent-Replayed", "true")
 			writeJSON(w, 200, taskView(state))
@@ -568,6 +580,118 @@ func TestRunClaimLostOnSettlement(t *testing.T) {
 	}
 }
 
+// BOOT-03 regression: a result file with kinds branch/check was rejected
+// and the runner completed without any evidence. Unknown kinds now go out
+// as "other" with the original kind in the note, and the server accepts
+// them on the first attempt.
+func TestRunMapsUnknownEvidenceKinds(t *testing.T) {
+	f := newFakeServer(t, 30)
+	script := `cat > "$ABBY_RESULT_FILE" <<'EOF'
+{"summary":"fixed","evidence":[
+ {"kind":"commit","ref":"0123456789abcdef0123456789abcdef01234567"},
+ {"kind":"branch","ref":"fix/runner-evidence"},
+ {"kind":"check","ref":"go test ./...","note":"ok"}]}
+EOF`
+	r := testRunner(t, f, sh(script), nil)
+	rep, err := r.run(context.Background())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if rep.Outcome != "completed" {
+		t.Fatalf("outcome = %s", rep.Outcome)
+	}
+	cs := f.requests("/complete")
+	if len(cs) != 1 {
+		t.Fatalf("complete attempts = %d, want 1", len(cs))
+	}
+	got, _ := json.Marshal(cs[0].Body["result"].(map[string]any)["evidence"])
+	want := `[{"kind":"commit","ref":"0123456789abcdef0123456789abcdef01234567"},` +
+		`{"kind":"other","note":"branch","ref":"fix/runner-evidence"},` +
+		`{"kind":"other","note":"check: ok","ref":"go test ./..."}]`
+	if string(got) != want {
+		t.Errorf("evidence sent:\n got %s\nwant %s", got, want)
+	}
+	if len(rep.EvidenceMapped) != 2 {
+		t.Errorf("evidence_mapped = %v, want 2 entries", rep.EvidenceMapped)
+	}
+}
+
+// When the server still rejects the result, the runner must not settle
+// without it: it keeps the claim (renews), releases with a reason that
+// names the rejection, reports the refused result, and exits 13.
+func TestRunResultRejectedReleasesWithoutSettling(t *testing.T) {
+	for _, tc := range []struct {
+		name, op, script string
+		status           int
+	}{
+		{"complete-413", "complete", "exit 0", 413},
+		{"fail-400", "fail", "exit 3", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeServer(t, 30)
+			f.settle = func(op string, n int) int {
+				if op == tc.op {
+					return tc.status
+				}
+				return 200
+			}
+			script := `printf '{"summary":"s","evidence":[{"kind":"commit","ref":"abc123"},{"kind":"branch","ref":"fix/x"}]}' > "$ABBY_RESULT_FILE"; ` + tc.script
+			r := testRunner(t, f, sh(script), func(o *runOptions) {
+				o.Evidence = []abby.Evidence{{Kind: "url", Ref: "https://example.test/pr/1"}}
+			})
+			rep, err := r.run(context.Background())
+			if code(err) != exitResultRejected {
+				t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
+			}
+			if rep.Outcome != "result_rejected" {
+				t.Errorf("outcome = %s", rep.Outcome)
+			}
+			// Exactly one settlement attempt, and never one without the evidence.
+			ss := f.requests("/" + tc.op)
+			if len(ss) != 1 {
+				t.Fatalf("%s attempts = %d, want 1 (no re-settle without the result)", tc.op, len(ss))
+			}
+			for _, other := range []string{"/complete", "/fail"} {
+				if other != "/"+tc.op && len(f.requests(other)) != 0 {
+					t.Errorf("%s called after the rejection", other)
+				}
+			}
+			// The claim was kept alive after the rejection, then released.
+			rel := f.requests("/release")
+			if len(rel) != 1 || rel[0].Proof != testProof {
+				t.Fatalf("release calls = %+v", rel)
+			}
+			reason := fmt.Sprint(rel[0].Body["reason"])
+			if !strings.Contains(reason, "rejected") || !strings.Contains(reason, strconv.Itoa(tc.status)) || !strings.Contains(reason, tc.op) {
+				t.Errorf("release reason = %q", reason)
+			}
+			renewedBetween := false
+			for _, q := range f.requests("/renew") {
+				if q.At.After(ss[0].At) && q.At.Before(rel[0].At) {
+					renewedBetween = true
+				}
+			}
+			if !renewedBetween {
+				t.Error("no renewal between the rejection and the release")
+			}
+			if rep.Task == nil || rep.Task.State != "ready" {
+				t.Errorf("task after release = %+v", rep.Task)
+			}
+			// The refused result is in the report, evidence intact.
+			rr := rep.RejectedResult
+			if rr == nil || rr.Settlement != tc.op || rr.Status != tc.status {
+				t.Fatalf("rejected_result = %+v", rr)
+			}
+			ev := fmt.Sprint(rr.Evidence)
+			for _, s := range []string{"abc123", "fix/x", "example.test"} {
+				if !strings.Contains(ev, s) {
+					t.Errorf("rejected_result evidence %s lacks %s", ev, s)
+				}
+			}
+		})
+	}
+}
+
 func TestRunTaskClaimedByAnother(t *testing.T) {
 	f := newFakeServer(t, 30)
 	f.claimCode = "task_claimed"
@@ -673,8 +797,13 @@ func TestParseEvidence(t *testing.T) {
 	if ev[0] != (abby.Evidence{Kind: "commit", Ref: "abc", Note: "the fix"}) || ev[1].Ref != "https://x.test/a:b" || ev[2].Ref != "note" {
 		t.Fatalf("got %+v", ev)
 	}
-	if _, err := parseEvidence([]string{"bogus:x"}); err == nil {
-		t.Error("bad kind accepted")
+	for _, bad := range []string{"bogus:x", "branch:fix/x", "check:go test", "commit::note", "commit: "} {
+		if _, err := parseEvidence([]string{bad}); err == nil || !isUsageErr(err) {
+			t.Errorf("%q: err = %v, want a usage error", bad, err)
+		}
+	}
+	if _, err := commitEvidence([]string{"abc", ""}); err == nil || !isUsageErr(err) {
+		t.Errorf("empty --commit: err = %v, want a usage error", err)
 	}
 }
 

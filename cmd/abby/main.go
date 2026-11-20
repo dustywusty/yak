@@ -31,6 +31,7 @@ const (
 	exitLeaseUnconfirmed = 10 // abby run: renewal or settlement not confirmed before the local lease deadline
 	exitCommandFailed    = 11 // abby run: the command exited non-zero; the task was failed
 	exitInterrupted      = 12 // abby run: interrupted by SIGINT/SIGTERM; the claim was released if one was held
+	exitResultRejected   = 13 // abby run: the server rejected the result (400/413); the claim was released, not settled without it
 )
 
 type exitErr struct {

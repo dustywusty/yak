@@ -15,6 +15,8 @@ package main
 //	running: child + renew loop (every lease/3 ± 10 %)
 //	   ├─ child exit 0 ─────▶ stop renewals ─▶ complete ─▶ exit 0
 //	   ├─ child exit ≠ 0 ───▶ stop renewals ─▶ fail ─────▶ exit 11
+//	   │     (complete/fail rejected 400/413 ─▶ renew ─▶ release ─▶ exit 13;
+//	   │      never settle without the result it was given)
 //	   ├─ claim_lost/403/404/401 on renew ─▶ stop child ─▶ exit 9
 //	   ├─ no renewal confirmed by deadline − margin
 //	   │                    ─▶ stop child, no more writes ─▶ exit 10
@@ -82,11 +84,28 @@ type runReport struct {
 	ExecutionID string     `json:"execution_id,omitempty"`
 	Epoch       int64      `json:"epoch,omitempty"`
 	RunID       string     `json:"run_id,omitempty"`
-	Outcome     string     `json:"outcome"` // completed | failed | released | claim_lost | lease_unconfirmed | no_work | interrupted
+	Outcome     string     `json:"outcome"` // completed | failed | released | result_rejected | claim_lost | lease_unconfirmed | no_work | interrupted
 	ExitStatus  *int       `json:"exit_status,omitempty"`
 	Renewals    int        `json:"renewals"`
 	Task        *abby.Task `json:"task,omitempty"`
 	Detail      string     `json:"detail,omitempty"`
+	// EvidenceMapped lists result-file evidence whose kind the protocol
+	// does not accept; each was sent as kind "other".
+	EvidenceMapped []string `json:"evidence_mapped,omitempty"`
+	// RejectedResult is the result the server refused (outcome
+	// result_rejected), kept so it can be corrected and settled again.
+	RejectedResult *rejectedResult `json:"rejected_result,omitempty"`
+}
+
+type rejectedResult struct {
+	Settlement string          `json:"settlement"` // complete | fail
+	Status     int             `json:"status"`
+	Code       string          `json:"code"`
+	Detail     string          `json:"detail,omitempty"`
+	Summary    string          `json:"summary,omitempty"`
+	Reason     string          `json:"reason,omitempty"`
+	Evidence   []abby.Evidence `json:"evidence,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
 }
 
 type runner struct {
@@ -621,7 +640,7 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 	summary := r.opt.Summary
 	data := baseData
 	if cres != nil {
-		evidence = append(evidence, cres.Evidence...)
+		evidence = append(evidence, r.normalizeEvidence(cres.Evidence)...)
 		if cres.Summary != "" {
 			summary = cres.Summary
 		}
@@ -637,15 +656,8 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 		t, err := r.settle(ctx, "complete", func(c context.Context, key string) (*abby.Task, error) {
 			return r.ops.Complete(c, r.taskID, r.proof, res, key)
 		})
-		if err != nil && cres != nil && isRejectedResult(err) {
-			// The command's result was refused (too large, bad evidence).
-			// Settle with the runner's own fields under a new key; a
-			// rejected request reserves no key (IDEM-004).
-			r.logf("server refused the command's result (%v); completing without it", err)
-			res = abby.Result{Summary: r.opt.Summary, Evidence: r.opt.Evidence, Data: baseData}
-			t, err = r.settle(ctx, "complete", func(c context.Context, key string) (*abby.Task, error) {
-				return r.ops.Complete(c, r.taskID, r.proof, res, key)
-			})
+		if isRejectedResult(err) {
+			return r.resultRejected(ctx, err, &rejectedResult{Settlement: "complete", Summary: summary, Evidence: evidence, Data: data})
 		}
 		if err != nil {
 			return r.settleFailed(err)
@@ -668,12 +680,8 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 	t, err := r.settle(ctx, "fail", func(c context.Context, key string) (*abby.Task, error) {
 		return r.ops.Fail(c, r.taskID, r.proof, fr, key)
 	})
-	if err != nil && cres != nil && isRejectedResult(err) {
-		r.logf("server refused the command's result (%v); failing without it", err)
-		fr = abby.FailRequest{Reason: reason, Evidence: r.opt.Evidence, Data: baseData}
-		t, err = r.settle(ctx, "fail", func(c context.Context, key string) (*abby.Task, error) {
-			return r.ops.Fail(c, r.taskID, r.proof, fr, key)
-		})
+	if isRejectedResult(err) {
+		return r.resultRejected(ctx, err, &rejectedResult{Settlement: "fail", Reason: reason, Evidence: evidence, Data: data})
 	}
 	if err != nil {
 		return r.settleFailed(err)
@@ -687,5 +695,74 @@ func (r *runner) settleExit(ctx context.Context, ch *childProc, resultFile strin
 
 func isRejectedResult(err error) bool {
 	var p *abby.Problem
-	return errors.As(err, &p) && (p.Status == 400 || p.Status == 413)
+	return err != nil && errors.As(err, &p) && (p.Status == 400 || p.Status == 413)
+}
+
+// normalizeEvidence maps evidence kinds the protocol does not accept
+// (CLAIM-031) to "other" and keeps the original kind at the start of the
+// note, so nothing the command reported is lost or rejected for its kind.
+func (r *runner) normalizeEvidence(in []abby.Evidence) []abby.Evidence {
+	out := make([]abby.Evidence, 0, len(in))
+	for _, ev := range in {
+		if !validEvidenceKind(ev.Kind) {
+			orig := ev.Kind
+			ev.Kind = "other"
+			switch {
+			case orig == "":
+				// No kind to keep.
+			case ev.Note == "":
+				ev.Note = orig
+			default:
+				ev.Note = orig + ": " + ev.Note
+			}
+			r.rep.EvidenceMapped = append(r.rep.EvidenceMapped, fmt.Sprintf("%q -> other (ref %s)", orig, ev.Ref))
+			r.logf("result evidence kind %q is not one of %s; recording it as other (ref %s)", orig, evidenceKindList, ev.Ref)
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+// resultRejected handles a complete or fail that the server refused with
+// 400 or 413. The runner never settles again without the result it was
+// given: it keeps the claim alive with a renewal, reports the refused
+// result, and releases the claim with a reason that names the rejection,
+// so the task is ready for a corrected settlement (exit 13).
+func (r *runner) resultRejected(ctx context.Context, err error, rr *rejectedResult) (*runReport, error) {
+	var p *abby.Problem
+	errors.As(err, &p)
+	rr.Status, rr.Code, rr.Detail = p.Status, p.Code, p.Detail
+	r.rep.RejectedResult = rr
+	r.rep.Outcome = "result_rejected"
+	r.rep.Detail = fmt.Sprintf("%s rejected: %d %s: %s", rr.Settlement, p.Status, p.Code, p.Detail)
+	r.logf("server rejected the %s result (%d %s: %s); NOT settling without it. Evidence it carried:", rr.Settlement, p.Status, p.Code, p.Detail)
+	for _, ev := range rr.Evidence {
+		r.logf("  %s %s %s", ev.Kind, ev.Ref, ev.Note)
+	}
+
+	// Keep the claim alive until the release is confirmed.
+	_, deadline, _ := r.snapshot()
+	if rerr := r.renewUntil(ctx, deadline.Add(-r.margin())); rerr != nil {
+		rep, ee := r.renewFailed(rerr)
+		rep.RejectedResult = rr
+		return rep, ee
+	}
+
+	detail := p.Detail
+	if len(detail) > 500 {
+		detail = detail[:500] + "…"
+	}
+	reason := fmt.Sprintf("abby run: server rejected the %s result (%d %s: %s); claim released so the work can be settled again with a corrected result, not without its evidence", rr.Settlement, p.Status, p.Code, detail)
+	t, rerr := r.settle(ctx, "release", func(c context.Context, key string) (*abby.Task, error) {
+		return r.ops.Release(c, r.taskID, r.proof, reason, key)
+	})
+	if rerr != nil {
+		rep, ee := r.settleFailed(rerr)
+		rep.RejectedResult = rr
+		return rep, ee
+	}
+	r.rep.Renewals = r.renewals
+	r.rep.Task = t
+	r.logf("claim %s released; task %s is ready for a corrected settlement", r.claimID, r.taskID)
+	return &r.rep, &exitErr{exitResultRejected, fmt.Errorf("server rejected the %s result (%d %s: %s); claim released, evidence kept in the report", rr.Settlement, p.Status, p.Code, p.Detail)}
 }
