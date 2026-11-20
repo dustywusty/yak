@@ -1,4 +1,4 @@
-// Read-only Board: task state is the list, not a guess about progress.
+// Read-only Lanes: task state is the list, not a guess about progress.
 import { h, avatar } from './skin-kit.js';
 import { createAgentActivity, waitingReasons, elapsed, activityClock } from './agent-activity.js';
 
@@ -103,7 +103,7 @@ export function wall(root, { threadHref }) {
     const key = `${st.S.channels.map((c) => c.path).join(',')}|${[...st.S.actors.keys()].join(',')}`;
     if (key !== filterKey) { filterKey = key; frame.bar.replaceChildren(controls(st)); }
     const all = st.tasks(), shown = all.filter((t) => keep(st, t));
-    frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Board`), h('span', {}, `${shown.length} of ${all.length} tasks · Read-only`));
+    frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Lanes`), h('span', {}, `${shown.length} of ${all.length} tasks · Read-only`));
     activity = createAgentActivity(st, ({ t }) => threadHref(t), status);
     frame.summary.replaceChildren(activity.root);
     activity.root.scrollTop = summaryTop;

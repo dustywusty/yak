@@ -34,7 +34,7 @@ export function waitingReasons(store, task) {
   return reasons;
 }
 
-// Shared freshness boundary for summaries and Board card clocks.
+// Shared freshness boundary for summaries and Lanes card clocks.
 export function activityClock(store, status, at = now()) {
   const stale = status !== 'live' || !store.S.lastSync || at - store.S.lastSync > 60000 || navigator.onLine === false;
   return { at, stale, confirmedAt: stale ? Math.min(at, store.S.lastSync || at) : at };
