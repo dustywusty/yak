@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -59,9 +60,28 @@ func serverCmds() []*cobra.Command {
 			}
 			cfg := domain.DefaultConfig()
 			cfg.Version = version
+			if v := os.Getenv("ABBY_CLAIM_LEASE_MIN_SECONDS"); v != "" {
+				n, err := strconv.Atoi(v)
+				if err != nil || n < 1 {
+					return fmt.Errorf("ABBY_CLAIM_LEASE_MIN_SECONDS must be a positive integer")
+				}
+				cfg.ClaimLeaseMin = time.Duration(n) * time.Second
+			}
 			svc := domain.New(pool, cfg)
+			// Claim-proof replay keys (ADR-0004 §3): never stored in the
+			// database. ABBY_CLAIM_REPLAY_KEYS is a keyring "id:base64,...";
+			// ABBY_CLAIM_PROOF_KEY is a single base64 key. Without either the
+			// server advertises no claim-proof replay (CLAIM-043).
+			spec := os.Getenv("ABBY_CLAIM_REPLAY_KEYS")
+			if spec == "" {
+				spec = os.Getenv("ABBY_CLAIM_PROOF_KEY")
+			}
+			if svc.ClaimKeys, err = domain.ParseClaimKeyring(spec); err != nil {
+				return fmt.Errorf("claim replay key: %w", err)
+			}
 			if role == "all" || role == "worker" {
 				go workers.Run(ctx, svc, log, time.Minute)
+				go workers.RunClaimExpiry(ctx, svc, log, 10*time.Second)
 			}
 			if role == "worker" {
 				<-ctx.Done()

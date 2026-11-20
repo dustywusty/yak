@@ -28,6 +28,26 @@ func Run(ctx context.Context, s *domain.Service, log *slog.Logger, every time.Du
 	}
 }
 
+// RunClaimExpiry materializes lapsed claim leases (ADR-0016 §7). Reads and
+// operations never depend on it (CLAIM-050); it bounds the lag between
+// effective_at and recorded_at of task.claim_expired (CLAIM-054: ≤ 30 s).
+func RunClaimExpiry(ctx context.Context, s *domain.Service, log *slog.Logger, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		if n, err := s.SweepClaimExpiry(ctx, 100); err != nil && ctx.Err() == nil {
+			log.Warn("claim expiry sweep failed", "err", err)
+		} else if n > 0 {
+			log.Info("claim expiry sweep", "materialized", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
 func Sweep(ctx context.Context, s *domain.Service) error {
 	if _, err := s.DB.Exec(ctx, `DELETE FROM idempotency_receipts WHERE expires_at < now()`); err != nil {
 		return err
