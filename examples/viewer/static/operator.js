@@ -59,12 +59,18 @@ export function taskIntent(kind, B, t, values = {}) {
   }
   return { kind, steps, task: t ? structuredClone(t) : null };
 }
+// Event-time task evidence is required; historical missing flags are not gates.
+export function isGateApprovalEvent(e, actors) {
+  return e.type === 'task.unblocked' && e.payload?.task?.direct_action_required === true &&
+    e.on_behalf_of_actor_id == null && e.delegation_id == null &&
+    actors.find((a) => a.id === e.actor_id)?.kind === 'human';
+}
 export function approvalRecord(events, actors, taskId) {
   let result = null;
   for (const e of events) {
     if ((e.payload?.task?.id || e.task_id) !== taskId) continue;
     if (e.type === 'task.blocked' || e.type === 'task.reopened') result = null;
-    if (e.type === 'task.unblocked' && !e.on_behalf_of_actor_id && !e.delegation_id && actors.find((a) => a.id === e.actor_id)?.kind === 'human') result = e;
+    if (isGateApprovalEvent(e, actors)) result = e;
   }
   return result;
 }

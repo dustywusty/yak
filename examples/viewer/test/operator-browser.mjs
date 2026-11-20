@@ -14,7 +14,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 if (!CHROME && !process.env.VIEWER_PREVIEW) { console.error('Chrome not found; set CHROME=/path/to/chrome'); process.exit(2); }
 
-import { operatorFixture, op17042ClaimCorpus } from './operator-fixture.mjs';
+import { operatorFixture, op17020Cases, op17042ClaimCorpus } from './operator-fixture.mjs';
 // ---------- static server and Chrome ----------
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname.replace(/^\/$/, '/index.html');
@@ -625,7 +625,47 @@ async function labelOpcodeCase() {
  assert('no browser exceptions', errors.length===0);
  console.log(`OP17-035 executed ${assertions} assertions across ${fixtures} fresh label fixtures`);
 }
-const operatorCases = new Map([['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function gateEvidenceCase() {
+ let assertions = 0;
+ const assert = (name, ok, detail = '') => { assertions++; check(`OP17-020: ${name}`, ok, detail); };
+ const variants = op17020Cases();
+ const gate = variants.find(c => c.approved);
+ for (const type of ['task.blocked', 'task.reopened']) {
+  const reset = {...gate.candidate, id:'reset', type};
+  variants.push({...gate, name:`latest ${type}`, events:[...gate.events, reset], approved:false});
+  variants.push({...gate, name:`approval after ${type}`, events:[...gate.events, reset, {...gate.candidate, id:'new-approval'}]});
+ }
+ for (const c of variants) {
+  await freshIdentityFixture(`window.__op.task.state='ready';window.__op.events=${JSON.stringify(c.events)};`);
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-gate-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");
+   await ev("location.hash='#/b/brd_test?v=activity'");
+   await until(`[...document.querySelectorAll('#feed .type')].some(el=>el.textContent===${JSON.stringify(c.candidate.type)})`);
+   await open();
+   await until("document.querySelector('.op-workspace').textContent.includes('Task event history')");
+   const workspace = await ev("document.querySelector('.op-workspace').textContent");
+   assert(`${c.name}: workspace approval`, workspace.includes('Approved by ')===c.approved, workspace);
+   if (c.candidate.type==='task.unblocked') {
+    const eventApproval = gate.name===c.name || c.name.startsWith('latest ') || c.name.startsWith('approval after ');
+    const feed = await ev("[...document.querySelectorAll('#feed li')].find(li=>li.querySelector('.type')?.textContent==='task.unblocked')?.querySelector('.snippet')?.textContent");
+    assert(`${c.name}: feed gate evidence`, !!feed && feed.includes("not a person's approval")===!eventApproval, feed);
+    assert(`${c.name}: timeline gate evidence`, workspace.includes("not a person's approval")===!eventApproval, workspace);
+   } else {
+    assert(`${c.name}: completion never shows approval in feed`, await ev("![...document.querySelectorAll('#feed .snippet')].some(el=>el.textContent.includes('Approved by '))"));
+   }
+   assert(`${c.name}: rendering sends no writes`, await count()===0);
+  } finally {
+   await ev("document.querySelector('#operator-logout')?.click()");
+   await until('!document.body.dataset.operator');
+   assert(`${c.name}: cleanup revokes disposable credential only`, await ev("window.__op.writes.length===1 && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
+  }
+ }
+ assert('all thirteen fixtures execute', variants.length===13 && assertions===64);
+ assert('no browser exceptions', errors.length===0, errors.join(' | '));
+ console.log(`OP17-020 executed ${assertions} assertions across ${variants.length} fresh fixtures`);
+}
+const operatorCases = new Map([['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

@@ -1,3 +1,23 @@
+// OP17-020: ordinary and gate unblocks with explicit event-time evidence.
+export function op17020Cases() {
+  const event = (type = 'task.unblocked', flag = true, extra = {}) => ({
+    id: 'candidate', type, actor_id: 'a', on_behalf_of_actor_id: null,
+    credential_id: 'synthetic-gate-credential', recorded_at: '2026-11-20T00:00:00Z',
+    payload: { task: { id: 't', thread_id: 'th', channel_path: 'ops', title: 'Gate evidence', state: 'ready', ...(flag === null ? {} : { direct_action_required: flag }) }, reason: 'gate approved' }, ...extra,
+  });
+  const blocked = event('task.blocked'); blocked.id = 'blocked';
+  return [
+    ['false flag', event('task.unblocked', false), false],
+    ['missing flag', event('task.unblocked', null), false],
+    ['string flag', event('task.unblocked', 'true'), false],
+    ['direct human gate', event(), true],
+    ['agent gate', event('task.unblocked', true, { actor_id: 'bot' }), false],
+    ['delegated human gate', event('task.unblocked', true, { delegation_id: 'delegated' }), false],
+    ['human on behalf', event('task.unblocked', true, { on_behalf_of_actor_id: 'bot' }), false],
+    ['unknown actor gate', event('task.unblocked', true, { actor_id: 'missing' }), false],
+    ['completed only', event('task.completed'), false],
+  ].map(([name, candidate, approved]) => ({ name, candidate, events: [blocked, candidate], approved }));
+}
 // OP17-042: JSON-marshalled domain.ClaimView corpus (generator recorded in ledger).
 export const op17042ClaimCorpus = [{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"active","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":null,"end_recorded_at":null},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"released","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"expired","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"completed","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"failed","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"revoked","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"}];
 // Disposable in-page API. No real token, server, board or task is touched.

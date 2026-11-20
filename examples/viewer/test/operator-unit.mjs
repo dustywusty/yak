@@ -1,4 +1,4 @@
-import { op17042ClaimCorpus } from './operator-fixture.mjs';
+import { op17020Cases, op17042ClaimCorpus } from './operator-fixture.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { credentialRefusal, allowedRequest, OperatorSession, approvalRecord, taskIntent } from '../static/operator.js';
@@ -41,7 +41,7 @@ test('logout releases before self revoke, idle ignores polling, 401 is not retri
 });
 test('approval comes from direct known human event after latest block only',()=>{
  const actors=[{id:'a',kind:'human',handle:'alice'},{id:'bot',kind:'agent',handle:'bot'}];
- const ev=(type,id,extra={})=>({type,actor_id:id,recorded_at:'2026-01-01',payload:{task:{id:'t'},reason:'gate approved'},...extra});
+ const ev=(type,id,extra={})=>({type,actor_id:id,recorded_at:'2026-01-01',payload:{task:{id:'t',direct_action_required:true},reason:'gate approved'},...extra});
  const e=ev('task.unblocked','a');assert.equal(approvalRecord([e],actors,'t'),e);
  for(const x of [ev('task.unblocked','bot'),ev('task.completed','a'),ev('task.unblocked','a',{on_behalf_of_actor_id:'p'}),ev('task.unblocked','missing')]) assert.equal(approvalRecord([x],actors,'t'),null);
  assert.equal(approvalRecord([e,ev('task.blocked','bot')],actors,'t'),null);
@@ -495,4 +495,16 @@ for(const field of ['current','current_value']) test(`OP17-019 approve 412 ${fie
  const calls=[]; const s=new OperatorSession({send:async(m,p)=>{calls.push(p);if(p.endsWith('/labels'))throw Object.assign(new Error('already approved'),{status:412,problem:{key:'gate',[field]:'approved'}});return {}}});
  s.start(me(),server,now);
  try {const i=s.intent(taskIntent('approve','/v1/boards/b',{id:'t',revision:3},{root:'root'}));await s.perform(i);assert.equal(i.done,true);assert.equal(i.index,2);assert.equal(s.pending.size,0);assert.equal(calls.length,2);} finally {await s.end({unauthorized:true});}
+});
+
+for (const c of op17020Cases()) test(`OP17-020 ${c.name}`, () => {
+ const actors = [{id:'a',kind:'human'}, {id:'bot',kind:'agent'}];
+ assert.equal(approvalRecord(c.events, actors, 't'), c.approved ? c.candidate : null);
+ assert.equal(approvalRecord(c.events, actors, 'other'), null, 'different task cannot approve');
+});
+for (const type of ['task.blocked', 'task.reopened']) test(`OP17-020 latest ${type} resets approval generation`, () => {
+ const actors = [{id:'a',kind:'human'}], c = op17020Cases().find(c => c.approved);
+ const reset = {...c.candidate, type};
+ assert.equal(approvalRecord([...c.events, reset], actors, 't'), null);
+ assert.equal(approvalRecord([...c.events, reset, c.candidate], actors, 't'), c.candidate);
 });

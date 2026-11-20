@@ -1,5 +1,5 @@
 import { h } from './skin-kit.js';
-import { approvalRecord, taskIntent } from './operator.js';
+import { approvalRecord, isGateApprovalEvent, taskIntent } from './operator.js';
 const enc = encodeURIComponent;
 const button = (text, click) => h('button', { type: 'button', onclick: click }, text);
 const field = (label, node) => h('label', {}, label, node);
@@ -172,7 +172,7 @@ export function createOperatorUI({ session, read, route }) {
       }
       const approval = approvalRecord(events, snapshot.actors, t.id);
       target.replaceChildren(h('h3', {}, 'Task event history'), h('p', {}, approval && t.state !== 'blocked' ? `Approved by ${provenance(approval)} at ${approval.recorded_at}; ${approval.payload.reason}; credential ${approval.credential_id}` : 'not approved'));
-      for (const e of events.filter((e) => e.type.startsWith('task.'))) target.append(h('p', {}, `${e.type} · ${provenance(e)} · ${e.recorded_at} · ${e.payload.reason || ''} · credential ${e.credential_id || 'unknown'}${e.type === 'task.unblocked' && (e.on_behalf_of_actor_id || e.delegation_id || snapshot.actors.find((a) => a.id === e.actor_id)?.kind !== 'human') ? `; unblocked by ${provenance(e)}, not a person's approval` : ''}${e.run_id?.startsWith('operator/') ? ' · operator client (unverified)' : ''}`));
+      for (const e of events.filter((e) => e.type.startsWith('task.'))) target.append(h('p', {}, `${e.type} · ${provenance(e)} · ${e.recorded_at} · ${e.payload.reason || ''} · credential ${e.credential_id || 'unknown'}${e.type === 'task.unblocked' && !isGateApprovalEvent(e, snapshot.actors) ? `; unblocked by ${provenance(e)}, not a person's approval` : ''}${e.run_id?.startsWith('operator/') ? ' · operator client (unverified)' : ''}`));
     } catch (e) { if (valid(snapshot, version)) target.textContent = `Approval history unavailable; no approval inferred. ${e.status === 404 ? 'Item gone or hidden.' : e.message}`; }
   }
   function messageControls(m) {
