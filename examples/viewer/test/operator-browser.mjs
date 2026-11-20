@@ -19,7 +19,9 @@ import { operatorFixture, op17032Clock, op17036Cases, op17020Cases, op17042Claim
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname.replace(/^\/$/, '/index.html');
   if (path.includes('..')) { res.writeHead(400).end(); return; }
-  if (false && path === '/fixture.js') { res.writeHead(200, { 'Content-Type': 'text/javascript' }).end(`(${FAKE})(); sessionStorage.setItem('yak-viewer-token', 'yak.test.token');`); return; }
+  if (process.env.VIEWER_PREVIEW && path === '/fixture.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' }).end(`(${operatorFixture.toString()})(); window.__op.scope=['read']; sessionStorage.setItem('yak-viewer-token', 'synthetic-preview-read-token');`); return;
+  }
   try { let body = await readFile(join(STATIC, path));
     if (process.env.VIEWER_PREVIEW && path === '/index.html') body = body.toString().replace('<script type="module"', '<script src="/fixture.js"></script><script type="module"');
     res.writeHead(200, { 'Content-Type': TYPES[extname(path)] || 'application/octet-stream', 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'" }).end(body); }
@@ -44,8 +46,11 @@ browser.addEventListener('message', (m) => {
   if (d.method === 'Runtime.exceptionThrown') errors.push(d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text);
   if (d.method === 'Runtime.consoleAPICalled' && d.params.type === 'error') errors.push(`console.error: ${d.params.args.map((a) => a.description || a.value).join(' ')}`);
 });
-let session;
-const cmd = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); browser.send(JSON.stringify({ id: i, method, params, ...(session ? { sessionId: session } : {}) })); });
+let session, op17028FixtureInstallations=0;
+const cmd = (method, params = {}) => new Promise((r) => {
+  if(method==='Page.addScriptToEvaluateOnNewDocument' && params.source===`(${operatorFixture})();`)op17028FixtureInstallations++;
+  const i = ++id; pending.set(i, r); browser.send(JSON.stringify({ id: i, method, params, ...(session ? { sessionId: session } : {}) }));
+});
 session = undefined;
 const { result: { targetId } } = await cmd('Target.createTarget', { url: 'about:blank' });
 session = (await cmd('Target.attachToTarget', { targetId, flatten: true })).result.sessionId;
@@ -1514,7 +1519,65 @@ async function op17044WireCase() {
  if(assertions!==10)throw new Error(`OP17-044 executed ${assertions}, expected 10`);
  console.log(`OP17-044 executed ${assertions} assertions across two fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+// OP17-028: exercise the advertised preview process without its never-ending branch.
+async function op17028PreviewCase() {
+ let assertions=0;
+ const assert=(name,ok,detail='')=>{assertions++;check(`OP17-028: ${name}`,ok,detail)};
+ await freshIdentityFixture();
+ assert('normal fixture uses exactly one persistent CDP installation',op17028FixtureInstallations===1);
+ assert('normal fixture starts with a fresh empty write capture',await count()===0);
+ const normalHTML=await (await fetch(ORIGIN)).text();
+ assert('normal HTML does not load fixture endpoint',!normalHTML.includes('/fixture.js'));
+ assert('fixture endpoint is 404 outside preview',(await fetch(ORIGIN+'/fixture.js')).status===404);
+ const normalSession=session;
+ const preview=spawn(process.execPath,[fileURLToPath(import.meta.url)],{
+  env:{...process.env,VIEWER_PREVIEW:'1'},stdio:['ignore','pipe','pipe'],
+ });
+ const exited=new Promise(resolve=>preview.once('exit',(code,signal)=>resolve({code,signal})));
+ let stdout='',stderr='',timer,target;
+ preview.stdout.on('data',d=>{stdout+=d});preview.stderr.on('data',d=>{stderr+=d});
+ // This is an external deadline; never await the preview module itself.
+ const deadline=setTimeout(()=>preview.kill('SIGKILL'),15000);
+ try {
+  const origin=await new Promise((resolve,reject)=>{
+   const poll=()=>{const match=/Synthetic viewer: (http:\/\/127\.0\.0\.1:\d+)/.exec(stdout);
+    if(match){resolve(match[1]);return}
+    if(preview.exitCode!==null || preview.signalCode!==null){reject(new Error(`preview exited before startup: ${stderr}`));return}
+    timer=setTimeout(poll,25);
+   };poll();
+  });
+  assert('bounded external preview process advertises a disposable origin',!!origin);
+  const html=await (await fetch(origin,{signal:AbortSignal.timeout(3000)})).text();
+  const fixtureTag=html.indexOf('<script src="/fixture.js"></script>'),appTag=html.indexOf('<script type="module"');
+  assert('preview HTML loads fixture before app module',fixtureTag>=0 && appTag>fixtureTag);
+  const script=await fetch(origin+'/fixture.js',{signal:AbortSignal.timeout(3000)});
+  assert('preview fixture returns 200 JavaScript',script.status===200 && script.headers.get('content-type')?.includes('javascript'),`status=${script.status}`);
+  session=undefined;
+  target=(await cmd('Target.createTarget',{url:'about:blank'})).result.targetId;
+  session=(await cmd('Target.attachToTarget',{targetId:target,flatten:true})).result.sessionId;
+  await cmd('Runtime.enable');await cmd('Page.enable');
+  // Observe timing without installing the fixture in this fresh browser target.
+  await cmd('Page.addScriptToEvaluateOnNewDocument',{source:`Object.defineProperty(window,'__op',{configurable:true,get(){return this.__op17028Value},set(value){this.__op17028Value=value;this.__op17028Boot={script:document.currentScript?.getAttribute('src'),state:document.readyState}}})`});
+  await cmd('Page.navigate',{url:origin+'/#/boards'});
+  for(let n=0;n<70;n++){if(await ev("!!window.__op && document.body?.dataset.view==='boards'"))break;await sleep(50)}
+  assert('preview installs fixture during parsing before module boot',await ev("window.__op17028Boot?.script==='/fixture.js' && window.__op17028Boot?.state==='loading'"));
+  assert('preview app boots with synthetic read-only session',await ev("!!window.__op && window.__op.scope?.length===1 && window.__op.scope[0]==='read' && sessionStorage.getItem('yak-viewer-token')==='synthetic-preview-read-token' && document.body.dataset.view==='boards' && !document.body.dataset.operator"));
+  assert('preview boot sends zero writes',await ev("Array.isArray(window.__op?.writes) && window.__op.writes.length===0"));
+  assert('preview has no ReferenceError or other browser exceptions',errors.length===0,errors.join(' | '));
+ } finally {
+  clearTimeout(timer);
+  if(target)await cmd('Target.closeTarget',{targetId:target});
+  session=normalSession;
+  preview.kill('SIGTERM');
+  const stopped=await exited;
+  clearTimeout(deadline);
+  assert('external smoke process terminates and is reaped',stopped.signal==='SIGTERM' && preview.signalCode==='SIGTERM',JSON.stringify({stopped,stderr}));
+ }
+ assert('normal persistent CDP installation remains exactly once',op17028FixtureInstallations===1);
+ assert('all preview and normal assertions execute',assertions===13);
+ console.log(`OP17-028 executed ${assertions} assertions across fresh normal and preview fixtures`);
+}
+const operatorCases = new Map([['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
