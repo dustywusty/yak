@@ -1,18 +1,16 @@
-// Tasks wall: a light kanban of tasks with filters, toasts, and cards that
-// move between columns on live events. Read-only (no drag-to-claim).
-
-import { h, avatar, lease, ago, snip } from './skin-kit.js';
+// Read-only Board: task state is the list, not a guess about progress.
+import { h, avatar } from './skin-kit.js';
+import { createAgentActivity, waitingReasons, elapsed, activityClock } from './agent-activity.js';
 
 const COLUMNS = [
-  ['ready', 'Ready'], ['claimed', 'Claimed'], ['completed', 'Completed'],
-  ['waiting', 'Waiting'], ['blocked', 'Blocked'],
+  ['ready', 'Ready'], ['claimed', 'Claimed'], ['waiting', 'Waiting'], ['blocked', 'Blocked'],
+  ['completed', 'Completed'], ['failed', 'Failed'], ['canceled', 'Canceled'],
 ];
-const column = (t) => (t.state === 'failed' || t.state === 'canceled' ? 'completed' : t.state);
 const TOASTS = { 'task.claimed': 'claimed', 'task.completed': 'completed', 'task.failed': 'failed', 'task.blocked': 'blocked', 'task.released': 'released' };
 
 export function wall(root, { threadHref }) {
   const f = { channel: '', agent: '', label: '' };
-  let bars = [], frame = null, filterKey = '';
+  let frame = null, filterKey = '', status = 'resyncing', activity = null, clocks = [];
 
   function controls(st) {
     const sel = (key, first, options) => {
@@ -21,12 +19,11 @@ export function wall(root, { threadHref }) {
       s.value = f[key];
       return s;
     };
-    const label = h('input', { type: 'search', placeholder: 'Label (key or key:value)', 'aria-label': 'Label filter', value: f.label,
-      oninput: (e) => { f.label = e.target.value.trim(); render(st); } });
     return h('div', { class: 'w-filters' },
       sel('channel', 'All channels', st.S.channels.map((c) => [c.path, `${c.path}/`])),
       sel('agent', 'All agents', [...st.S.actors.values()].map((a) => [a.id, a.handle])),
-      label);
+      h('input', { type: 'search', placeholder: 'Label (key or key:value)', 'aria-label': 'Label filter', value: f.label,
+        oninput: (e) => { f.label = e.target.value.trim(); render(st); } }));
   }
 
   function keep(st, t) {
@@ -40,90 +37,108 @@ export function wall(root, { threadHref }) {
     return true;
   }
 
-  const person = (st, id, text) => h('span', { class: 'w-person' }, avatar(st.actor(id), id), h('b', {}, st.handle(id)), text);
-
+  const person = (st, id) => id ? h('span', { class: 'w-person' }, avatar(st.actor(id), id), h('b', {}, st.handle(id))) : null;
   function card(st, t) {
     const c = t.current_claim;
-    const body = [h('div', { class: 'w-num' }, st.num(t.id)), h('a', { class: 'w-title', href: threadHref(t.thread_id) }, t.title)];
-    let foot;
-    if (t.state === 'claimed') {
-      const fill = h('i');
-      bars.push({ c, fill });
-      fill.style.width = `${lease(c).frac * 100}%`;
-      foot = [person(st, c.actor_id, ` · ${ago(c.acquired_at)}`), h('div', { class: 'w-bar', title: 'lease left' }, fill)];
-    } else if (t.state === 'completed' || t.state === 'failed' || t.state === 'canceled') {
-      foot = h('span', { class: `w-meta w-${t.state}` }, t.state === 'completed' ? '✓ ' : '✗ ', st.handle(t.outcome?.by_actor_id),
-        t.state === 'completed' ? '' : ` · ${t.state}`);
-    } else if (t.state === 'waiting') {
-      const needs = st.blockers(t).map((d) => st.num(d.task_id));
-      foot = h('span', { class: 'w-meta' }, '◷ Needs ', h('b', {}, needs.join(', ') || 'hidden'),
-        t.assignee_actor_id ? ` · for ${st.handle(t.assignee_actor_id)}` : '');
-    } else if (t.state === 'blocked') {
-      foot = [h('p', { class: 'w-reason' }, snip(t.block?.reason, 120)),
-        person(st, t.assignee_actor_id || t.block?.by_actor_id, st.gated(t) ? ' · needs approval' : ' · held')];
-    } else {
-      const ls = Object.entries(st.labels(t)).filter(([k]) => !k.startsWith('yak.') && !k.startsWith('plan.')).slice(0, 2);
-      foot = h('span', { class: 'w-meta' }, '◌ ', t.assignee_actor_id ? `for ${st.handle(t.assignee_actor_id)}` : 'Unclaimed',
-        ls.map(([k, v]) => ` · ${k}=${v}`).join(''));
+    const working = t.state === 'claimed' && c?.status === 'active';
+    const waiting = ['waiting', 'blocked'].includes(t.state);
+    const since = working ? c.acquired_at : waiting ? t.state_changed_at : null;
+    const time = since ? h('time', { datetime: since, title: `${since} (UTC)` }) : null;
+    const notice = h('span', { class: 'w-unconfirmed' });
+    if (time) clocks.push({ t, time, notice, working });
+    const reasons = waiting ? waitingReasons(st, t).map((r) => r.task
+      ? h('a', { href: threadHref(r.task.thread_id) }, r.text, r.number ? ` · ${r.number} ${r.task.title}` : '')
+      : h('span', {}, r.text, r.number ? ` · ${r.number}` : '')) : [];
+    const labels = Object.entries(st.labels(t)).filter(([k]) => !k.startsWith('yak.') && !k.startsWith('plan.'));
+    const label = ([k, v]) => {
+      let hue = 0;
+      for (const ch of k) hue = (hue * 31 + ch.charCodeAt(0)) % 360;
+      return h('span', { class: 'w-label', '--label-hue': hue }, `${k}: ${v}`);
+    };
+    return h('article', { class: `w-card w-card-${t.state}`, 'data-task': t.id },
+      labels.length ? h('div', { class: 'w-labels' }, labels.map(label)) : null,
+      h('a', { class: 'w-title', href: threadHref(t.thread_id) }, t.title),
+      h('div', { class: 'w-meta' }, `${st.num(t.id)} · #${t.channel_path}`),
+      h('div', { class: 'w-foot' },
+        person(st, working ? c.actor_id : st.settled(t) ? t.outcome?.by_actor_id : t.assignee_actor_id || t.block?.by_actor_id),
+        time, notice,
+        !working && t.state === 'claimed' ? h('span', {}, 'Claim status unconfirmed') : null,
+        t.state === 'ready' ? h('span', {}, 'Ready · no active claim') : null,
+        waiting ? h('div', { class: 'w-reason' }, reasons) : null,
+        st.gated(t) ? h('span', {}, 'Approval pending') : null,
+        t.outcome ? h('span', { class: 'w-outcome' }, `${t.state}: ${t.outcome.summary || t.outcome.reason || 'See task discussion'}`) : null));
+  }
+
+  function tick(st) {
+    activity?.update();
+    const { at, stale, confirmedAt } = activityClock(st, status);
+    for (const { t, time, notice, working } of clocks) {
+      const expiry = working ? Date.parse(t.current_claim.expires_at) : Infinity;
+      const displayAt = Math.min(confirmedAt, expiry);
+      time.textContent = working ? `Working for ${elapsed(t.current_claim.acquired_at, displayAt)}` : `${elapsed(t.state_changed_at, displayAt)} in ${t.state} state`;
+      time.classList.toggle('w-long', !working && displayAt - Date.parse(t.state_changed_at) >= 3600000);
+      time.classList.toggle('w-stale', stale || expiry <= at);
+      notice.textContent = working && expiry <= at ? 'Status unconfirmed · last reported claim; checking for updates.' : '';
     }
-    return h('article', { class: `w-card w-card-${t.state}`, 'data-task': t.id }, body, h('div', { class: 'w-foot' }, foot));
   }
 
   function render(st) {
-    const { S } = st;
-    if (!S.board) return;
+    if (!st.S.board) return;
     if (!frame) {
-      frame = { head: h('header', { class: 'w-head' }), bar: h('div'), cols: h('div', { class: 'w-cols' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
-      root.replaceChildren(h('div', { class: 'w-wrap' }, frame.head, frame.bar, frame.cols), frame.toasts);
+      frame = { head: h('header', { class: 'w-head' }), summary: h('div', { class: 'w-summary' }), bar: h('div'), cols: h('div', { class: 'w-cols', tabindex: '0', 'aria-label': 'Task lists; scroll horizontally for more states' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
+      root.replaceChildren(h('div', { class: 'w-wrap' }, frame.head, frame.summary, frame.bar, frame.cols), frame.toasts);
     }
-    // Rebuild the filter lists when channels or actors change (they can appear later).
-    const key = `${S.channels.map((c) => c.path).join(',')}|${[...S.actors.keys()].join(',')}`;
+    const active = document.activeElement;
+    const focusRow = active?.closest('[data-task], [data-activity-task]');
+    const focusTask = focusRow?.dataset.task || focusRow?.dataset.activityTask;
+    const inSummary = !!active?.closest('.w-summary');
+    const linkIndex = focusRow ? [...focusRow.querySelectorAll('a')].indexOf(active) : -1;
+    const summaryFocus = active === activity?.root;
+    const listFocus = [...frame.cols.querySelectorAll('.w-list')].indexOf(active);
+    const filterFocus = active?.closest('.w-filters') ? active.getAttribute('aria-label') : null;
+    const selection = filterFocus && active.tagName === 'INPUT' ? [active.selectionStart, active.selectionEnd] : null;
+    const summaryTop = activity?.root.scrollTop || 0;
+    const scrolls = [...frame.cols.children].map((col) => col.querySelector('.w-list').scrollTop);
+    // Rebuild controls only when their option lists change; typing keeps focus.
+    const key = `${st.S.channels.map((c) => c.path).join(',')}|${[...st.S.actors.keys()].join(',')}`;
     if (key !== filterKey) { filterKey = key; frame.bar.replaceChildren(controls(st)); }
-    // Header: N of M working, with an avatar stack.
-    const all = st.tasks();
-    const working = new Set(all.filter((t) => t.state === 'claimed').map((t) => t.current_claim.actor_id));
-    const agents = [...S.actors.values()].filter((a) => a.kind !== 'human' && a.id !== S.me?.id);
-    frame.head.replaceChildren(h('h1', {}, 'Tasks wall'), h('span', { class: 'w-spacer' }),
-      h('span', { class: 'w-working' }, `${agents.filter((a) => working.has(a.id)).length} of ${agents.length} working`),
-      h('span', { class: 'w-stack' }, agents.map((a) => h('span', { class: working.has(a.id) ? 'on' : '' }, avatar(a)))));
-
-    // FLIP: remember where each card was, rebuild, then animate from there.
-    const before = new Map([...frame.cols.querySelectorAll('[data-task]')].map((e) => [e.dataset.task, e.getBoundingClientRect()]));
-    bars = [];
-    const shown = all.filter((t) => keep(st, t));
+    const all = st.tasks(), shown = all.filter((t) => keep(st, t));
+    frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Board`), h('span', {}, `${shown.length} of ${all.length} tasks · Read-only`));
+    activity = createAgentActivity(st, ({ t }) => threadHref(t), status);
+    frame.summary.replaceChildren(activity.root);
+    activity.root.scrollTop = summaryTop;
+    clocks = [];
     frame.cols.replaceChildren(...COLUMNS.map(([key, title]) => {
-      let list = shown.filter((t) => column(t) === key);
-      if (key === 'completed') list = list.sort((a, b) => (b.outcome?.at || '').localeCompare(a.outcome?.at || ''));
-      const extra = key === 'completed' && list.length > 12 ? list.length - 12 : 0;
-      return h('section', { class: `w-col w-col-${key}` }, h('h2', {}, title, h('span', {}, String(list.length))),
-        list.slice(0, key === 'completed' ? 12 : undefined).map((t) => card(st, t)),
-        extra ? h('p', { class: 'w-more' }, `+${extra} more`) : null,
-        list.length ? null : h('div', { class: 'w-slot' }));
+      const list = shown.filter((t) => t.state === key);
+      if (['completed', 'failed', 'canceled'].includes(key)) list.sort((a, b) => (b.outcome?.at || '').localeCompare(a.outcome?.at || ''));
+      const items = h('div', { class: 'w-list', tabindex: '0', 'aria-label': `${title} tasks` }, list.map((t) => card(st, t)),
+        !list.length ? h('p', { class: 'w-empty' }, 'No tasks') : null);
+      const col = h('section', { class: `w-col w-col-${key}` }, h('h2', {}, title, h('span', {}, String(list.length))), items);
+      return col;
     }));
-    for (const el of frame.cols.querySelectorAll('[data-task]')) {
-      const old = before.get(el.dataset.task);
-      if (!old) { if (before.size) el.classList.add('w-new'); continue; }
-      const now = el.getBoundingClientRect();
-      const dx = old.left - now.left, dy = old.top - now.top;
-      if (!dx && !dy) continue;
-      el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 450, easing: 'cubic-bezier(.2,.7,.2,1)' });
-    }
+    // Detached lists cannot take their old scroll offset until they have a layout.
+    [...frame.cols.children].forEach((col, i) => { col.querySelector('.w-list').scrollTop = scrolls[i] || 0; });
+    if (filterFocus) {
+      const control = [...frame.bar.querySelectorAll('input,select')].find((e) => e.getAttribute('aria-label') === filterFocus);
+      control?.focus({ preventScroll: true });
+      if (selection) control?.setSelectionRange(...selection);
+    } else if (focusTask && linkIndex >= 0) {
+      const selector = inSummary ? '[data-activity-task]' : '[data-task]';
+      const row = [...root.querySelectorAll(selector)].find((e) => (e.dataset.task || e.dataset.activityTask) === focusTask);
+      (row?.querySelectorAll('a')[linkIndex] || (inSummary ? activity.root : frame.cols)).focus({ preventScroll: true });
+    } else if (summaryFocus) activity.root.focus({ preventScroll: true });
+    else if (listFocus >= 0) frame.cols.children[listFocus]?.querySelector('.w-list')?.focus({ preventScroll: true });
+    tick(st);
   }
 
   function event(ev, st) {
-    const verb = TOASTS[ev.type];
-    const t = ev.payload?.task;
+    const verb = TOASTS[ev.type], t = ev.payload?.task;
     if (!verb || !t || !frame) return;
-    const by = ev.actor_id, via = st.via(by);
-    const leaseText = ev.type === 'task.claimed' && ev.payload.claim ? ` · ${Math.round(ev.payload.claim.lease_seconds / 60)} min lease` : '';
-    const toast = h('div', { class: 'w-toast' }, avatar(st.actor(by), by),
-      h('span', {}, h('b', {}, st.handle(by)), via ? ` via ${via}` : '', ` ${verb} ${st.num(t.id)}${leaseText}`));
+    const toast = h('div', { class: 'w-toast' }, `${st.handle(ev.actor_id)} ${verb} ${st.num(t.id)}`);
     frame.toasts.append(toast);
-    setTimeout(() => toast.remove(), 6000);
+    const timer = setTimeout(() => { toast.remove(); timers.delete(timer); }, 6000);
+    timers.add(timer);
   }
-
-  return {
-    render, event,
-    tick: () => bars.forEach(({ c, fill }) => { fill.style.width = `${lease(c).frac * 100}%`; }),
-  };
+  const timers = new Set();
+  return { render, event, tick, status: (value, st) => { if (status !== value) { status = value; render(st); } }, dispose: () => timers.forEach(clearTimeout) };
 }

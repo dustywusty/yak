@@ -3,7 +3,7 @@
 // All user content is inserted as text nodes, never as HTML.
 //
 // Views: #/ and #/b/<board>?ch=&t=&m=&v= (term.js, the default chat view,
-// with Activity = feed.js), #/boards, and the skins #/dispatch, #/wall,
+// with Activity = feed.js), #/boards, and the skins #/board (also #/wall),
 // #/irc (skins.js). Board data is kept live by the store in skin-kit.js.
 
 import { createFeed } from './feed.js';
@@ -94,8 +94,12 @@ function parseRoute() {
   const [path, query = ''] = location.hash.slice(1).split('?');
   const q = new URLSearchParams(query);
   if (path === '/boards') return { view: 'boards' };
-  const skin = /^\/(dispatch|wall|irc)$/.exec(path);
-  if (skin) return { view: 'skin', skin: skin[1], board: q.get('b') || '' };
+  if (path === '/dispatch') {
+    history.replaceState(null, '', q.get('b') ? `#/b/${encodeURIComponent(q.get('b'))}` : '#/');
+    return parseRoute();
+  }
+  const skin = /^\/(board|wall|irc)$/.exec(path);
+  if (skin) return { view: 'skin', skin: skin[1] === 'wall' ? 'board' : skin[1], board: q.get('b') || '' };
   const m = /^\/b\/([^/]+)$/.exec(path);
   if (!m) return { view: 'term', board: '', v: 'activity', key: 'activity' };
   // sub= and label= keep the meaning they had in the first board view:

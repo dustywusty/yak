@@ -39,8 +39,9 @@ const FAKE = () => {
   const msgs = [msg('thr_ops_m1', 'thr_ops', 'ops', 1, 'ops root'), msg('thr_ops_m2', 'thr_ops', 'ops', 2, 'ops reply'),
     msg('thr_deploy_m1', 'thr_deploy', 'ops/deploy', 1, 'deploy root'), msg('thr_review_m1', 'thr_review', 'review', 1, 'review root', { status: 'open' })];
   const claim = (id, minutes) => ({ id: `clm_${id}`, actor_id: 'act_bot', status: 'active', acquired_at: iso(-minutes * 60000), expires_at: iso(120000), lease_seconds: 300 });
-  const task = (id, state, minutes, extra = {}) => ({ id, board_id: B, title: id.replace('task_', ''), thread_id: 'thr_ops', channel_path: 'ops', revision: 1,
-    state, created_at: iso(-9e6), state_changed_at: iso(-minutes * 60000), updated_at: iso(0), assignee_actor_id: 'act_bot', current_claim: null, dependencies: [], ...extra });
+  const taskTitles = { task_work: 'Build the viewer bundle', task_second: 'Check browser keyboard access', task_wait: 'Publish the release', task_review: 'Review the browser changes', task_owner: 'Approve production rollout', task_hidden: 'Check a private prerequisite' };
+  const task = (id, state, minutes, extra = {}) => ({ id, board_id: B, title: taskTitles[id] || id.replace('task_', ''), thread_id: 'thr_ops', channel_path: 'ops', revision: 1,
+    state, created_by_actor_id: 'act_alice', created_at: iso(-9e6), state_changed_at: iso(-minutes * 60000), updated_at: iso(0), assignee_actor_id: 'act_bot', current_claim: null, dependencies: [], ...extra });
   const tasks = [task('task_work', 'claimed', 8, { current_claim: claim('work', 8) }),
     task('task_second', 'claimed', 3, { current_claim: claim('second', 3) }),
     task('task_wait', 'waiting', 20, { dependencies: [{ task_id: 'task_review', state: 'ready' }, { task_id: 'task_owner', state: 'blocked' }] }),
@@ -107,6 +108,13 @@ const FAKE = () => {
     }
     if (/\/threads\/[\w]+$/.test(p)) { const t = threads.find((x) => p.endsWith(x.id)); return t ? json({ thread: t, root_message: msgs.find((x) => x.id === t.root_message_id) }) : json({ code: 'not_found', status: 404, detail: 'x' }, 404); }
     return json({ code: 'not_found', status: 404, detail: `fake: no route ${m} ${p}` }, 404);
+  };
+  window.__addTask = (id, title, state = 'ready') => {
+    const t = task(id, state, 5, { title, thread_id: `thr_${id}`, channel_path: 'activity' });
+    threads.push({ ...thread(t.thread_id, 'activity', title, { area: 'viewer' }, 1), task_id: id });
+    msgs.push(msg(`${t.thread_id}_m1`, t.thread_id, 'activity', 1, title));
+    T.tasks.push(t);
+    T.queue.push({ __for: 'store', id: `evt_${id}`, type: 'task.created', payload: { task: t } });
   };
   window.__taskEvent = (id, patch, type = 'task.updated') => {
     const i = T.tasks.findIndex((t) => t.id === id);
@@ -226,8 +234,8 @@ try {
   await sleep(1200);
   check('disconnected elapsed clocks freeze', frozen === await ev(`document.querySelector('[data-activity-task="task_wait"] time').textContent`));
   await ev(`window.__fake.disconnected = false; window.__taskEvent('task_second', { state: 'ready', current_claim: null }, 'task.released'); 1`);
-  // Reconnect may still be in the second retry's 2–2.5 s backoff.
-  await until(`(() => { const text = document.querySelector('.t-agent-activity')?.textContent || ''; return text.includes('1 claimed task') && !text.includes('Last known'); })()`);
+  // Reconnect uses a jittered, exponential backoff; wait for its actual result.
+  await until(`document.querySelector('#term .t-agent-activity').textContent.includes('1 claimed task') && !document.querySelector('#term .t-agent-activity').textContent.includes('Last known')`);
   check('reconnect removes released claim', (await activity()).includes('1 claimed task') && !(await activity()).includes('Last known'), await activity());
   await ev(`window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() - 1000).toISOString() } }); window.__fake.tasks[0] = { ...window.__fake.tasks[0], state: 'ready', current_claim: null, revision: 99 }; 1`);
   await sleep(1500);
@@ -367,27 +375,109 @@ try {
 
   // R3: Wall filter lists pick up a channel created later.
   await go('#/wall', 1200);
-  await ev(`window.__fake.channels.push('late'); window.__fake.queue.push({ __for: 'store', id: 'evt_chan', cursor: 'c1.x', type: 'channel.created', board_id: 'brd_test', actor_id: 'act_alice',
+  await ev(`document.querySelector('.w-filters input').focus(); window.__fake.channels.push('late'); window.__fake.queue.push({ __for: 'store', id: 'evt_chan', cursor: 'c1.x', type: 'channel.created', board_id: 'brd_test', actor_id: 'act_alice',
     credential_id: null, run_id: null, resource: { type: 'channel', id: 'chn_late', revision: 1 }, channel_id: 'chn_late', thread_id: null, recorded_at: new Date().toISOString(),
     effective_at: new Date().toISOString(), payload: { channel: { id: 'chn_late', board_id: 'brd_test', path: 'late', access_mode: 'inherited', created_by_actor_id: 'act_alice', created_at: new Date().toISOString(), caller_capabilities: [] } } }); 1`);
   await sleep(1500);
   const options = await ev(`JSON.stringify([...document.querySelectorAll('.w-filters select')[0].options].map((o) => o.value))`).then(JSON.parse);
-  check('Wall channel filter lists a channel created later', options.includes('late'), JSON.stringify(options));
+  check('Board channel filter lists a channel created later', options.includes('late'), JSON.stringify(options));
+  check('Board filter focus survives newly created channels', await ev(`document.activeElement===document.querySelector('.w-filters input')`));
+
+  // Approved classic views: real states, clocks, links, scroll and live focus.
+  await go('#/dispatch?b=brd_test');
+  check('removed skin bookmark canonicalizes to Chat with board context', await ev(`location.hash === '#/b/brd_test' && !document.getElementById('term').hidden`));
+  await go('#/dispatch');
+  check('removed skin bookmark without board canonicalizes to default Chat', await ev(`location.hash === '#/' && !document.getElementById('term').hidden`));
+  check('navigation omits removed view and names Board', await ev(`![...document.querySelectorAll('a')].some(a => a.textContent === 'Dispatch') && [...document.querySelectorAll('a')].some(a => a.textContent === 'Board')`));
+  await go('#/board?b=brd_test');
+  check('Board route mounts separately from Chat', await ev(`!!document.querySelector('.w-cols') && document.getElementById('term').hidden`));
+  await ev(`window.__taskEvent('task_work', { state:'claimed', current_claim:{id:'clm_board',actor_id:'act_bot',status:'active',acquired_at:new Date(Date.now()-482000).toISOString(),expires_at:new Date(Date.now()+120000).toISOString(),lease_seconds:300} });
+    window.__taskEvent('task_second', {state:'failed',outcome:{by_actor_id:'act_bot',reason:'Tests failed',at:new Date().toISOString()}});
+    window.__taskEvent('task_review', {state:'canceled',outcome:{by_actor_id:'act_alice',reason:'No longer needed',at:new Date().toISOString()}});
+    window.__taskEvent('task_wait', {state:'waiting',state_changed_at:new Date(Date.now()-1202000).toISOString(),dependencies:[{task_id:'task_owner',state:'blocked'}]}); 1`);
+  await sleep(800);
+  check('failed and canceled tasks have their own truthful lists', await ev(`!!document.querySelector('.w-col-failed [data-task="task_second"]') && !!document.querySelector('.w-col-canceled [data-task="task_review"]') && !document.querySelector('.w-col-completed [data-task="task_second"]')`));
+  check('Board reuses activity summary and real task clocks', await ev(`document.querySelector('.w-wrap .t-agent-activity')?.textContent.includes('Working for 8m') && document.querySelector('[data-task="task_work"]')?.textContent.includes('Working for 8m') && document.querySelector('[data-task="task_wait"]')?.textContent.includes('20m in waiting')`), await ev(`({summary:document.querySelector('.w-wrap .t-agent-activity')?.textContent,work:document.querySelector('[data-task="task_work"]')?.textContent,wait:document.querySelector('[data-task="task_wait"]')?.textContent})`).then(JSON.stringify));
+  check('Board cards link visible wait prerequisites and show hidden hints', await ev(`!!document.querySelector('[data-task="task_wait"] .w-reason a[href*="thr_deploy"]') && document.querySelector('[data-task="task_hidden"]')?.textContent.includes('details not visible')`));
+  check('Board cards carry real labels and actor badges', await ev(`!!document.querySelector('[data-task="task_owner"] .w-label') && !!document.querySelector('[data-task="task_work"] .av')`));
+  await ev(`for(let i=0;i<18;i++) window.__addTask('task_list_'+i,'Check browser case '+(i+1)); 1`);
+  await sleep(700);
+  await ev(`const list=document.querySelector('.w-col-ready .w-list');list.scrollTop=180;list.focus();window.__taskEvent('task_owner',{updated_at:new Date().toISOString()});1`);
+  await sleep(700);
+  check('Board lists scroll independently and retain scroll and focus', await ev(`document.querySelector('.w-col-ready .w-list').scrollTop===180 && document.activeElement===document.querySelector('.w-col-ready .w-list') && document.querySelector('.w-col-claimed .w-list').scrollTop===0`));
+  await ev(`document.querySelector('[data-task="task_work"] .w-title').focus(); window.__taskEvent('task_second',{updated_at:new Date().toISOString()}); 1`);
+  await sleep(700);
+  check('Board card focus survives live redraw', await ev(`document.activeElement?.closest('[data-task]')?.dataset.task === 'task_work'`));
+  await ev(`document.querySelector('.w-filters input').focus(); document.querySelector('.w-filters input').value='needs'; document.querySelector('.w-filters input').dispatchEvent(new Event('input')); window.__taskEvent('task_owner',{updated_at:new Date().toISOString()}); 1`);
+  await sleep(700);
+  check('Board label filter keeps focus and filters real labels', await ev(`document.activeElement === document.querySelector('.w-filters input') && document.querySelectorAll('.w-card').length === 1 && !!document.querySelector('[data-task="task_owner"]')`));
+  await ev(`document.querySelector('.w-filters input').value=''; document.querySelector('.w-filters input').dispatchEvent(new Event('input')); window.__fake.disconnected=true; 1`);
+  await sleep(1300);
+  check('Board disconnect marks last known data', await ev(`document.querySelector('.w-wrap').textContent.includes('Last known')`));
+  const boardFrozen = await ev(`document.querySelector('[data-task="task_wait"] time').textContent`);
+  await sleep(1200);
+  check('Board stale card clocks freeze with the summary', boardFrozen === await ev(`document.querySelector('[data-task="task_wait"] time').textContent`));
+  await ev(`window.__fake.disconnected=false; 1`);
+  await sleep(1800);
+  await cmd('Emulation.setDeviceMetricsOverride', { width:390,height:844,deviceScaleFactor:1,mobile:true });
+  check('mobile Board keeps fixed-width horizontal lists without page overflow', await ev(`document.documentElement.scrollWidth <= innerWidth && document.querySelector('.w-cols').scrollWidth > document.querySelector('.w-cols').clientWidth && document.querySelector('.w-col').getBoundingClientRect().width >= 270`));
+  await ev(`document.querySelector('.w-cols').scrollLeft=290; window.__taskEvent('task_owner',{updated_at:new Date().toISOString()}); 1`);
+  await sleep(700);
+  check('Board horizontal position survives live redraw', await ev(`document.querySelector('.w-cols').scrollLeft >= 280`));
+  await ev(`window.__fake.holdTask='task_work';window.__fake.heldTasks=[];window.__taskEvent('task_work',{current_claim:{...window.__fake.tasks.find(t=>t.id==='task_work').current_claim,expires_at:new Date(Date.now()-1000).toISOString()}});1`);
+  await until(`window.__fake.heldTasks.length > 0`);
+  check('Board expired claims stay unconfirmed until authoritative read', await ev(`document.querySelector('[data-task="task_work"]')?.textContent.includes('Status unconfirmed') && document.querySelector('[data-task="task_work"] time')?.classList.contains('w-stale') && document.querySelector('.a-counts').textContent.includes('to confirm')`));
+  await ev(`window.__taskEvent('task_work',{state:'ready',current_claim:null},'task.released');window.__fake.holdTask=null;window.__fake.heldTasks[0].release();1`);
+  await sleep(700);
+  check('Board release removes working clock and late read cannot restore claim', await ev(`!!document.querySelector('.w-col-ready [data-task="task_work"]') && !document.querySelector('[data-task="task_work"] time')`));
+  await cmd('Emulation.setDeviceMetricsOverride', { width:1280,height:900,deviceScaleFactor:1,mobile:false });
+  await go('#/irc?b=brd_test');
+  check('IRC frame fills entire viewport with square blue chrome', await ev(`(() => {const r=document.querySelector('.i-win').getBoundingClientRect();return r.x===0 && r.y===0 && r.width===innerWidth && r.height===innerHeight && getComputedStyle(document.querySelector('.i-title')).backgroundImage==='none';})()`));
+  check('IRC navigation and logout are inside chrome', await ev(`!!document.querySelector('.i-win #nav') && !!document.querySelector('.i-win #forget')`));
+  check('IRC has real channel tree left and board actors right', await ev(`!!document.querySelector('.i-tree button[data-channel="ops"]') && document.querySelector('.i-nicks')?.textContent.includes('bot-a')`));
+  await ev(`document.querySelector('.i-tree button[data-channel="ops"]').click(); document.querySelector('.i-tree button[data-channel="ops"]').focus(); window.__fake.queue.push(window.__msgEvent('msg_irc_live','IRC live update','store')); 1`);
+  await sleep(700);
+  check('IRC live messages retain channel control focus', await ev(`document.querySelector('.i-text').textContent.includes('IRC live update') && document.activeElement?.dataset.channel==='ops'`));
+  await ev(`document.querySelector('.i-tools button').focus();window.__fake.queue.push(window.__msgEvent('msg_irc_jump','Control focus on live update','store'));1`);
+  await sleep(700);
+  check('IRC Jump button focus survives live redraw', await ev(`document.activeElement===document.querySelector('.i-tools button')`));
+  await ev(`for(let i=0;i<60;i++) window.__fake.queue.push(window.__msgEvent('msg_scroll_'+i,'Transcript scroll line '+i,'store'));1`);
+  await sleep(700);
+  await ev(`const text=document.querySelector('.i-text');text.scrollTop=40;text.focus();window.__fake.queue.push(window.__msgEvent('msg_scroll_later','Later live line','store'));1`);
+  await sleep(700);
+  check('IRC preserves transcript scroll and focus away from bottom', await ev(`document.querySelector('.i-text').scrollTop===40 && document.activeElement===document.querySelector('.i-text')`));
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true}));1`);
+  check('IRC Ctrl-K opens working channel jump', await ev(`!!document.querySelector('.jump input')`));
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));1`);
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'3',altKey:true,bubbles:true})); 1`);
+  check('IRC Alt-number selects a real channel', await ev(`document.querySelector('.i-tab.on')?.textContent.includes('#ops/deploy')`));
+  await cmd('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+  check('mobile IRC keeps transcript and side panes within viewport', await ev(`document.documentElement.scrollWidth<=innerWidth && document.querySelector('.i-win').getBoundingClientRect().height===innerHeight && document.querySelector('.i-text').clientWidth>=140 && document.querySelector('.i-tree').clientWidth>0 && document.querySelector('.i-nicks').clientWidth>0`));
+  check('mobile IRC topic thread link stays visible', await ev(`(() => {const a=document.querySelector('.i-topic a').getBoundingClientRect(), p=document.querySelector('.i-topic').getBoundingClientRect();return a.left>=p.left && a.right<=p.right && a.bottom<=p.bottom;})()`));
+  check('IRC input is explicitly read-only', await ev(`document.querySelector('.i-input').disabled && document.querySelector('.i-input').getAttribute('aria-label').includes('read-only')`));
+  await go('#/wall?b=brd_test');
+  check('old Wall bookmark remains a Board alias and restores global header', await ev(`!!document.querySelector('.w-cols') && !!document.querySelector('body > .top') && !document.querySelector('.i-win')`));
+  await cmd('Emulation.setDeviceMetricsOverride', {width:1280,height:900,deviceScaleFactor:1,mobile:false});
 
   // R1: a snapshot session is deleted even when the store stops during the snapshot.
+  const cleanupPosts = await ev(`window.__fake.posts`);
   await ev(`window.__fake.slowSnapshot = 600; 1`);
-  await go('#/dispatch', 200);
-  await go('#/irc', 200);
+  await go('#/irc?b=brd_test', 200);
+  await go('#/board?b=brd_test', 200);
   await ev(`window.__fake.slowSnapshot = 0; 1`);
   await sleep(1500);
   const f = await ev(`JSON.stringify({ posts: window.__fake.posts, deletes: window.__fake.deletes })`).then(JSON.parse);
-  check('every snapshot session is deleted (R1)', f.deletes === f.posts, JSON.stringify(f));
+  check('every snapshot session is deleted (R1)', f.deletes === f.posts && f.posts >= cleanupPosts + 2, JSON.stringify(f));
 
   await go('#/b/brd_test?v=activity');
   await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await sleep(300);
-  const mobile = await ev(`({ overflow: document.documentElement.scrollWidth > innerWidth, activity: document.querySelector('.t-agent-activity').getBoundingClientRect().height, chat: document.querySelector('.t-scroll').getBoundingClientRect().height })`);
+  const mobile = await ev(`({ overflow: document.documentElement.scrollWidth > innerWidth, activity: document.querySelector('#term .t-agent-activity').getBoundingClientRect().height, chat: document.querySelector('.t-scroll').getBoundingClientRect().height })`);
   check('390px layout keeps activity and chat usable without horizontal overflow', !mobile.overflow && mobile.activity >= 100 && mobile.chat >= 150, JSON.stringify(mobile));
+
+  await go('#/irc?b=brd_test');
+  await ev(`document.querySelector('.i-win #forget').click();1`);
+  check('IRC Forget token restores login and stops the skin', await ev(`!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !!document.querySelector('body > .top') && !document.body.dataset.skin`));
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));
