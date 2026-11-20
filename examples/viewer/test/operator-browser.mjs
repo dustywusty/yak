@@ -296,9 +296,59 @@ async function boardSwitchCase() {
   if(reply) await selectThread('th');
   assert(`${variant}: returning to A retains unsent draft`,await ev("document.querySelector('textarea[aria-label^=Message]').value==='unsent A draft'"));
  }
+ // OP17-005: receipts retain their original intent across invalidated views.
+ for (const cosmetic of [false,true]) for (const transition of ['board','refresh','close']) {
+  const variant = `${cosmetic?'cosmetic':'ordinary'} pending recovery after ${transition}`;
+  await freshIdentityFixture('window.__op.enableBoardSwitch();');
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-recovery';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'"); await open();
+  await ev(`window.__op.pendingFailurePath=${JSON.stringify(cosmetic?'/v1/boards/brd_test/messages/root/labels':'/v1/boards/brd_test/threads/th/messages')};document.querySelector('textarea[aria-label^=Message]').value='original A body';window.__staleWrites=[...document.querySelectorAll('.op-workspace [data-op-write]')];`);
+  if (cosmetic) { await click('Approve and unblock'); await confirm('Approve and unblock'); }
+  else await click('Send reply');
+  const retry = cosmetic?'Retry label only':'Retry same intent';
+  await until(`document.querySelector('.op-receipts').textContent.includes(${JSON.stringify(retry)})`);
+  await ev(`window.__retry=[...document.querySelectorAll('.op-pending button')].find(b=>b.textContent===${JSON.stringify(retry)});window.__originalWrite=JSON.stringify(window.__op.writes.at(-1));`);
+  assert(`${variant}: receipt identifies original destination`,await ev("document.querySelector('.op-receipts').textContent.includes(JSON.parse(window.__originalWrite).path)"));
+  const before = await count();
+  if (transition==='board') {
+   await selectBoard('brd_other'); await until("!!document.querySelector('textarea[aria-label*=brd_other]')");
+  } else if (transition==='refresh') {
+   await click('Refresh permissions and state'); await until("!!document.querySelector('[aria-label=\"Task actions\"]')");
+  } else {
+   await click('Close'); await ev("document.querySelector('#operator-tools').click()"); await until("!!document.querySelector('textarea[aria-label^=Message]')");
+  }
+  await ev("document.querySelector('textarea[aria-label^=Message]').value='new view draft';for(const b of window.__staleWrites)b.dispatchEvent(new Event('click'));");
+  assert(`${variant}: navigation and stale actions send nothing`,await count()===before && await ev("!document.querySelector('.op-confirm')"));
+  assert(`${variant}: fresh writes stay locked until explicit recovery`,await ev("[...document.querySelectorAll('.op-workspace [data-op-write]')].every(b=>b.disabled)"));
+  await ev("window.__retry.click()"); await sleep(250);
+  const recovered = await count()===before+1;
+  assert(`${variant}: explicit retry sends original destination body key and run`,recovered && await ev("JSON.stringify(window.__op.writes.at(-1))===window.__originalWrite"));
+  assert(`${variant}: receipt resolves and fresh writes unlock`,await ev("document.querySelector('.op-receipts').textContent.includes('Saved.') && [...document.querySelectorAll('.op-workspace [data-op-write]')].some(b=>!b.disabled)"));
+  assert(`${variant}: recovery does not clear replacement draft`,await ev("document.querySelector('textarea[aria-label^=Message]').value==='new view draft'"));
+  assert(`${variant}: recovery never repeats completed task step`,await ev(`window.__op.writes.filter(w=>w.path.endsWith('/unblock')).length===${cosmetic?1:0}`));
+  await ev("window.__retry.dispatchEvent(new Event('click'));for(const b of window.__staleWrites)b.dispatchEvent(new Event('click'))"); await sleep(100);
+  assert(`${variant}: settled receipt and stale actions remain inert`,await count()===(recovered?before+1:before));
+  if (recovered) {
+   const n=await count(); const reply=await ev("[...document.querySelectorAll('.op-workspace button')].some(b=>b.textContent==='Send reply')");
+   if (!reply) await ev("document.querySelector('input[aria-label^=Title]').value='new view title'");
+   await ev(`window.__op.pendingFailurePath=${JSON.stringify(transition==='board'?'/v1/boards/brd_other/threads':reply?'/v1/boards/brd_test/threads/th/messages':'/v1/boards/brd_test/threads')}`);
+   await click(reply?'Send reply':'Start thread');
+   assert(`${variant}: new write uses current destination`,await count()===n+1 && await ev(`window.__op.writes.at(-1).path.startsWith(${JSON.stringify(transition==='board'?'/v1/boards/brd_other/':'/v1/boards/brd_test/')})`));
+   await until("!![...document.querySelectorAll('.op-pending button')].find(b=>b.textContent==='Retry same intent')");
+   await ev("window.__retry=[...document.querySelectorAll('.op-pending button')].find(b=>b.textContent==='Retry same intent')");
+  }
+  // Retained receipt callbacks must also refuse after the session is replaced.
+  await ev("document.querySelector('#operator-logout').click()"); await until("!document.querySelector('#login').hidden");
+  const ended=await count(); await ev("window.__retry.dispatchEvent(new Event('click'))"); await sleep(100);
+  assert(`${variant}: ended session cannot replay receipt`,await count()===ended);
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-replacement';window.__op.revoked=false;document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  const replaced=await count(); await ev("window.__retry.dispatchEvent(new Event('click'))"); await sleep(100);
+  assert(`${variant}: replacement session cannot replay receipt`,await count()===replaced);
+ }
  assert('all retained handlers avoid browser exceptions',errors.length===0,errors.join(' | '));
  assert('required variants executed nonzero assertions',assertions>=40);
- console.log(`OP17-005 executed ${assertions} assertions across four fresh board transitions`);
+ console.log(`OP17-005 executed ${assertions} assertions across four fresh board transitions and six fresh pending-recovery fixtures`);
 }
 const operatorCases = new Map([['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;

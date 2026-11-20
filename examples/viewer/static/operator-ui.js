@@ -51,23 +51,26 @@ export function createOperatorUI({ session, read, route }) {
     source.disabled = true;
     const box = h('div', { class: 'op-pending', role: 'status' }); receipts.append(box);
     const execute = async () => {
-      if (!valid(snapshot, version)) return;
+      // A receipt owns an existing intent, independently of the visible view.
+      if (!session.active || session.ending || i.generation !== session.generation || !session.pending.has(i) || i.busy) return;
       box.replaceChildren('Sending…');
       try {
         await session.perform(i);
         if (!session.active || session.ending || i.generation !== session.generation || !i.done) return;
-        box.replaceChildren('Saved.'); source.disabled = false; done?.();
-        if (valid(snapshot, version)) await loadChannel(snapshot.channel, snapshot.thread?.id);
+        box.replaceChildren('Saved.');
+        if (valid(snapshot, version)) { source.disabled = false; done?.(); await loadChannel(snapshot.channel, snapshot.thread?.id); }
       } catch (e) {
         if (!session.active || i.generation !== session.generation) return;
         const cosmetic = i.index > 0;
         const message = e.status === 404 ? 'Item gone or hidden.' : `${e.problem?.code || 'Request failed'}: ${e.problem?.reason || e.message}${e.problem?.current_state || e.problem?.state ? `; state ${e.problem.current_state || e.problem.state}` : ''}`;
         box.replaceChildren(cosmetic ? `${i.kind === 'approve' ? 'Approved; label not updated' : 'Reply posted; label not updated'}. ${message}` : message);
+        box.append(h('p', {}, `Pending destination: ${i.steps[i.index].method} ${i.steps[i.index].path}. Retry sends the original values.`));
         const ambiguous = [0, 502, 503].includes(e.status);
         if (cosmetic || ambiguous) box.append(button(cosmetic ? 'Retry label only' : 'Retry same intent', execute));
         else {
           session.pending.delete(i); source.disabled = false;
           if ([409, 412].includes(e.status)) {
+            if (!valid(snapshot, version)) { box.append(' Return to the original destination and review its current state before confirming a new action. No retry was sent.'); return; }
             const before = i.task;
             try {
               const refreshed = await refreshTask(), after = refreshed?.task;

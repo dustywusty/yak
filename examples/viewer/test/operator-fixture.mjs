@@ -109,6 +109,7 @@ export function operatorFixture() {
       // Capture actual write destinations, without translating them to board A.
       if ((opts.method || 'GET') !== 'GET' && !u.pathname.includes('/snapshots')) {
         T.writes.push({method:opts.method,path:u.pathname,body:opts.body ? JSON.parse(opts.body) : null,headers:opts.headers});
+        if (T.pendingFailurePath === u.pathname) { T.pendingFailurePath = null; return json({code:'synthetic_ambiguous_failure'},503); }
         return json({});
       }
       const response = await base(mapped, opts);
