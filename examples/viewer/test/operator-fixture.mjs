@@ -138,6 +138,26 @@ export function operatorFixture() {
     };
   };
 
+  // OP17-021: explicit relists and actor failures without wall-clock waits.
+  T.enableFeedRetry = () => {
+    T.enableFeedPagination('retry');
+    const schedule = window.setInterval, cancel = window.clearInterval;
+    window.setInterval = (fn, ms, ...args) => {
+      if (ms === 60000) { T.relistFeed = fn; return 'OP17-021-relist'; }
+      return schedule(fn, ms, ...args);
+    };
+    window.clearInterval = id => { if (id !== 'OP17-021-relist') cancel(id); };
+    const base = T.feedApi;
+    T.feedApi = async (method, path, params, signal) => {
+      if (path.endsWith('/actors')) {
+        T.feedReads.push({method,path,params,signal});
+        const read = {params,signal}; T.actorReads.push(read);
+        return await new Promise((resolve,reject) => Object.assign(read,{resolve,reject}));
+      }
+      return base(method,path,params,signal);
+    };
+  };
+
   // OP17-006: hold each initial tools board-list read until the test settles it.
   T.enableOpenRace = () => {
     T.enableBoardSwitch();

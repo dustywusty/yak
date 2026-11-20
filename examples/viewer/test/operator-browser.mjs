@@ -745,7 +745,64 @@ async function op17009ActorPaginationCase() {
  assert('no browser exceptions',errors.length===0,errors.join(' | '));
  console.log(`OP17-009 executed ${assertions} assertions across ${fixtures} fresh actor pagination fixtures`);
 }
-const operatorCases = new Map([['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17021ActorRetryCase() {
+ let assertions = 0, fixtures = 0;
+ const assert = (name, ok) => { assertions++; check(`OP17-021: ${name}`, ok); };
+ for (const variant of ['recovery', 'persistent', 'restart', 'unauthorized', 'stale unauthorized']) {
+  await freshIdentityFixture('window.__op.enableFeedRetry();'); fixtures++;
+  try {
+   await ev(`(async()=>{
+    const {createFeed}=await import('/feed.js'); const {h}=await import('/skin-kit.js');
+    window.__op.feed=createFeed({api:window.__op.feedApi,h:(...args)=>{window.__op.feedDraws++;return h(...args)},
+      time:at=>h('time',{datetime:at},at),href:()=> '#',onTask:()=>{},onUnauthorized:()=>{window.__op.authFailures++}});
+    window.__op.feed.setVisible(true);window.__op.feed.start();
+   })()`);
+   await until("window.__op.actorReads.length===1 && !!window.__op.removeFeedBoard && document.querySelectorAll('#feed .actor').length===2");
+   await ev("window.__op.actorReads[0].reject(Object.assign(new Error('synthetic lookup failure'),{status:503}))");
+   await sleep(50);
+   assert(`${variant}: failure preserves unknown identity`,await ev("!document.querySelector('#feed').textContent.includes('@alice') && document.querySelector('#feed').textContent.includes(\"not a person's approval\")"));
+   await ev('window.__op.relistFeed()'); await sleep(50);
+   assert(`${variant}: next relist retries`,await ev('window.__op.actorReads.length===2'));
+   await ev('Promise.all([window.__op.relistFeed(),window.__op.relistFeed(),window.__op.relistFeed()])');
+   assert(`${variant}: delayed load has one traversal`,await ev('window.__op.actorReads.length===2'));
+   if (variant==='restart' || variant==='stale unauthorized') {
+    await ev('window.__op.feed.stop();window.__op.feed.start()'); await sleep(50);
+    assert(`${variant}: restart creates independent traversal`,await ev('window.__op.actorReads.length===3 && window.__op.actorReads[0].signal.aborted'));
+    await ev(`window.__op.drawsBefore=window.__op.feedDraws;window.__op.actorReads[1]?.${variant==='restart' ? "resolve({actors:[{id:'a',handle:'stale',kind:'human'}],next_page_token:'stale-page'})" : "reject(Object.assign(new Error('stale unauthorized'),{status:401}))"}`);
+    await sleep(50);
+    assert(`${variant}: old response cannot publish, paginate or log out`,await ev("window.__op.feedDraws===window.__op.drawsBefore && window.__op.actorReads.length===3 && window.__op.authFailures===0 && !document.querySelector('#feed').textContent.includes('@stale')"));
+    await ev("window.__op.actorReads.at(-1).resolve({actors:[{id:'a',handle:'alice',kind:'human'}],next_page_token:null})");
+   } else if (variant==='unauthorized') {
+    await ev("window.__op.actorReads[1]?.reject(Object.assign(new Error('unauthorized'),{status:401}))"); await sleep(50);
+    assert('unauthorized: uses existing unauthorized path once',await ev('window.__op.authFailures===1'));
+   } else if (variant==='persistent') {
+    await ev("window.__op.actorReads[1]?.reject(new TypeError('offline'))"); await sleep(50);
+    await ev('window.__op.relistFeed()'); await sleep(50);
+    assert('persistent: later relist retries again',await ev('window.__op.actorReads.length===3'));
+    await ev("window.__op.actorReads[2]?.reject(Object.assign(new Error('still offline'),{status:503}))"); await sleep(50);
+    assert('persistent: never invents human identity or approval',await ev("!document.querySelector('#feed').textContent.includes('(human)') && document.querySelector('#feed').textContent.includes(\"not a person's approval\")"));
+   } else {
+    await ev("window.__op.actorReads[1]?.resolve({actors:[{id:'bot',handle:'bot',kind:'agent'}],next_page_token:'retry-page-two'})"); await sleep(50);
+    assert('recovery: retry uses paginated loader',await ev("window.__op.actorReads.length===3 && window.__op.actorReads[2].params.page_token==='retry-page-two'"));
+    await ev("window.__op.actorReads[2]?.resolve({actors:[{id:'a',handle:'alice',kind:'human'}],next_page_token:null})"); await sleep(50);
+    assert('recovery: past event redraws human and correct gate interpretation',await ev("[...document.querySelectorAll('#feed li')].some(li=>li.textContent.includes('@alice (human)') && !li.textContent.includes(\"not a person's approval\") && li.textContent.includes('synthetic-page-credential'))"));
+    await ev('window.__op.relistFeed()');
+    assert('recovery: complete directory does not reload',await ev('window.__op.actorReads.length===3'));
+   }
+   if (!variant.includes('restart') && variant!=='stale unauthorized') {
+    assert(`${variant}: event loop and cursor preserved`,await ev("window.__op.feedReads.filter(r=>r.path.endsWith('/events')).length===2 && window.__op.feedReads.filter(r=>r.path.endsWith('/events'))[1].params.cursor==='feed-cursor' && window.__op.actorReads.every(r=>r.signal===window.__op.feedReads[0].signal)"));
+   }
+   assert(`${variant}: no writes`,await count()===0);
+  } finally {
+   await ev('window.__op.feed?.stop()');
+   assert(`${variant}: cleanup aborts all traversals`,await ev('window.__op.actorReads.every(r=>r.signal.aborted) && window.__op.writes.length===0'));
+  }
+ }
+ assert('all five fixtures executed',fixtures===5 && assertions>=35);
+ assert('no browser exceptions',errors.length===0);
+ console.log(`OP17-021 executed ${assertions} assertions across ${fixtures} fresh actor retry fixtures`);
+}
+const operatorCases = new Map([['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

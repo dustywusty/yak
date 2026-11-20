@@ -46,34 +46,47 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
     const signal = F.abort?.signal;
     try {
       const { boards } = await api('GET', '/v1/boards', {}, signal);
+      if (!signal || signal.aborted || F.abort?.signal !== signal) return;
       for (const b of boards) {
         const rec = F.boards.get(b.id);
-        if (rec) { rec.board = b; continue; }
-        const r = { board: b, actors: new Map(), titles: new Map(), cursor: null, state: 'connecting' };
+        if (rec) {
+          rec.board = b;
+          if (rec.actorsState === 'failed' || rec.actorsState === 'incomplete') loadActors(rec, signal);
+          continue;
+        }
+        const r = { board: b, actors: new Map(), actorsState: 'incomplete', titles: new Map(), cursor: null, state: 'connecting' };
         F.boards.set(b.id, r);
         loadActors(r, signal);
         loop(r, signal);
       }
       renderBoardFilter();
     } catch (e) {
-      if (e.status === 401) onUnauthorized();
+      if (signal && !signal.aborted && F.abort?.signal === signal && e.status === 401) onUnauthorized();
     }
   }
 
   async function loadActors(rec, signal) {
+    if (rec.actorsState === 'loading') return;
+    rec.actorsState = 'loading';
+    const active = () => !signal.aborted && F.boards.get(rec.board.id) === rec && F.abort?.signal === signal;
     try {
       const actors = new Map();
       let pageToken;
       do {
-        if (signal.aborted || F.boards.get(rec.board.id) !== rec || F.abort?.signal !== signal) return;
+        if (!active()) return;
         const page = await api('GET', `/v1/boards/${enc(rec.board.id)}/actors`, { limit: 200, page_token: pageToken }, signal);
         for (const actor of page.actors) actors.set(actor.id, actor);
         pageToken = page.next_page_token;
       } while (pageToken);
-      if (signal.aborted || F.boards.get(rec.board.id) !== rec || F.abort?.signal !== signal) return;
+      if (!active()) return;
       rec.actors = actors;
+      rec.actorsState = 'complete';
       render();
-    } catch { /* fall back to short IDs */ }
+    } catch (e) {
+      if (!active()) return;
+      rec.actorsState = 'failed'; // unresolved IDs remain unknown until a later relist succeeds
+      if (e.status === 401) onUnauthorized();
+    }
   }
 
   async function loop(rec, signal) {
