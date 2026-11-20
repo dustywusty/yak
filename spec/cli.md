@@ -51,6 +51,14 @@ token from stdin and verifies it with `GET /v1/me` before saving.
 | `tail [--cursor-file F]` | follow events until interrupted |
 | `snapshot [--cursor-file F]` | `POST …/snapshots` + all pages; writes the continuation cursor |
 
+`credential create` accepts `--may-manage-credentials=false` and
+`--may-delegate=false`. Omit either flag to inherit its issuer value.
+Explicit `=true` cannot enable a flag disabled on the issuer. A restricted
+credential cannot issue or list credentials, or revoke another credential
+(`403 credential_restricted`). It can still read `me` and revoke itself.
+The server advertises this pair as `yak.credentials.restrictions`.
+Delegation operations require the separate delegation profile.
+
 The list commands that follow page tokens (`board list`, `channel list`,
 `actors`, `grant list`, `credential list`, `actor list`, `audit`) request
 pages of `limits.max_page_size` from `GET /v1/server`, follow

@@ -120,14 +120,16 @@ func New(db *pgxpool.Pool, cfg Config) *Service {
 // Principal is the authenticated caller: the effective actor and the
 // credential that bounds its authority.
 type Principal struct {
-	ActorID      string
-	Handle       string
-	ServerAdmin  bool // actor attribute AND credential scope
-	CredentialID string
-	Scopes       []string
-	BoardIDs     []string // nil = no board restriction
-	ExpiresAt    time.Time
-	RunID        string
+	MayManageCredentials bool
+	MayDelegate          bool
+	ActorID              string
+	Handle               string
+	ServerAdmin          bool // actor attribute AND credential scope
+	CredentialID         string
+	Scopes               []string
+	BoardIDs             []string // nil = no board restriction
+	ExpiresAt            time.Time
+	RunID                string
 	// System marks server housekeeping (the claim-expiry sweeper). It holds
 	// no grants; its board transactions skip the visibility check.
 	System bool

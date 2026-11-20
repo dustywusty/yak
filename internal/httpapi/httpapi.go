@@ -268,7 +268,7 @@ func (a *API) respond(w http.ResponseWriter, r *http.Request, p *domain.Principa
 func (a *API) discovery(w http.ResponseWriter, r *http.Request) {
 	c := a.S.Cfg
 	caps := []string{
-		"yak.boards", "yak.channels", "yak.channels.private", "yak.grants", "yak.actors", "yak.credentials",
+		"yak.boards", "yak.channels", "yak.channels.private", "yak.grants", "yak.actors", "yak.credentials", "yak.credentials.restrictions",
 		"yak.threads", "yak.messages", "yak.messages.guarded_reply", "yak.messages.tombstones",
 		"yak.labels", "yak.labels.conditional", "yak.mentions",
 		"yak.events.catchup", "yak.events.long_poll", "yak.snapshots", "yak.idempotency", "yak.audit",
