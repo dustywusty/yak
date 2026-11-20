@@ -123,6 +123,12 @@ func allowedRoute(method, path string, operator bool) bool {
 	re := operatorRoutes[method]
 	return operator && re != nil && re.MatchString(path)
 }
+func setResponseHeaders(h http.Header) {
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+}
+
 func viewerHandler(target *url.URL, operator bool) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -131,11 +137,16 @@ func viewerHandler(target *url.URL, operator bool) http.Handler {
 			r.SetURL(target)
 			r.Out.Header.Del("Cookie")
 		},
-		ModifyResponse: func(r *http.Response) error { r.Header.Del("Set-Cookie"); return nil },
+		ModifyResponse: func(r *http.Response) error {
+			r.Header.Del("Set-Cookie")
+			setResponseHeaders(r.Header)
+			return nil
+		},
 		// Flush at once so long-poll responses are not held back.
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("viewer: upstream %s %s %d", r.Method, r.URL.Path, http.StatusBadGateway)
+			setResponseHeaders(w.Header())
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"type":"about:blank","title":"Bad Gateway","status":502,` +
@@ -165,6 +176,11 @@ func viewerHandler(target *url.URL, operator bool) http.Handler {
 			}
 			return
 		}
+		// ReverseProxy appends upstream headers. Let ModifyResponse (or the
+		// ErrorHandler) supply exactly one copy of each required header.
+		for _, name := range []string{"X-Frame-Options", "X-Content-Type-Options", "Referrer-Policy"} {
+			w.Header().Del(name)
+		}
 		proxy.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/viewer-config", func(w http.ResponseWriter, r *http.Request) {
@@ -184,12 +200,12 @@ func viewerHandler(target *url.URL, operator bool) http.Handler {
 		}
 		h := w.Header()
 		h.Set("Content-Security-Policy", csp)
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	})
 
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setResponseHeaders(w.Header())
+		mux.ServeHTTP(w, r)
+	})
 }

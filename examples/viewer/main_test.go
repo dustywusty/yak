@@ -228,3 +228,105 @@ func TestOP17001(t *testing.T) {
 		}
 	}
 }
+
+// TestOP17002 covers response-wide headers on local, proxy and error branches.
+func TestOP17002(t *testing.T) {
+	required := map[string]string{
+		"X-Frame-Options":        "DENY",
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy":        "no-referrer",
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cookie") != "" {
+			t.Error("request cookie forwarded")
+		}
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("X-Content-Type-Options", "unsafe")
+		w.Header().Set("Referrer-Policy", "unsafe-url")
+		w.Header().Set("Set-Cookie", "synthetic=refused")
+		w.Header().Set("Cache-Control", "private, max-age=17")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	target, _ := url.Parse(upstream.URL)
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadTarget, _ := url.Parse(unavailable.URL)
+	unavailable.Close()
+	cases := []struct {
+		name, method, path string
+		status             int
+		page, dead         bool
+	}{
+		{"config", "GET", "/viewer-config", 200, false, false},
+		{"upstream-hostile-headers", "GET", "/v1/me", 200, false, false},
+		{"denied-write", "POST", "/v1/delegations", 0, false, false},
+		{"foreign-write", "POST", "/v1/boards/b/snapshots", 403, false, false},
+		{"missing-static", "GET", "/missing-op17002.txt", 404, true, false},
+		{"static-non-get", "POST", "/", 405, false, false},
+		{"unreachable", "GET", "/v1/me", 502, false, true},
+		{"page", "GET", "/", 200, true, false},
+		{"static", "GET", "/app.js", 200, true, false},
+	}
+	assertions := 0
+	for _, operator := range []bool{false, true} {
+		mode := "readonly"
+		if operator {
+			mode = "operator"
+		}
+		for _, tc := range cases {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				selectedTarget := target
+				if tc.dead {
+					selectedTarget = deadTarget
+				}
+				r := httptest.NewRequest(tc.method, "http://localhost"+tc.path, nil)
+				r.Header.Set("Cookie", "synthetic=refused")
+				if tc.name == "foreign-write" {
+					r.Header.Set("Origin", "https://synthetic.invalid")
+				}
+				w := httptest.NewRecorder()
+				viewerHandler(selectedTarget, operator).ServeHTTP(w, r)
+				result := w.Result()
+				defer result.Body.Close()
+				status := tc.status
+				if status == 0 {
+					status = 405
+					if operator {
+						status = 403
+					}
+				}
+				assertions++
+				if result.StatusCode != status {
+					t.Errorf("status = %d, want %d", result.StatusCode, status)
+				}
+				for name, want := range required {
+					assertions++
+					values := result.Header.Values(name)
+					if len(values) != 1 || values[0] != want {
+						t.Errorf("%s = %q, want exactly [%q]", name, values, want)
+					}
+				}
+				assertions++
+				if result.Header.Get("Set-Cookie") != "" {
+					t.Error("response cookie accepted")
+				}
+				if tc.page {
+					assertions++
+					if got := result.Header.Get("Content-Security-Policy"); got != csp {
+						t.Errorf("CSP = %q, want %q", got, csp)
+					}
+				}
+				if tc.name == "upstream-hostile-headers" {
+					assertions++
+					if got := result.Header.Get("Cache-Control"); got != "private, max-age=17" {
+						t.Errorf("API caching changed: %q", got)
+					}
+				}
+			})
+		}
+	}
+	if assertions == 0 {
+		t.Fatal("no header assertions executed")
+	}
+	t.Logf("OP17-002 executed %d response assertions across %d cases", assertions, len(cases)*2)
+}
