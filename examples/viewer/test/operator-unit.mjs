@@ -1,4 +1,4 @@
-import { op17020Cases, op17042ClaimCorpus } from './operator-fixture.mjs';
+import { op17020Cases, op17042ClaimCorpus, op17032Clock, operatorFixture } from './operator-fixture.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { op17036Cases } from './operator-fixture.mjs';
@@ -50,16 +50,6 @@ test('approval comes from direct known human event after latest block only',()=>
 test('412 is a known rejection, same confirmed revision is never replaced',async()=>{
  const seen=[];const s=new OperatorSession({send:async(m,p,b,h)=>{seen.push(h);throw Object.assign(new Error('stale'),{status:412,problem:{revision:9}})}});s.start(me(),server,now);
  const i=s.intent(taskIntent('flag','/v1/boards/b',{id:'t',revision:2},{value:true}));await assert.rejects(s.perform(i));assert.equal(seen.length,1);assert.equal(seen[0]['If-Match'],'"2"');s.send=async()=>{};await s.end();
-});
-test('renewal retries receipt without extending local deadline from replay time',async()=>{
- let mono=0,fail=true;const keys=[];
- const s=new OperatorSession({mono:()=>mono,schedule:()=>0,send:async(m,p,b,h)=>{if(p.endsWith('/renew')){keys.push(h['Idempotency-Key']);if(fail){fail=false;mono=4000;throw Object.assign(new Error('network'),{status:0})}}return {}}});s.start(me(),server,now);
- s.hold('/v1/boards/b/tasks/t',{claim:{id:'q',lease_seconds:30},proof:'secret'});const c=s.claims.values().next().value;
- await s.renew('/v1/boards/b/tasks/t',c);mono=7000;await s.renew('/v1/boards/b/tasks/t',c);
- assert.equal(keys[0],keys[1]);assert.equal(c.deadline,30000);await s.end();
-});
-test('terminal renew failure drops proof and stops renewal',async()=>{
- const s=new OperatorSession({schedule:()=>0,send:async()=>{throw Object.assign(new Error('lost'),{status:409})}});s.start(me(),server,now);s.hold('/v1/boards/b/tasks/t',{claim:{id:'q',lease_seconds:300},proof:'secret'});const c=s.claims.values().next().value;await s.renew('/v1/boards/b/tasks/t',c);assert.equal(c.proof,null);assert.equal(s.claims.size,0);s.send=async()=>{};await s.end();
 });
 test('401 ends once without release or revoke retry; revoke failure clears memory',async()=>{
  const calls=[];const s=new OperatorSession({send:async(m,p)=>{calls.push(p);throw Object.assign(new Error('unauthenticated'),{status:401})}});s.start(me(),server,now);await assert.rejects(s.perform(s.intent({steps:[{method:'POST',path:'/v1/boards/b/threads',body:{}}]})));assert.equal(s.active,false);assert.equal(calls.length,1);assert.equal(s.me,null);
@@ -523,7 +513,10 @@ test('OP17-044 fixture validates captured production wire artifacts',async()=>{
  const {runInNewContext}=await import('node:vm');
  const freshFixture=()=>{const window={};runInNewContext(`(${operatorFixture})()`,{window,location:{href:'http://synthetic/'},Response,URL,Date,setTimeout,DOMException});return window;};
  const requests=await emitOperatorWire();assert.equal(requests.length,13);
- for(const r of requests){const window=freshFixture();const response=await window.fetch(r.path,{method:r.method,body:JSON.stringify(r.body),headers:r.headers});assert.ok(response.ok,`${r.method} ${r.path}: ${response.status}`);
+ for(const r of requests){const window=freshFixture();
+  // Renewal artifacts require the claim/proof they were captured against.
+  if(r.path.endsWith('/renew')){window.__op.claimProof=r.headers['Yak-Claim-Proof'];await window.fetch('/v1/boards/brd_test/tasks/t/claims',{method:'POST',body:JSON.stringify({lease_seconds:300}),headers:{}});}
+  const response=await window.fetch(r.path,{method:r.method,body:JSON.stringify(r.body),headers:r.headers});assert.ok(response.ok,`${r.method} ${r.path}: ${response.status}`);
   const data=await response.json();
   if(r.path.endsWith('/tasks')){assert.equal(data.title,'Wire task');assert.equal(data.direct_action_required,r.body.direct_action_required);assert.equal(data.assignee_actor_id,r.body.assignee_actor_id);assert.equal(window.__op.created.thread.channel_path,'ops');assert.equal(window.__op.created.root.text,'Wire brief');}
   if(r.path.endsWith('/renew')){assert.equal(data.status,'active');assert.equal(data.lease_seconds,300);assert.ok(data.expires_at);}
@@ -543,4 +536,88 @@ test('OP17-044 fixture validates captured production wire artifacts',async()=>{
   if(wrapped)window.__op.enableBoardSwitch();
   for(const [r,status] of rejected)assert.equal((await window.fetch(r.path,{method:r.method,body:JSON.stringify(r.body),headers:r.headers||{}})).status,status,`${wrapped?'board-switch wrapper: ':''}${JSON.stringify(r)}`);
  }
+});
+
+// OP17-032: exercise the actual renewal callback, never call renew() manually.
+function op17032Session(send) {
+ const clock = op17032Clock(), calls = [], path = '/v1/boards/b/tasks/t';
+ const s = new OperatorSession({ mono: clock.now, schedule: clock.schedule, unschedule: clock.unschedule,
+  send: async (...args) => { calls.push({ args, at: clock.now() }); return send(...args); } });
+ s.start(me(), server, now);
+ s.hold(path, {claim:{id:'q',lease_seconds:30},proof:'synthetic-proof'});
+ return { s, clock, calls, path, c: s.claims.get(path) };
+}
+function op17032View(clock, edits = {}) {
+ const view = {...op17042ClaimCorpus[0], ...edits};
+ Object.defineProperty(view, '__responseTiming', {value:{serverDate:op17042Date,requestMono:clock.now()}});
+ return view;
+}
+test('OP17-032 automatic cadence, new keys, and transport retry keeps original start', async () => {
+ let fixture, fail = false;
+ fixture = op17032Session(async () => { if (fail) { fail=false; throw Object.assign(new Error('transport lost'), {status:0}); } return op17032View(fixture.clock); });
+ const {s,clock,c,calls,path}=fixture;
+ try {
+  const first=[...clock.timers.values()][0];
+  assert.ok(first, 'claim installs an executable timer');
+  assert.ok(first.delay>=9000 && first.delay<=11000, 'one-third lease with production jitter');
+  await clock.advance(first.delay-1); assert.equal(calls.length,0);
+  await clock.advance(1); assert.equal(calls.length,1); assert.equal(clock.timers.size,1);
+  assert.equal(calls[0].args[0],'POST');assert.equal(calls[0].args[1],path+'/claims/q/renew');
+  assert.deepEqual(calls[0].args[2],{lease_seconds:30});
+  assert.equal(calls[0].args[3]['Yak-Claim-Proof'],'synthetic-proof');assert.equal(calls[0].args[3]['Yak-Run-Id'],s.run);
+  const second=[...clock.timers.values()][0];assert.ok(second.delay>=9000 && second.delay<=11000);
+  fail=true;await clock.advance(second.delay);assert.equal(calls.length,2);
+  const started=c.started, deadline=c.deadline, key=c.key;
+  assert.equal(started,calls[1].at);assert.ok(key);assert.notEqual(key,calls[0].args[3]['Idempotency-Key']);
+  assert.equal(deadline,calls[0].at+29000); // Date precision reserve.
+  await clock.advance(1000);assert.equal(calls.length,3);
+  assert.equal(calls[2].args[3]['Idempotency-Key'],key);assert.equal(c.started,started);
+  assert.equal(c.deadline,started+30000);assert.equal(c.key,null);assert.equal(clock.timers.size,1);
+  await clock.advance([...clock.timers.values()][0].delay);assert.equal(calls.length,4);
+  assert.notEqual(calls[3].args[3]['Idempotency-Key'],key);
+ } finally {await s.end({unauthorized:true});}
+});
+for (const outcome of [403,404,409,...op17042ClaimCorpus.slice(1).map(v=>v.status),'deadline']) {
+ test(`OP17-032 automatic ${outcome} stops timer and drops proof`, async () => {
+  let fixture;
+  fixture=op17032Session(async()=>{if(typeof outcome==='number'||outcome==='deadline')throw Object.assign(new Error('failure'),{status:outcome==='deadline'?0:outcome});return op17032View(fixture.clock,{status:outcome});});
+  const {s,clock,c,calls}=fixture;
+  try {
+   await clock.advance(outcome==='deadline'?30001:11000);
+   assert.ok(calls.length>0);assert.equal(c.proof,null);assert.equal(s.claims.size,0);assert.equal(clock.timers.size,0);assert.match(s.notice,/Your claim ended/);
+   const before=calls.length;await clock.advance(60000);assert.equal(calls.length,before);
+  }finally{await s.end({unauthorized:true});}
+ });
+}
+for (const end of [{}, {keepalive:true}]) test(`OP17-032 ${end.keepalive?'unmount':'logout'} cancels queued renewal`,async()=>{
+ const {s,clock,c,calls}=op17032Session(async()=>({}));
+ await s.end(end);assert.equal(c.proof,null);assert.equal(clock.timers.size,0);
+ assert.deepEqual(calls.map(c=>c.args[1]),['/v1/boards/b/tasks/t/release','/v1/credentials/c']);
+ await clock.advance(60000);assert.equal(calls.length,2);
+});
+
+test('OP17-032 fixture renew validates proof and lease and returns ClaimView',async()=>{
+ const {runInNewContext}=await import('node:vm');
+ const window={};runInNewContext(`(${operatorFixture.toString()})()`,{window,location:{href:'http://synthetic.invalid/'},URL,Response,Date,setTimeout,DOMException});
+ const path='/v1/boards/brd_test/tasks/t/claims';
+ const send=(suffix,body,proof='fake-secret-proof',method='POST')=>window.fetch(path+suffix,{method,body:JSON.stringify(body),headers:{'Yak-Claim-Proof':proof}});
+ await send('',{lease_seconds:30});
+ for(const [suffix,body,proof,method,status] of [
+  ['/q/renew',{lease_seconds:30},'', 'POST',428],
+  ['/q/renew',{lease_seconds:30},'wrong','POST',403],
+  ['/q/renew',{lease_seconds:1},undefined,'POST',400],
+  ['/q/renew',{lease_seconds:301},undefined,'POST',400],
+  ['/q/renew',{lease_seconds:30.5},undefined,'POST',400],
+  ['/q/renew',{lease_seconds:30,extra:true},undefined,'POST',400],
+  ['/q/renew',null,undefined,'POST',400],
+  ['/missing/renew',{lease_seconds:30},undefined,'POST',404],
+  ['/q/renew',{lease_seconds:30},undefined,'PUT',405],
+ ]) {
+  const response=await send(suffix,body,proof,method);assert.equal(response.status,status,JSON.stringify({suffix,body,proof,method}));
+  if(status!==405)assert.ok(Object.keys(await response.json()).length>0);
+ }
+ const response=await send('/q/renew',{lease_seconds:30});assert.equal(response.status,200);
+ const view=await response.json();assert.equal(view.id,'q');assert.equal(view.status,'active');assert.equal(view.lease_seconds,30);
+ assert.ok(Date.parse(view.expires_at)>Date.parse(view.acquired_at));assert.equal(view.ended_at,null);assert.equal(view.end_recorded_at,null);
+ window.__op.task.current_claim=null;assert.equal((await send('/q/renew',{lease_seconds:30})).status,409);
 });

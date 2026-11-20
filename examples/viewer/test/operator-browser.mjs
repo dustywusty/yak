@@ -14,7 +14,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 if (!CHROME && !process.env.VIEWER_PREVIEW) { console.error('Chrome not found; set CHROME=/path/to/chrome'); process.exit(2); }
 
-import { operatorFixture, op17036Cases, op17020Cases, op17042ClaimCorpus } from './operator-fixture.mjs';
+import { operatorFixture, op17032Clock, op17036Cases, op17020Cases, op17042ClaimCorpus } from './operator-fixture.mjs';
 // ---------- static server and Chrome ----------
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname.replace(/^\/$/, '/index.html');
@@ -401,6 +401,64 @@ async function responseBodyFailureCase() {
  }
  assert('browser has no exceptions', errors.length === 0);
  console.log(`OP17-029 executed ${assertions} assertions across six fresh body-failure fixtures`);
+}
+async function op17032AutomaticRenewalCase() {
+ let assertions=0, fixtures=0;
+ const assert=(name,ok)=>{assertions++;check(`OP17-032: ${name}`,ok)};
+ const variants=['success','retry',403,404,409,...op17042ClaimCorpus.slice(1).map(v=>v.status),'deadline','logout','unmount'];
+ for(const variant of variants) {
+  await freshIdentityFixture(`window.__op.task.state='ready';window.__op.testLease=30;window.__op.clock=(${op17032Clock.toString()})();Object.defineProperty(performance,'now',{configurable:true,value:window.__op.clock.now});window.setTimeout=window.__op.clock.schedule;window.clearTimeout=window.__op.clock.unschedule;`);fixtures++;
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-auto-renew';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");await open();
+   await click('Work on this now (while this tab is open)');await confirm('Claim');
+   const delay=await ev('[...window.__op.clock.timers.values()].map(t=>t.delay).find(ms=>ms>=9000 && ms<=11000)');
+   assert(`${variant}: actual timer uses lease/3 jitter`,delay>=9000 && delay<=11000);
+   await until("document.querySelector('.op-lease').textContent.includes('30 seconds remaining')");
+   assert(`${variant}: visible held lease`,await ev("document.querySelector('.op-lease').textContent.includes('30 seconds remaining')"));
+   if(variant==='success') {
+    const invalid=await ev(`(async()=>{const send=(body,proof,path='q')=>fetch('/v1/boards/brd_test/tasks/t/claims/'+path+'/renew',{method:'POST',body:JSON.stringify(body),headers:{'Yak-Claim-Proof':proof}}).then(async r=>({status:r.status,body:await r.json()}));return Promise.all([send({lease_seconds:30},''),send({lease_seconds:30},'wrong-proof'),send({lease_seconds:1},'fake-secret-proof'),send({lease_seconds:30,extra:true},'fake-secret-proof'),send({lease_seconds:30},'fake-secret-proof','missing')]);})()`);
+    assert('malformed fixture renewals reject without empty success',JSON.stringify(invalid.map(x=>x.status))==='[428,403,400,400,404]' && invalid.every(x=>Object.keys(x.body).length>0));
+    await ev('window.__op.writes=[]');
+   }
+   if(variant==='logout'||variant==='unmount') {
+    if(variant==='logout')await ev("document.querySelector('#operator-logout').click()");
+    else await ev("window.dispatchEvent(new Event('pagehide'))");
+    await until('!document.body.dataset.operator');
+    await ev('window.__op.clock.advance(60000)');
+    assert(`${variant}: no later renew and release precedes revoke`,await ev("!window.__op.writes.some(w=>w.path.endsWith('/renew')) && window.__op.writes.at(-2).path.endsWith('/release') && window.__op.writes.at(-1).method==='DELETE'"));
+    continue;
+   }
+   await ev(`{const base=window.fetch;window.__op.renewAttempts=0;window.fetch=async(url,opts={})=>{if(new URL(url,location.href).pathname.endsWith('/renew')){window.__op.renewAttempts++;${variant==='retry'?"if(window.__op.renewAttempts===1){await base(url,opts);throw new TypeError('synthetic lost response')}" : variant==='deadline'?"await base(url,opts);throw new TypeError('synthetic disconnected')" : typeof variant==='number'?`await base(url,opts);return Response.json({code:'claim_lost'},{status:${variant}})` : ''}}return base(url,opts);};}`);
+   if(op17042ClaimCorpus.some(v=>v.status===variant))await ev(`window.__op.renewReply=${JSON.stringify(op17042ClaimCorpus.find(v=>v.status===variant))}`);
+   await ev(`window.__op.clock.advance(${delay}-1)`);
+   assert(`${variant}: no renewal before scheduled deadline`,await ev('window.__op.renewAttempts===0'));
+   await ev('window.__op.clock.advance(1)');
+   assert(`${variant}: crossing timer invokes route with lease proof run and key`,await ev("window.__op.writes.filter(w=>w.path.endsWith('/renew')).length===1 && (()=>{const w=window.__op.writes.at(-1);return w.method==='POST' && w.path==='/v1/boards/brd_test/tasks/t/claims/q/renew' && JSON.stringify(w.body)==='{\"lease_seconds\":30}' && w.headers['Yak-Claim-Proof']==='fake-secret-proof' && w.headers['Yak-Run-Id'].startsWith('operator/') && /^[a-f0-9]{32}$/.test(w.headers['Idempotency-Key']);})()"));
+   if(variant==='success'||variant==='retry') {
+    if(variant==='retry') {
+     await ev('window.__op.clock.advance(1000)');
+     assert('transport loss retry preserves key and run',await ev("(()=>{const w=window.__op.writes.filter(w=>w.path.endsWith('/renew'));return w.length===2 && JSON.stringify(w[0].headers)===JSON.stringify(w[1].headers)})()"));
+    }
+    await sleep(1050);
+    assert(`${variant}: renewed visible time is conservative`,await ev("/(?:29|30) seconds remaining/.test(document.querySelector('.op-lease').textContent)"));
+    const next=await ev('[...window.__op.clock.timers.values()].find(t=>t.delay>=9000 && t.delay<=11000)?.at-window.__op.clock.now()');
+    await ev(`window.__op.clock.advance(${next})`);
+    assert(`${variant}: subsequent automatic renewal uses new key`,await ev("(()=>{const w=window.__op.writes.filter(w=>w.path.endsWith('/renew'));return w.length>=2 && w.at(-1).headers['Idempotency-Key']!==w.at(-2).headers['Idempotency-Key']})()"));
+   } else {
+    if(variant==='deadline')await ev('window.__op.clock.advance(30001-window.__op.clock.now())');
+    await sleep(1050);
+    assert(`${variant}: claim ended visibly`,await ev("document.querySelector('.op-lease').textContent.includes('Your claim ended') && document.querySelector('#operator-identity').textContent.includes('Your claim ended')"));
+    const before=await ev('window.__op.renewAttempts');await ev('window.__op.clock.advance(60000)');
+    assert(`${variant}: no timer continues after loss`,await ev('window.__op.renewAttempts')===before);
+    await ev("document.querySelector('#operator-logout').click()");await until('!document.body.dataset.operator');
+    assert(`${variant}: dropped proof cannot be released`,await ev("!window.__op.writes.some(w=>w.path.endsWith('/release'))"));
+   }
+  } finally {await ev("document.querySelector('#operator-logout')?.click()");}
+ }
+ assert('no browser exceptions',errors.length===0);
+ if(fixtures!==13 || assertions<70)throw new Error(`OP17-032 incomplete coverage: ${fixtures} fixtures, ${assertions} assertions`);
+ console.log(`OP17-032 executed ${assertions} assertions across ${fixtures} fresh automatic-renewal fixtures`);
 }
 async function renewalClaimViewCase() {
  let assertions = 0;
@@ -1456,7 +1514,7 @@ async function op17044WireCase() {
  if(assertions!==10)throw new Error(`OP17-044 executed ${assertions}, expected 10`);
  console.log(`OP17-044 executed ${assertions} assertions across two fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

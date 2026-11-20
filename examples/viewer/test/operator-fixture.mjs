@@ -1,3 +1,30 @@
+// OP17-032: execute callbacks in monotonic deadline order, including newly queued work.
+export function op17032Clock() {
+  let now = 0, next = 0;
+  const timers = new Map();
+  return {
+    now: () => now,
+    timers,
+    schedule(fn, ms, ...args) {
+      const id = ++next;
+      timers.set(id, { at: now + Number(ms), fn: () => fn(...args), delay: Number(ms) });
+      return id;
+    },
+    unschedule: id => timers.delete(id),
+    async advance(ms) {
+      const end = now + ms; let fired = 0;
+      for (;;) {
+        const entry = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at || a[0] - b[0])[0];
+        if (!entry) break;
+        if (++fired > 10000) throw new Error('OP17-032 timer queue did not converge');
+        const [id, t] = entry; timers.delete(id); now = t.at;
+        await t.fn();
+      }
+      now = end;
+      return fired;
+    },
+  };
+}
 // OP17-020: ordinary and gate unblocks with explicit event-time evidence.
 export function op17020Cases() {
   const event = (type = 'task.unblocked', flag = true, extra = {}) => ({
@@ -22,7 +49,7 @@ export function op17020Cases() {
 export const op17042ClaimCorpus = [{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"active","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":null,"end_recorded_at":null},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"released","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"expired","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"completed","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"failed","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"},{"id":"q","task_id":"t","actor_id":"a","execution_id":"exec","run_id":null,"epoch":1,"brief_revision":1,"status":"revoked","revision":2,"lease_seconds":30,"acquired_at":"2026-11-20T00:00:00Z","expires_at":"2026-11-20T00:00:30Z","ended_at":"2026-11-20T00:00:10Z","end_recorded_at":"2026-11-20T00:00:10Z"}];
 // Disposable in-page API. No real token, server, board or task is touched.
 export function operatorFixture() {
-  const B='brd_test',now=Date.now(),iso=()=>new Date().toISOString();
+  const B='brd_test',now=Date.now(),iso=()=>new Date(Date.now()+(window.__op?.clock?.now() || 0)).toISOString();
   const fixtureTimeout = (window.setTimeout || setTimeout).bind(window);
   // Snapshot creation and store polling share a signal; the feed owns another.
   let snapshotSignal = null;
@@ -31,7 +58,7 @@ export function operatorFixture() {
   const task={id:'t',board_id:B,thread_id:'th',channel_path:'ops',title:thread.title,owner_actor_id:'a',assignee_actor_id:null,current_claim:null,revision:3,brief_revision:1,state:'blocked',direct_action_required:true,block:{reason:'waiting for review'},dependencies:[],created_at:iso(),state_changed_at:iso()};
   const root={id:'root',thread_id:'th',channel_path:'ops',seq:1,is_root:true,author_actor_id:'a',created_at:iso(),revision:1,text:'<script>window.pwned=1</script>',mentions:[],labels:thread.labels,attribution:{credential_id:'cred_test'}};
   const T=window.__op={writes:[],task,thread,root,events:[],expired:false,failLabel:0,conflict:false,dropUnblock:false,seenKeys:[],revoked:false,kind:'human',scope:null,flags:true,resync:false,snapshots:0,authFailures:0};
-  const json=(b,status=200)=>new Response(status===204?null:JSON.stringify(b),{status,headers:{Date:T.renewDate || new Date().toUTCString(),'Content-Type':'application/json'}});
+  const json=(b,status=200)=>new Response(status===204?null:JSON.stringify(b),{status,headers:{Date:T.renewDate || new Date(Date.now()+(T.clock?.now() || 0)).toUTCString(),'Content-Type':'application/json'}});
   window.fetch=async(url,opts={})=>{
     const u=new URL(url,location.href),p=u.pathname,m=opts.method||'GET';
     if(p==='/viewer-config')return json({operator:true});
@@ -124,15 +151,17 @@ export function operatorFixture() {
       if(T.failLabel){T.failLabel--;return json({code:'revision_conflict',key:'gate',current:root.labels.gate ?? null},412)}
       for(const op of body.operations) {const key=op.key.toLowerCase();if(op.op==='unset')delete root.labels[key];else root.labels[key]=op.value;}return json(root);
     }
-    if(p===`/v1/boards/${B}/tasks/t/claims`){if(m!=='POST')return json({},405);if(!only(body,['lease_seconds','expect_brief_revision'])||!lease())return invalid();task.state='claimed';task.current_claim={id:T.claimId || 'q',actor_id:'a',lease_seconds:T.testLease || 300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:'fake-secret-proof',task,brief:{revision:1}})}
+    if(p===`/v1/boards/${B}/tasks/t/claims`){if(m!=='POST')return json({},405);if(!only(body,['lease_seconds','expect_brief_revision'])||!lease())return invalid();task.state='claimed';task.current_claim={id:T.claimId || 'q',actor_id:'a',lease_seconds:T.testLease || 300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:T.claimProof || 'fake-secret-proof',task,brief:{revision:1}})}
     if(p===`/v1/boards/${B}/tasks/t/claims/${encodeURIComponent(T.claimId || 'q')}/renew`) {
       if(m!=='POST')return json({},405);
       if(!opts.headers?.['Yak-Claim-Proof'])return json({code:'precondition_required'},428);
       if(!only(body,['lease_seconds'])||!lease())return invalid();
+      if(opts.headers['Yak-Claim-Proof']!==(T.claimProof || 'fake-secret-proof'))return json({code:'forbidden'},403);
+      if(!task.current_claim || task.current_claim.id!==(T.claimId || 'q'))return json({code:'claim_lost'},409);
       if(T.deferRenew) await new Promise(resolve=>T.resolveRenew=resolve);
       return json(T.renewReply || {id:task.current_claim?.id || 'q',task_id:task.id,actor_id:'a',execution_id:'synthetic-exec',run_id:null,
         epoch:1,brief_revision:task.brief_revision,status:'active',revision:2,lease_seconds:body.lease_seconds || 300,
-        acquired_at:iso(),expires_at:new Date(Date.now()+(body.lease_seconds || 300)*1000).toISOString(),ended_at:null,end_recorded_at:null},200);
+        acquired_at:iso(),expires_at:new Date(Date.now()+(T.clock?.now() || 0)+(body.lease_seconds || 300)*1000).toISOString(),ended_at:null,end_recorded_at:null},200);
     }
     if(p===`/v1/boards/${B}/tasks/t/release`){if(m!=='POST')return json({},405);if(!opts.headers?.['Yak-Claim-Proof'])return json({code:'precondition_required'},428);if(!only(body,['reason']))return invalid();task.state='ready';task.current_claim=null;return json(task)}
     if(p===`/v1/boards/${B}/tasks/t/assignee`){if(m!=='PUT')return json({},405);task.assignee_actor_id=body.assignee_actor_id;task.revision++;return json(task)}
