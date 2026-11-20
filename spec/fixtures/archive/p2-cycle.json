@@ -1,0 +1,758 @@
+{
+  "board.json": [
+    {
+      "id": "brd_cycle",
+      "name": "cycle-fixture",
+      "owner_actor_id": "act_owner",
+      "revision": 1,
+      "policy_revision": 2,
+      "created_at": "2026-11-20T00:00:00Z",
+      "updated_at": "2026-11-20T00:00:00Z"
+    }
+  ],
+  "actors.jsonl": [
+    {
+      "id": "act_owner",
+      "kind": "human",
+      "handle": "owner",
+      "display_name": "Owner",
+      "created_at": "2026-11-20T00:00:00Z",
+      "disabled": false
+    }
+  ],
+  "channels.jsonl": [
+    {
+      "id": "ch_cycle",
+      "board_id": "brd_cycle",
+      "path": "work",
+      "access_mode": "inherited",
+      "created_by_actor_id": "act_owner",
+      "created_at": "2026-11-20T00:00:00Z",
+      "stub": false
+    }
+  ],
+  "grants.jsonl": [
+    {
+      "id": "gr_cycle",
+      "board_id": "brd_cycle",
+      "subject": {
+        "type": "actor",
+        "actor_id": "act_owner"
+      },
+      "pattern": "work",
+      "capabilities": [
+        "claim",
+        "post",
+        "read",
+        "task_manage"
+      ],
+      "effect": "allow",
+      "revision": 1,
+      "created_by_actor_id": "act_owner",
+      "created_at": "2026-11-20T00:00:00Z",
+      "revoked_at": null
+    }
+  ],
+  "threads.jsonl": [
+    {
+      "id": "thr_cycle",
+      "board_id": "brd_cycle",
+      "channel_id": "ch_cycle",
+      "title": "Cycle fixture",
+      "root_message_id": "msg_root",
+      "created_by_actor_id": "act_owner",
+      "labels": {},
+      "revision": 2,
+      "message_count": 2,
+      "last_message_id": "msg_reply",
+      "task_id": "task_cycle",
+      "created_at": "2026-11-20T00:00:00Z",
+      "updated_at": "2026-11-20T00:00:01Z"
+    }
+  ],
+  "messages.jsonl": [
+    {
+      "id": "msg_root",
+      "board_id": "brd_cycle",
+      "thread_id": "thr_cycle",
+      "seq": 1,
+      "author_actor_id": "act_owner",
+      "attribution": {
+        "credential_id": null,
+        "run_id": null
+      },
+      "reply_to_message_id": null,
+      "text": "Work",
+      "labels": {},
+      "mentions": [],
+      "extensions": null,
+      "revision": 1,
+      "created_at": "2026-11-20T00:00:00Z",
+      "edited_at": null,
+      "deleted": null
+    },
+    {
+      "id": "msg_reply",
+      "board_id": "brd_cycle",
+      "thread_id": "thr_cycle",
+      "seq": 2,
+      "author_actor_id": "act_owner",
+      "attribution": {
+        "credential_id": null,
+        "run_id": null
+      },
+      "reply_to_message_id": "msg_root",
+      "text": "Reply",
+      "labels": {},
+      "mentions": [],
+      "extensions": null,
+      "revision": 1,
+      "created_at": "2026-11-20T00:00:01Z",
+      "edited_at": null,
+      "deleted": null
+    }
+  ],
+  "task_batches.jsonl": [
+    {
+      "id": "bat_cycle",
+      "created_by_actor_id": "act_owner",
+      "created_at": "2026-11-20T00:00:02Z",
+      "items": [
+        {
+          "ref": "work",
+          "task_id": "task_cycle"
+        }
+      ]
+    }
+  ],
+  "tasks.jsonl": [
+    {
+      "id": "task_cycle",
+      "board_id": "brd_cycle",
+      "thread_id": "thr_cycle",
+      "owner_actor_id": "act_owner",
+      "assignee_actor_id": null,
+      "created_by_actor_id": "act_owner",
+      "origin": "batch",
+      "state": "failed",
+      "revision": 6,
+      "brief_revision": 1,
+      "epoch": 2,
+      "retry_count": 1,
+      "block": null,
+      "outcome": {
+        "kind": "failed",
+        "reason": "retry",
+        "summary": "fixture",
+        "evidence": [
+          {
+            "kind": "other",
+            "ref": "exe_first",
+            "note": null
+          }
+        ],
+        "data": {
+          "execution_id": "exe_first"
+        },
+        "by_actor_id": "act_owner",
+        "claim_id": "clm_second",
+        "execution_id": "exe_second",
+        "at": "2026-11-20T00:00:07Z"
+      },
+      "root_redacted": false,
+      "created_at": "2026-11-20T00:00:02Z",
+      "updated_at": "2026-11-20T00:00:07Z",
+      "state_changed_at": "2026-11-20T00:00:07Z",
+      "current_claim_id": null,
+      "last_claim_id": "clm_second",
+      "source_created_order": 1,
+      "dependencies_omitted": false
+    }
+  ],
+  "task_briefs.jsonl": [
+    {
+      "task_id": "task_cycle",
+      "revision": 1,
+      "text": "Work",
+      "redacted": false,
+      "source": {
+        "kind": "root",
+        "message_id": "msg_root",
+        "message_revision": 1
+      },
+      "reason": null,
+      "created_by_actor_id": "act_owner",
+      "created_at": "2026-11-20T00:00:02Z"
+    }
+  ],
+  "task_dependencies.jsonl": [],
+  "claims.jsonl": [
+    {
+      "id": "clm_first",
+      "task_id": "task_cycle",
+      "actor_id": "act_owner",
+      "execution_id": "exe_first",
+      "run_id": "exe_first",
+      "epoch": 1,
+      "brief_revision": 1,
+      "status": "failed",
+      "revision": 1,
+      "lease_seconds": 30,
+      "acquired_at": "2026-11-20T00:00:03Z",
+      "expires_at": "2026-11-20T00:00:33Z",
+      "ended_at": "2026-11-20T00:00:04Z",
+      "end_recorded_at": "2026-11-20T00:00:04Z"
+    },
+    {
+      "id": "clm_second",
+      "task_id": "task_cycle",
+      "actor_id": "act_owner",
+      "execution_id": "exe_second",
+      "run_id": "exe_first",
+      "epoch": 2,
+      "brief_revision": 1,
+      "status": "failed",
+      "revision": 1,
+      "lease_seconds": 30,
+      "acquired_at": "2026-11-20T00:00:06Z",
+      "expires_at": "2026-11-20T00:00:36Z",
+      "ended_at": "2026-11-20T00:00:07Z",
+      "end_recorded_at": "2026-11-20T00:00:07Z"
+    }
+  ],
+  "events.jsonl": [
+    {
+      "id": "evt_2",
+      "type": "task.created",
+      "board_id": "brd_cycle",
+      "actor_id": "act_owner",
+      "credential_id": null,
+      "run_id": "exe_first",
+      "resource": {
+        "type": "task",
+        "id": "task_cycle",
+        "revision": 1
+      },
+      "channel_id": "ch_cycle",
+      "thread_id": "thr_cycle",
+      "recorded_at": "2026-11-20T00:00:02Z",
+      "effective_at": "2026-11-20T00:00:02Z",
+      "payload": {
+        "task": {
+          "id": "task_cycle",
+          "board_id": "brd_cycle",
+          "thread_id": "thr_cycle",
+          "channel_id": "ch_cycle",
+          "channel_path": "work",
+          "title": "Cycle fixture",
+          "owner_actor_id": "act_owner",
+          "assignee_actor_id": null,
+          "created_by_actor_id": "act_owner",
+          "origin": "batch",
+          "state": "ready",
+          "revision": 1,
+          "brief_revision": 1,
+          "epoch": 0,
+          "retry_count": 0,
+          "dependencies": [],
+          "unreadable_dependencies_pending": false,
+          "current_claim": null,
+          "last_claim": null,
+          "block": null,
+          "outcome": null,
+          "root_redacted": false,
+          "created_at": "2026-11-20T00:00:02Z",
+          "updated_at": "2026-11-20T00:00:02Z",
+          "state_changed_at": "2026-11-20T00:00:02Z"
+        },
+        "origin": "batch",
+        "batch_id": "bat_cycle"
+      },
+      "source_order": 1
+    },
+    {
+      "id": "evt_3",
+      "type": "task.claimed",
+      "board_id": "brd_cycle",
+      "actor_id": "act_owner",
+      "credential_id": null,
+      "run_id": "exe_first",
+      "resource": {
+        "type": "task",
+        "id": "task_cycle",
+        "revision": 2
+      },
+      "channel_id": "ch_cycle",
+      "thread_id": "thr_cycle",
+      "recorded_at": "2026-11-20T00:00:03Z",
+      "effective_at": "2026-11-20T00:00:03Z",
+      "payload": {
+        "task": {
+          "id": "task_cycle",
+          "board_id": "brd_cycle",
+          "thread_id": "thr_cycle",
+          "channel_id": "ch_cycle",
+          "channel_path": "work",
+          "title": "Cycle fixture",
+          "owner_actor_id": "act_owner",
+          "assignee_actor_id": null,
+          "created_by_actor_id": "act_owner",
+          "origin": "batch",
+          "state": "claimed",
+          "revision": 2,
+          "brief_revision": 1,
+          "epoch": 1,
+          "retry_count": 0,
+          "dependencies": [],
+          "unreadable_dependencies_pending": false,
+          "current_claim": {
+            "id": "clm_first",
+            "task_id": "task_cycle",
+            "actor_id": "act_owner",
+            "execution_id": "exe_first",
+            "run_id": "exe_first",
+            "epoch": 1,
+            "brief_revision": 1,
+            "status": "active",
+            "revision": 1,
+            "lease_seconds": 30,
+            "acquired_at": "2026-11-20T00:00:03Z",
+            "expires_at": "2026-11-20T00:00:33Z",
+            "ended_at": null,
+            "end_recorded_at": null
+          },
+          "last_claim": null,
+          "block": null,
+          "outcome": null,
+          "root_redacted": false,
+          "created_at": "2026-11-20T00:00:02Z",
+          "updated_at": "2026-11-20T00:00:03Z",
+          "state_changed_at": "2026-11-20T00:00:03Z"
+        },
+        "claim": {
+          "id": "clm_first",
+          "task_id": "task_cycle",
+          "actor_id": "act_owner",
+          "execution_id": "exe_first",
+          "run_id": "exe_first",
+          "epoch": 1,
+          "brief_revision": 1,
+          "status": "active",
+          "revision": 1,
+          "lease_seconds": 30,
+          "acquired_at": "2026-11-20T00:00:03Z",
+          "expires_at": "2026-11-20T00:00:33Z",
+          "ended_at": null,
+          "end_recorded_at": null
+        }
+      },
+      "source_order": 2
+    },
+    {
+      "id": "evt_4",
+      "type": "task.failed",
+      "board_id": "brd_cycle",
+      "actor_id": "act_owner",
+      "credential_id": null,
+      "run_id": "exe_first",
+      "resource": {
+        "type": "task",
+        "id": "task_cycle",
+        "revision": 3
+      },
+      "channel_id": "ch_cycle",
+      "thread_id": "thr_cycle",
+      "recorded_at": "2026-11-20T00:00:04Z",
+      "effective_at": "2026-11-20T00:00:04Z",
+      "payload": {
+        "task": {
+          "id": "task_cycle",
+          "board_id": "brd_cycle",
+          "thread_id": "thr_cycle",
+          "channel_id": "ch_cycle",
+          "channel_path": "work",
+          "title": "Cycle fixture",
+          "owner_actor_id": "act_owner",
+          "assignee_actor_id": null,
+          "created_by_actor_id": "act_owner",
+          "origin": "batch",
+          "state": "failed",
+          "revision": 3,
+          "brief_revision": 1,
+          "epoch": 1,
+          "retry_count": 0,
+          "dependencies": [],
+          "unreadable_dependencies_pending": false,
+          "current_claim": null,
+          "last_claim": {
+            "id": "clm_first",
+            "task_id": "task_cycle",
+            "actor_id": "act_owner",
+            "execution_id": "exe_first",
+            "run_id": "exe_first",
+            "epoch": 1,
+            "brief_revision": 1,
+            "status": "failed",
+            "revision": 1,
+            "lease_seconds": 30,
+            "acquired_at": "2026-11-20T00:00:03Z",
+            "expires_at": "2026-11-20T00:00:33Z",
+            "ended_at": "2026-11-20T00:00:04Z",
+            "end_recorded_at": "2026-11-20T00:00:04Z"
+          },
+          "block": null,
+          "outcome": {
+            "kind": "failed",
+            "reason": "retry",
+            "summary": "fixture",
+            "evidence": [
+              {
+                "kind": "other",
+                "ref": "exe_first",
+                "note": null
+              }
+            ],
+            "data": {
+              "execution_id": "exe_first"
+            },
+            "by_actor_id": "act_owner",
+            "claim_id": "clm_first",
+            "execution_id": "exe_first",
+            "at": "2026-11-20T00:00:04Z"
+          },
+          "root_redacted": false,
+          "created_at": "2026-11-20T00:00:02Z",
+          "updated_at": "2026-11-20T00:00:04Z",
+          "state_changed_at": "2026-11-20T00:00:04Z"
+        },
+        "claim": {
+          "id": "clm_first",
+          "task_id": "task_cycle",
+          "actor_id": "act_owner",
+          "execution_id": "exe_first",
+          "run_id": "exe_first",
+          "epoch": 1,
+          "brief_revision": 1,
+          "status": "failed",
+          "revision": 1,
+          "lease_seconds": 30,
+          "acquired_at": "2026-11-20T00:00:03Z",
+          "expires_at": "2026-11-20T00:00:33Z",
+          "ended_at": "2026-11-20T00:00:04Z",
+          "end_recorded_at": "2026-11-20T00:00:04Z"
+        },
+        "outcome": {
+          "kind": "failed",
+          "reason": "retry",
+          "summary": "fixture",
+          "evidence": [
+            {
+              "kind": "other",
+              "ref": "exe_first",
+              "note": null
+            }
+          ],
+          "data": {
+            "execution_id": "exe_first"
+          },
+          "by_actor_id": "act_owner",
+          "claim_id": "clm_first",
+          "execution_id": "exe_first",
+          "at": "2026-11-20T00:00:04Z"
+        }
+      },
+      "source_order": 3
+    },
+    {
+      "id": "evt_5",
+      "type": "task.reopened",
+      "board_id": "brd_cycle",
+      "actor_id": "act_owner",
+      "credential_id": null,
+      "run_id": "exe_first",
+      "resource": {
+        "type": "task",
+        "id": "task_cycle",
+        "revision": 4
+      },
+      "channel_id": "ch_cycle",
+      "thread_id": "thr_cycle",
+      "recorded_at": "2026-11-20T00:00:05Z",
+      "effective_at": "2026-11-20T00:00:05Z",
+      "payload": {
+        "task": {
+          "id": "task_cycle",
+          "board_id": "brd_cycle",
+          "thread_id": "thr_cycle",
+          "channel_id": "ch_cycle",
+          "channel_path": "work",
+          "title": "Cycle fixture",
+          "owner_actor_id": "act_owner",
+          "assignee_actor_id": null,
+          "created_by_actor_id": "act_owner",
+          "origin": "batch",
+          "state": "ready",
+          "revision": 4,
+          "brief_revision": 1,
+          "epoch": 1,
+          "retry_count": 1,
+          "dependencies": [],
+          "unreadable_dependencies_pending": false,
+          "current_claim": null,
+          "last_claim": {
+            "id": "clm_first",
+            "task_id": "task_cycle",
+            "actor_id": "act_owner",
+            "execution_id": "exe_first",
+            "run_id": "exe_first",
+            "epoch": 1,
+            "brief_revision": 1,
+            "status": "failed",
+            "revision": 1,
+            "lease_seconds": 30,
+            "acquired_at": "2026-11-20T00:00:03Z",
+            "expires_at": "2026-11-20T00:00:33Z",
+            "ended_at": "2026-11-20T00:00:04Z",
+            "end_recorded_at": "2026-11-20T00:00:04Z"
+          },
+          "block": null,
+          "outcome": null,
+          "root_redacted": false,
+          "created_at": "2026-11-20T00:00:02Z",
+          "updated_at": "2026-11-20T00:00:05Z",
+          "state_changed_at": "2026-11-20T00:00:05Z"
+        },
+        "reason": "retry",
+        "previous_outcome": {
+          "kind": "failed",
+          "reason": "retry",
+          "summary": "fixture",
+          "evidence": [
+            {
+              "kind": "other",
+              "ref": "exe_first",
+              "note": null
+            }
+          ],
+          "data": {
+            "execution_id": "exe_first"
+          },
+          "by_actor_id": "act_owner",
+          "claim_id": "clm_first",
+          "execution_id": "exe_first",
+          "at": "2026-11-20T00:00:04Z"
+        }
+      },
+      "source_order": 4
+    },
+    {
+      "id": "evt_6",
+      "type": "task.claimed",
+      "board_id": "brd_cycle",
+      "actor_id": "act_owner",
+      "credential_id": null,
+      "run_id": "exe_first",
+      "resource": {
+        "type": "task",
+        "id": "task_cycle",
+        "revision": 5
+      },
+      "channel_id": "ch_cycle",
+      "thread_id": "thr_cycle",
+      "recorded_at": "2026-11-20T00:00:06Z",
+      "effective_at": "2026-11-20T00:00:06Z",
+      "payload": {
+        "task": {
+          "id": "task_cycle",
+          "board_id": "brd_cycle",
+          "thread_id": "thr_cycle",
+          "channel_id": "ch_cycle",
+          "channel_path": "work",
+          "title": "Cycle fixture",
+          "owner_actor_id": "act_owner",
+          "assignee_actor_id": null,
+          "created_by_actor_id": "act_owner",
+          "origin": "batch",
+          "state": "claimed",
+          "revision": 5,
+          "brief_revision": 1,
+          "epoch": 2,
+          "retry_count": 1,
+          "dependencies": [],
+          "unreadable_dependencies_pending": false,
+          "current_claim": {
+            "id": "clm_second",
+            "task_id": "task_cycle",
+            "actor_id": "act_owner",
+            "execution_id": "exe_second",
+            "run_id": "exe_first",
+            "epoch": 2,
+            "brief_revision": 1,
+            "status": "active",
+            "revision": 1,
+            "lease_seconds": 30,
+            "acquired_at": "2026-11-20T00:00:06Z",
+            "expires_at": "2026-11-20T00:00:36Z",
+            "ended_at": null,
+            "end_recorded_at": null
+          },
+          "last_claim": {
+            "id": "clm_first",
+            "task_id": "task_cycle",
+            "actor_id": "act_owner",
+            "execution_id": "exe_first",
+            "run_id": "exe_first",
+            "epoch": 1,
+            "brief_revision": 1,
+            "status": "failed",
+            "revision": 1,
+            "lease_seconds": 30,
+            "acquired_at": "2026-11-20T00:00:03Z",
+            "expires_at": "2026-11-20T00:00:33Z",
+            "ended_at": "2026-11-20T00:00:04Z",
+            "end_recorded_at": "2026-11-20T00:00:04Z"
+          },
+          "block": null,
+          "outcome": null,
+          "root_redacted": false,
+          "created_at": "2026-11-20T00:00:02Z",
+          "updated_at": "2026-11-20T00:00:06Z",
+          "state_changed_at": "2026-11-20T00:00:06Z"
+        },
+        "claim": {
+          "id": "clm_second",
+          "task_id": "task_cycle",
+          "actor_id": "act_owner",
+          "execution_id": "exe_second",
+          "run_id": "exe_first",
+          "epoch": 2,
+          "brief_revision": 1,
+          "status": "active",
+          "revision": 1,
+          "lease_seconds": 30,
+          "acquired_at": "2026-11-20T00:00:06Z",
+          "expires_at": "2026-11-20T00:00:36Z",
+          "ended_at": null,
+          "end_recorded_at": null
+        }
+      },
+      "source_order": 5
+    },
+    {
+      "id": "evt_7",
+      "type": "task.failed",
+      "board_id": "brd_cycle",
+      "actor_id": "act_owner",
+      "credential_id": null,
+      "run_id": "exe_first",
+      "resource": {
+        "type": "task",
+        "id": "task_cycle",
+        "revision": 6
+      },
+      "channel_id": "ch_cycle",
+      "thread_id": "thr_cycle",
+      "recorded_at": "2026-11-20T00:00:07Z",
+      "effective_at": "2026-11-20T00:00:07Z",
+      "payload": {
+        "task": {
+          "id": "task_cycle",
+          "board_id": "brd_cycle",
+          "thread_id": "thr_cycle",
+          "channel_id": "ch_cycle",
+          "channel_path": "work",
+          "title": "Cycle fixture",
+          "owner_actor_id": "act_owner",
+          "assignee_actor_id": null,
+          "created_by_actor_id": "act_owner",
+          "origin": "batch",
+          "state": "failed",
+          "revision": 6,
+          "brief_revision": 1,
+          "epoch": 2,
+          "retry_count": 1,
+          "dependencies": [],
+          "unreadable_dependencies_pending": false,
+          "current_claim": null,
+          "last_claim": {
+            "id": "clm_second",
+            "task_id": "task_cycle",
+            "actor_id": "act_owner",
+            "execution_id": "exe_second",
+            "run_id": "exe_first",
+            "epoch": 2,
+            "brief_revision": 1,
+            "status": "failed",
+            "revision": 1,
+            "lease_seconds": 30,
+            "acquired_at": "2026-11-20T00:00:06Z",
+            "expires_at": "2026-11-20T00:00:36Z",
+            "ended_at": "2026-11-20T00:00:07Z",
+            "end_recorded_at": "2026-11-20T00:00:07Z"
+          },
+          "block": null,
+          "outcome": {
+            "kind": "failed",
+            "reason": "retry",
+            "summary": "fixture",
+            "evidence": [
+              {
+                "kind": "other",
+                "ref": "exe_first",
+                "note": null
+              }
+            ],
+            "data": {
+              "execution_id": "exe_first"
+            },
+            "by_actor_id": "act_owner",
+            "claim_id": "clm_second",
+            "execution_id": "exe_second",
+            "at": "2026-11-20T00:00:07Z"
+          },
+          "root_redacted": false,
+          "created_at": "2026-11-20T00:00:02Z",
+          "updated_at": "2026-11-20T00:00:07Z",
+          "state_changed_at": "2026-11-20T00:00:07Z"
+        },
+        "claim": {
+          "id": "clm_second",
+          "task_id": "task_cycle",
+          "actor_id": "act_owner",
+          "execution_id": "exe_second",
+          "run_id": "exe_first",
+          "epoch": 2,
+          "brief_revision": 1,
+          "status": "failed",
+          "revision": 1,
+          "lease_seconds": 30,
+          "acquired_at": "2026-11-20T00:00:06Z",
+          "expires_at": "2026-11-20T00:00:36Z",
+          "ended_at": "2026-11-20T00:00:07Z",
+          "end_recorded_at": "2026-11-20T00:00:07Z"
+        },
+        "outcome": {
+          "kind": "failed",
+          "reason": "retry",
+          "summary": "fixture",
+          "evidence": [
+            {
+              "kind": "other",
+              "ref": "exe_first",
+              "note": null
+            }
+          ],
+          "data": {
+            "execution_id": "exe_first"
+          },
+          "by_actor_id": "act_owner",
+          "claim_id": "clm_second",
+          "execution_id": "exe_second",
+          "at": "2026-11-20T00:00:07Z"
+        }
+      },
+      "source_order": 6
+    }
+  ],
+  "audit_events.jsonl": []
+}
