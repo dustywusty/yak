@@ -690,7 +690,62 @@ async function briefGenerationCase() {
  assert('no browser exceptions', errors.length===0, errors.join(' | '));
  console.log(`OP17-036 executed ${assertions} assertions across ${variants.length} fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17009ActorPaginationCase() {
+ let assertions = 0, fixtures = 0;
+ const assert = (name, ok, detail = '') => { assertions++; check(`OP17-009: ${name}`, ok, detail); };
+ for (const variant of ['page two human', 'empty terminal', 'unknown', 'abort', 'removed']) {
+  await freshIdentityFixture(`window.__op.enableFeedPagination(${JSON.stringify(variant)});`);
+  fixtures++;
+  try {
+   await ev(`(async()=>{
+    const {createFeed}=await import('/feed.js'); const {h}=await import('/skin-kit.js');
+    window.__op.feed=createFeed({api:window.__op.feedApi,h:(...args)=>{window.__op.feedDraws++;return h(...args)},
+      time:at=>h('time',{datetime:at},at),href:()=> '#',onTask:()=>{},onUnauthorized:()=>{throw new Error('unexpected authorization')}});
+    window.__op.feed.setVisible(true);window.__op.feed.start();
+   })()`);
+   await until("window.__op.actorReads.length===1 && !!window.__op.removeFeedBoard && document.querySelectorAll('#feed .actor').length===2");
+   if (variant==='abort' || variant==='removed') {
+    if (variant==='abort') await ev('window.__op.feed.stop()');
+    else { await ev('window.__op.removeFeedBoard()'); await until("document.querySelector('#feed-status').textContent.includes('0 boards')"); }
+    await ev("window.__op.drawsBefore=window.__op.feedDraws;window.__op.actorReads[0].resolve({actors:[{id:'a',handle:'alice',kind:'human'}],next_page_token:null})");
+    await sleep(100);
+    assert(`${variant}: late page never renders`,await ev('window.__op.feedDraws===window.__op.drawsBefore'));
+    // Retained feed entries reference the removed record; rendering them detects stale map commits.
+    await ev('window.__op.feed.setVisible(true)');
+    assert(`${variant}: late actor map never commits`,await ev("!document.querySelector('#feed').textContent.includes('@alice')"));
+    assert(`${variant}: no extra page request`,await ev('window.__op.actorReads.length===1'));
+   } else {
+    await ev("window.__op.actorReads[0].resolve({actors:[{id:'bot',handle:'bot',kind:'agent'}],next_page_token:'opaque +/page2'})");
+    await sleep(100);
+    assert(`${variant}: follows opaque continuation`,await ev("window.__op.actorReads.length===2 && window.__op.actorReads[1].params.page_token==='opaque +/page2'"));
+    assert(`${variant}: first page does not publish partial actors`,await ev("![...document.querySelectorAll('#feed .actor')].some(el=>el.textContent.includes('@bot'))"));
+    // Continue even on the red implementation so every variant executes its assertions.
+    await ev(`window.__op.actorReads[1]?.resolve({actors:${variant==='empty terminal' ? '[]' : "[{id:'a',handle:'alice',kind:'human'}]"},next_page_token:null})`);
+    await sleep(100);
+    const text=await ev("[...document.querySelectorAll('#feed li')].find(li=>li.querySelector('.actor')?.textContent.startsWith("+JSON.stringify(variant==='unknown'?'missing-hu':'@alice')+"))?.textContent || ''");
+    if (variant==='page two human') {
+     assert('page two human: handle and kind',text.includes('@alice (human)'),text);
+     assert('page two human: direct gate approval',!!text && !text.includes("not a person's approval"),text);
+     assert('page two human: credential time and reason', ['synthetic-page-credential','2026-11-20T00:00:00Z','page two approval'].every(v=>text.includes(v)),text);
+    } else if (variant==='unknown') {
+     assert('unknown: short ID stays unknown',!!text && !text.includes('@alice') && !text.includes('(human)'),text);
+     assert('unknown: never inferred human approval',text.includes("not a person's approval"),text);
+    } else assert('empty terminal: absent human remains unknown',await ev("[...document.querySelectorAll('#feed .actor')].some(el=>el.textContent==='a') && document.querySelector('#feed').textContent.includes(\"not a person's approval\")"));
+    assert(`${variant}: all requests use same active signal and max page size`,await ev('window.__op.actorReads.length===2 && window.__op.actorReads.every(r=>r.signal===window.__op.feedReads[0].signal && !r.signal.aborted && r.params.limit===200)'));
+    assert(`${variant}: terminal page stops pagination`,await ev('window.__op.actorReads.length===2'));
+    assert(`${variant}: first page retained in complete map`,await ev("[...document.querySelectorAll('#feed .actor')].some(el=>el.textContent==='@bot (agent)')"));
+   }
+   assert(`${variant}: rendering sends no writes`,await count()===0);
+  } finally {
+   await ev('window.__op.feed?.stop()');
+   assert(`${variant}: cleanup aborts disposable reads`,await ev('window.__op.feedReads[0].signal.aborted && window.__op.writes.length===0'));
+  }
+ }
+ assert('all five fresh variants execute assertions',fixtures===5 && assertions>=35);
+ assert('no browser exceptions',errors.length===0,errors.join(' | '));
+ console.log(`OP17-009 executed ${assertions} assertions across ${fixtures} fresh actor pagination fixtures`);
+}
+const operatorCases = new Map([['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

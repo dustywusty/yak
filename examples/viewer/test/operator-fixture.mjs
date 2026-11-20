@@ -113,6 +113,31 @@ export function operatorFixture() {
     return new Response(status === 204 ? null : fault.startsWith('truncated') ? '{"claim":' : '{broken', { status });
   };
 
+  // OP17-009: deferred actor pages can settle even after cancellation/removal.
+  T.enableFeedPagination = (variant) => {
+    T.actorReads = []; T.feedReads = []; T.feedDraws = 0;
+    const candidate = {id:'feed-human', type:'task.unblocked', actor_id:variant === 'unknown' ? 'missing-human' : 'a',
+      credential_id:'synthetic-page-credential', recorded_at:'2026-11-20T00:00:00Z',
+      payload:{task:{id:'t',title:'Paged gate',direct_action_required:true},reason:'page two approval'}};
+    T.feedApi = async (method, path, params, signal) => {
+      T.feedReads.push({method,path,params,signal});
+      if (method !== 'GET') { T.writes.push({method,path,params}); throw new Error('OP17-009 unexpected write'); }
+      if (path === '/v1/boards') return {boards:[{id:B,name:'Paged board'}]};
+      if (path.endsWith('/actors')) {
+        const read = {params,signal}; T.actorReads.push(read);
+        return await new Promise(resolve => read.resolve = resolve);
+      }
+      if (path.endsWith('/events')) {
+        if (!params.cursor) return {events:[candidate,{...candidate,id:'feed-bot',actor_id:'bot'}],next_cursor:'feed-cursor'};
+        return await new Promise((resolve,reject) => {
+          T.removeFeedBoard = () => reject(Object.assign(new Error('removed'),{status:404}));
+          signal.addEventListener('abort', () => reject(new DOMException('aborted','AbortError')), {once:true});
+        });
+      }
+      throw new Error('OP17-009 unexpected path '+path);
+    };
+  };
+
   // OP17-006: hold each initial tools board-list read until the test settles it.
   T.enableOpenRace = () => {
     T.enableBoardSwitch();

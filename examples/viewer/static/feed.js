@@ -62,8 +62,16 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
 
   async function loadActors(rec, signal) {
     try {
-      const { actors } = await api('GET', `/v1/boards/${enc(rec.board.id)}/actors`, {}, signal);
-      rec.actors = new Map(actors.map((a) => [a.id, a]));
+      const actors = new Map();
+      let pageToken;
+      do {
+        if (signal.aborted || F.boards.get(rec.board.id) !== rec || F.abort?.signal !== signal) return;
+        const page = await api('GET', `/v1/boards/${enc(rec.board.id)}/actors`, { limit: 200, page_token: pageToken }, signal);
+        for (const actor of page.actors) actors.set(actor.id, actor);
+        pageToken = page.next_page_token;
+      } while (pageToken);
+      if (signal.aborted || F.boards.get(rec.board.id) !== rec || F.abort?.signal !== signal) return;
+      rec.actors = actors;
       render();
     } catch { /* fall back to short IDs */ }
   }
