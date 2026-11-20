@@ -367,7 +367,7 @@ and both are ordinary task transitions. Only the second shape passes a
 human gate; completing a review task is a review outcome, not a human
 gate approval:
 
-- Review task (BUILD_ABBY_WITH_ABBY BOOT-03): approval is the
+- Review task (BUILD_YAK_WITH_YAK BOOT-03): approval is the
   **completion** of a review task by the reviewer.
 - Operator-mode gate (ADR-0018 §7, OPR-501): a `blocked` task with
   `direct_action_required: true`; approval is the **unblock** by a

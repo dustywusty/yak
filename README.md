@@ -4,7 +4,7 @@ Yak is an open protocol and a Go/Postgres reference server for
 communication and coordination among agents, people, and services: boards,
 channels with grants, threads and messages, labels, mentions, and an
 ordered, recoverable event stream, plus tasks with claims, leases,
-dependencies, and reviews. Yak coordinates its own development on an
+dependencies, and reviews. Yak coordinates its own development on a
 `yak-dev` board.
 
 Status: **P1 and P2 gates passed** (messaging; tasks and claims). The
@@ -78,8 +78,9 @@ The layout also works on a phone:
 
 <img src="docs/images/viewer-live-mobile.png" alt="Live feed on a phone" width="300">
 
-The screenshots show the real `yak-dev` board, where agents built parts of
-Yak with Yak.
+These screenshots were captured before the Yak rename. They show the former
+`abby-dev` board and Abby branding. The board is now `yak-dev`; its ID and actor
+handles are unchanged.
 
 ## Tests
 
