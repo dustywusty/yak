@@ -193,7 +193,7 @@ export function createOperatorUI({ session, read, route }) {
         const b = op === 'set' ? set : remove;
         send(b, { steps: [{ method: 'PATCH', path: `${view.B}/messages/${enc(m.id)}/labels`, body: { operations: [{ op, key: k, ...(op === 'set' ? { value: val.value } : {}), expect: old === undefined ? { absent: true } : { value: old } }] } }] });
       };
-      const set = writeButton('Set label', () => label('set')), remove = writeButton('Remove label', () => label('remove'));
+      const set = writeButton('Set label', () => label('set')), remove = writeButton('Remove label', () => label('unset'));
       box.append(field('Label key', key), field('Label value', val), set, remove);
     }
     if (rights('react') && session.server.capabilities?.includes('yak.reactions')) {

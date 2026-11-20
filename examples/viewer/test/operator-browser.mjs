@@ -584,7 +584,48 @@ async function cosmeticReceiptCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-019 executed ${assertions} assertions across ${fixtures} fresh cosmetic receipt fixtures`);
 }
-const operatorCases = new Map([['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function labelOpcodeCase() {
+ let assertions = 0, fixtures = 0;
+ const assert = (name, ok) => { assertions++; check(`OP17-035: ${name}`, ok); };
+ const cases = [
+  {name:'existing', action:'Remove label', key:'priority', old:'high'},
+  {name:'absent', action:'Remove label', key:'priority'},
+  {name:'set', action:'Set label', key:'priority', old:'high'},
+  ...['gate','yak.test','abby.test'].flatMap(key => ['Remove label','Set label'].map(action => ({name:`guard ${key}/${action}`, action, key, refused:true}))),
+ ];
+ for (const c of cases) {
+  fixtures++;
+  await freshIdentityFixture();
+  try {
+   await ev(`${c.old===undefined?'delete window.__op.root.labels.priority':`window.__op.root.labels.priority=${JSON.stringify(c.old)}`};document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-label-token';document.querySelector('#login-form').requestSubmit()`);
+   await until("document.body.dataset.operator==='true'"); await open();
+   await ev(`document.querySelector('input[aria-label="Label key root"]').value=${JSON.stringify(`  ${c.key.toUpperCase()}  `)};document.querySelector('input[aria-label="Label value root"]').value='low'`);
+   await click(c.action);
+   if (c.refused) {
+    assert(`${c.name}: no write`, await count()===0);
+    assert(`${c.name}: key guard explains refusal`, await ev("document.querySelector('.op-workspace').textContent.includes('Choose an ordinary label key.')"));
+    continue;
+   }
+   await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+   const writes = await ev('window.__op.writes');
+   assert(`${c.name}: exactly one PATCH to selected message labels`, writes.length===1 && writes[0].method==='PATCH' && writes[0].path==='/v1/boards/brd_test/messages/root/labels');
+   const ops = writes[0].body.operations, op = ops[0];
+   assert(`${c.name}: one operation with normalized key`, ops.length===1 && op.key==='priority');
+   assert(`${c.name}: wire opcode`, op.op===(c.action==='Set label'?'set':'unset'));
+   assert(`${c.name}: original expectation`, JSON.stringify(op.expect)===JSON.stringify(c.old===undefined?{absent:true}:{value:c.old}));
+   assert(`${c.name}: value only for set`, c.action==='Set label'?op.value==='low':!Object.hasOwn(op,'value'));
+   assert(`${c.name}: fixture applies supported operation`, await ev(c.action==='Set label'?"window.__op.root.labels.priority==='low'":"!Object.hasOwn(window.__op.root.labels,'priority')"));
+   console.log(`OP17-035 WIRE ${JSON.stringify(writes[0].body)}`);
+  } finally {
+   await ev("document.querySelector('#operator-logout')?.click()");
+   await until('!document.body.dataset.operator');
+  }
+ }
+ assert('all nine fresh fixtures executed nonzero assertions', fixtures===9 && assertions===30);
+ assert('no browser exceptions', errors.length===0);
+ console.log(`OP17-035 executed ${assertions} assertions across ${fixtures} fresh label fixtures`);
+}
+const operatorCases = new Map([['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

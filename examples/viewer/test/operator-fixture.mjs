@@ -60,7 +60,7 @@ export function operatorFixture() {
         return json({code:'revision_conflict',key:'gate',current:T.labelFault.current || 'changes_requested'},T.labelFault.status);
       }
       if(T.failLabel){T.failLabel--;return json({code:'revision_conflict',current:'changes_requested'},412)}
-      for(const op of body.operations) {if(op.op==='remove')delete root.labels[op.key];else root.labels[op.key]=op.value;}return json(root);
+      for(const op of body.operations) {if(op.op==='unset')delete root.labels[op.key];else root.labels[op.key]=op.value;}return json(root);
     }
     if(p.endsWith('/claims')){task.state='claimed';task.current_claim={id:T.claimId || 'q',actor_id:'a',lease_seconds:T.testLease || 300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:'fake-secret-proof',task,brief:{revision:1}})}
     if(p.endsWith('/renew')) { if(T.deferRenew) await new Promise(resolve=>T.resolveRenew=resolve); return json(T.renewReply || {}, 200); }
