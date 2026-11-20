@@ -185,15 +185,16 @@ export class OperatorSession {
   lose(path) { this.drop(path); this.notice = 'Your claim ended. Refresh the task before acting again.'; this.changed(); }
   async end({ unauthorized = false, keepalive = false } = {}) {
     if (!this.active || this.ending) return;
+    const run = this.run;
     this.ending = true; clearInterval(this.timer);
     for (const c of this.claims.values()) this.unschedule(c.timer);
     try {
       if (!unauthorized) {
         for (const [path, c] of this.claims) {
-          try { await this.send('POST', `${path}/release`, { reason: 'operator session ended' }, { 'Yak-Claim-Proof': c.proof, 'Idempotency-Key': randomKey(), 'Yak-Run-Id': this.run }, { keepalive }); }
+          try { await this.send('POST', `${path}/release`, { reason: 'operator session ended' }, { 'Yak-Claim-Proof': c.proof, 'Idempotency-Key': randomKey(), 'Yak-Run-Id': run }, { keepalive }); }
           catch (e) { if (e.status === 401) { unauthorized = true; break; } this.notice = 'Claim release failed; its lease will lapse.'; }
         }
-        if (!unauthorized) try { await this.send('DELETE', `/v1/credentials/${this.me.credential.id}`, null, {}, { keepalive }); }
+        if (!unauthorized) try { await this.send('DELETE', `/v1/credentials/${this.me.credential.id}`, null, { 'Yak-Run-Id': run }, { keepalive }); }
         catch (e) { if (e.status !== 401) this.notice = 'Token revocation failed. The token may remain valid until expiry.'; }
       }
     } finally {

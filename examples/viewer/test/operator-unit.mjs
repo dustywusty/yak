@@ -269,3 +269,68 @@ test('OP17-042 transport samples dispatch before delayed body and hides metadata
  assert.equal(result.__responseTiming.serverDate, op17042Date); assert.equal(result.__responseTiming.requestMono, 5000);
  assert.equal(Object.keys(result).includes('__responseTiming'), false); assert.deepEqual(JSON.parse(JSON.stringify(result)), op17042ClaimCorpus[0]);
 });
+
+for (const ending of ['logout', 'idle', 'expiry', 'pagehide']) test(`OP17-039 ${ending} shares session provenance across actions, renewals, releases and revoke`, async () => {
+ let mono = 0, finishRevoke; const calls = [];
+ const path = '/v1/boards/b/tasks/t';
+ const s = new OperatorSession({ mono: () => mono, wall: () => 0, schedule: () => 0, send: async (method, path, body, headers, options) => {
+  calls.push({ method, path, headers: { ...headers }, options, memoryRun: s.run });
+  if (method === 'DELETE') return new Promise(resolve => finishRevoke = resolve);
+  return { ...op17042ClaimCorpus[0] };
+ } });
+ s.start(me(), server, now); const run = s.run;
+ try {
+  assert.match(run, /^operator\/[0-9a-f]{32}$/);
+  await s.perform(s.intent(taskIntent('flag', '/v1/boards/b', { id: 't', revision: 1 }, { value: true })));
+  s.hold(path, { claim: { id: 'q', lease_seconds: 300 }, proof: 'synthetic' });
+  await s.renew(path, s.claims.get(path));
+  await s.perform(s.intent(taskIntent('release', '/v1/boards/b', { id: 't' })));
+  if (ending === 'idle') mono = 800000;
+  s.hold(path, { claim: { id: 'q', lease_seconds: 300 }, proof: 'synthetic' });
+  if (ending === 'idle') mono = 900001;
+  if (ending === 'expiry') s.expiry = 0;
+  const pending = ending === 'idle' || ending === 'expiry' ? s.tick() : s.end({ keepalive: ending === 'pagehide' });
+  // Cleanup awaits release before dispatching revoke, then retains memory until it settles.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.map(c => c.path), [path, `${path}/claims/q/renew`, `${path}/release`, `${path}/release`, '/v1/credentials/c']);
+  assert.equal(s.run, run); assert.equal(s.active, true); assert.equal(s.ending, true);
+  for (const call of calls) {
+   assert.equal(call.memoryRun, run, `${call.path} dispatch retains run`);
+   assert.equal(call.headers['Yak-Run-Id'], run, `${call.path} carries session run`);
+  }
+  for (const call of calls.slice(-2)) assert.equal(call.options.keepalive, ending === 'pagehide');
+  finishRevoke(); await pending;
+  assert.equal(s.run, null); assert.equal(s.active, false); assert.equal(s.me, null); assert.equal(s.claims.size, 0);
+ } finally {
+  finishRevoke?.();
+  await new Promise(resolve => setImmediate(resolve));
+  await s.end({ unauthorized: true });
+ }
+});
+test('OP17-039 each new start generates a different run and revoke captures that session', async () => {
+ const runs = [], calls = [];
+ const s = new OperatorSession({ send: async (m, p, b, h) => { calls.push(h['Yak-Run-Id']); } });
+ try {
+  for (let i = 0; i < 3; i++) { s.start(me(), server, now); runs.push(s.run); await s.end(); assert.equal(s.run, null); }
+  assert.equal(new Set(runs).size, 3); for (const run of runs) assert.match(run, /^operator\/[0-9a-f]{32}$/);
+  assert.deepEqual(calls, runs);
+ } finally { await s.end({ unauthorized: true }); }
+});
+for (const source of ['explicit', 'action', 'renew', 'release']) test(`OP17-039 unauthorized ${source} cleanup emits no revoke`, async () => {
+ const calls = []; const path = '/v1/boards/b/tasks/t';
+ const s = new OperatorSession({ schedule: () => 0, send: async (method, path, body, headers) => {
+  calls.push({ method, path, headers }); throw Object.assign(new Error('synthetic unauthorized'), { status: 401 });
+ } });
+ s.start(me(), server, now); const run = s.run;
+ try {
+  s.hold(path, { claim: { id: 'q', lease_seconds: 300 }, proof: 'synthetic' });
+  if (source === 'explicit') await s.end({ unauthorized: true });
+  if (source === 'action') await assert.rejects(s.perform(s.intent(taskIntent('flag', '/v1/boards/b', { id: 't', revision: 1 }, { value: true }))), { status: 401 });
+  if (source === 'renew') await s.renew(path, s.claims.get(path));
+  if (source === 'release') await s.end();
+  assert.equal(calls.length, source === 'explicit' ? 0 : 1);
+  assert.equal(calls.some(c => c.method === 'DELETE'), false);
+  for (const call of calls) assert.equal(call.headers['Yak-Run-Id'], run);
+  assert.equal(s.active, false); assert.equal(s.run, null); assert.equal(s.claims.size, 0);
+ } finally { await s.end({ unauthorized: true }); }
+});
