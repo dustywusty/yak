@@ -21,9 +21,11 @@ stay valid fencing tokens.
 
 1. **Format.** One `.tar.gz` (gzip of POSIX tar). First entry
    `manifest.json`; then one JSON file for the board and one JSON Lines file
-   per record kind, in a fixed order that lets an importer stream and
-   resolve every reference to an earlier record. The manifest holds the
-   format version (`MAJOR.MINOR`), protocol version and profiles, source
+   per record kind, in a fixed order for reading bytes. References may
+   point forward or backward; normal task boards contain cycles. The
+   importer stages records or builds a validation index and resolves all
+   references before the atomic import commit (ARC-014, ARC-030). The manifest holds
+   the format version (`MAJOR.MINOR`), protocol version and profiles, source
    implementation, source board ID and name, source history epoch, export
    position and a source continuation cursor (full exports only; the
    Export job view gives the cursor to the creator of any export), the
@@ -75,8 +77,14 @@ stay valid fencing tokens.
    importer gets counts and the ID mapping, never content.
 9. **IDs: keep, remap, or auto — never mixed.** `auto` (default) keeps all
    IDs if all are free and valid, else remaps all. Every import publishes
-   its mapping. `remap` rewrites IDs inside event payloads, so an unknown
-   event type is rejected.
+   its mapping, including executions declared by claims (ARC-035). Each
+   claim declares a distinct execution identity, not a claim ID; no
+   separate execution file is needed. The same execution mapping applies
+   to claims, task outcomes and every retained event view, including
+   `previous_outcome` (ARC-084..086). `remap` rewrites protocol references
+   inside event payloads, so an unknown event type is rejected; opaque
+   application content remains unchanged. P2-CYCLE exercises both modes
+   and genuine dangling or mismatched references (spec §15.1).
 10. **Actors.** Never with credentials. Mapped by an explicit `actor_map`,
     or by handle only if the importer asks (`actor_matching: "handle"`),
     else created as disabled placeholders. `any_actor` grants are imported

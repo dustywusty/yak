@@ -78,9 +78,14 @@ conformance tests between implementations.
   last line), no blank lines. An empty file has zero bytes. No line may
   exceed `archive_max_line_bytes` of the importer.
 - **ARC-014** Every record MUST be valid against its schema (§4). The
-  record order in each file is fixed (§4) so that an importer can stream
-  the files in the order of §4 and resolve every reference to an earlier
-  record or an earlier file.
+  record and file order is fixed (§4), but references MAY point forward
+  or backward. The order is not a topological order: board → owner,
+  thread → root/reply/task, message → thread, and task ↔ claim form
+  ordinary cycles. An importer MUST stage records with deferred reference
+  resolution, or build an index in a validation pass, and resolve all
+  references before the atomic import commit (ARC-030, ARC-105). A
+  forward reference alone MUST NOT cause rejection. Streaming bytes
+  does not imply creating each record as soon as it is read.
 - **ARC-015** An exporter SHOULD produce identical entry bytes for two
   exports of the same board at the same position by the same exporter
   (sorted object keys, the fixed record order, tar entry times equal to
@@ -188,9 +193,17 @@ with the implementation; this section is their normative description.
 Reserved names for later minors (P3 resources): `reactions.jsonl`,
 `schemas.jsonl`, `attachments.jsonl`. Format 1.0 does not contain them.
 
-- **ARC-030** Every record MUST carry only source IDs. Every ID that a
-  record holds MUST name a record in the archive, except the IDs listed as
-  "external" below. A dangling ID MUST cause rejection.
+- **ARC-030** Every record MUST carry only source IDs. Every
+  protocol resource reference MUST name a record in the archive,
+  or an execution identity declared by a claim (ARC-035), except the
+  external references in §4.14. Null references remain null. References
+  MUST resolve by kind, not by guessing an ID prefix. A genuinely
+  dangling reference or a reference of the wrong kind MUST cause
+  rejection after deferred resolution, not merely because its target
+  appears later. Root/last messages MUST belong to their thread, the
+  thread/task links MUST agree, and current/last claims and outcomes
+  MUST belong to their task. Historical embedded views may differ in
+  state or revision; their identity relations must still agree.
 
 ### 4.1 `archive/Board`
 
@@ -273,6 +286,23 @@ The public `Brief` schema. A redacted brief has `text: null` and
 The public `Claim` schema (it has no proof field). A claim that is active
 at capture has `status: "active"`.
 
+- **ARC-035** Each top-level claim in `claims.jsonl` declares exactly one
+  execution identity through its nonempty `execution_id` (CLAIM-003).
+  It is a distinct identity kind, not a claim ID and not an external ID;
+  no `executions.jsonl` is needed. Different claims MUST declare different
+  execution IDs, including across tasks. Every non-null protocol
+  `execution_id` in a task outcome or retained event payload (including
+  `previous_outcome`, embedded tasks, and embedded claims) MUST resolve
+  to one of these declarations. An outcome's `claim_id` and
+  `execution_id` MUST either both be null (cancel without a claim) or
+  name the same declared claim/execution pair belonging to that task.
+  An embedded claim MUST agree with its top-level claim on task ID,
+  execution ID, epoch, and claimant identity. Its historical status and
+  revision need not equal the capture-time view. Missing declarations,
+  duplicate execution declarations, and mismatched pairs MUST cause
+  `422 archive_invalid`. An exporter includes the full claim history
+  even if the claim's creation event was removed by retention.
+
 ### 4.12 `archive/Event`
 
 `Event` with these changes: no `cursor` (cursors are bound to a server,
@@ -298,7 +328,13 @@ source board. Server-level audit events (no `board_id`) are not exported.
 These IDs MAY name things that are not in the archive and are not
 remapped: the IDs inside `extensions` objects, inside audit `metadata`
 values that the importer does not recognize as resource IDs, and every
-`delegation_id` (§4.15). Importers copy them unchanged.
+`delegation_id` (§4.15). Importers copy them unchanged. Caller-supplied
+`run_id`, batch item `ref`, evidence `ref`, outcome `data`, reasons, text,
+and other opaque application content are not protocol resource
+references: matching a source ID string does not turn them into one.
+The manifest's export-job ID and source history epoch are provenance,
+not imported resources. They are not claim-declared executions and do
+not enter the resource mapping.
 
 ### 4.15 Delegation fields (ADR-0019)
 
@@ -490,14 +526,27 @@ a full copy makes a full export.
     `409 archive_id_conflict` and nothing is created.
   - `remap`: every ID is new.
   - `auto` (default): `keep` if every ID is free and valid, else `remap`.
-  A mix (some kept, some new) is not allowed.
+  This choice includes every claim-declared execution identity (ARC-035),
+  with the same validity and collision checks as other imported IDs. A
+  mix (some kept, some new) is not allowed; actor matching remains the
+  explicit exception in ARC-088 and external references stay unchanged.
 - **ARC-085** The server MUST publish the mapping of every imported
-  record: `(kind, source_id, target_id)`, also in `keep` mode (identity
-  pairs). The mapping is available to the importer for
-  `retention.archive_seconds` after the import ends (§11.2).
+  record and every execution declared by a claim: `(kind, source_id,
+  target_id)`, also in `keep` mode (identity pairs). Executions use
+  `kind: "execution"`, independently of `kind: "claim"`; each declaration
+  has exactly one mapping entry. The mapping is available to the importer
+  for `retention.archive_seconds` after the import ends (§11.2).
 - **ARC-086** In `remap` mode the importer MUST rewrite every ID in every
-  record and every event payload by the mapping. It MUST reject an archive
-  that contains an event type it does not know, because it cannot find
+  record and every event payload by the mapping, for protocol resource
+  references (ARC-030), not opaque content (§4.14). In particular the
+  same execution mapping MUST be used in the declaring claim, task
+  outcome, embedded claim/task/outcome, and `previous_outcome` in retained
+  events; rewriting one occurrence without the others is invalid. Each
+  distinct source execution MUST get a distinct fresh target execution;
+  allocating from the claim mapping or minting anew at each occurrence
+  is forbidden. `keep` uses the same relations with identity pairs. The
+  importer MUST validate those relations again after mapping and before
+  commit. It MUST reject an archive that contains an event type it does not know, because it cannot find
   the IDs inside an unknown payload.
 
 ### 9.3 Actors
@@ -598,7 +647,9 @@ a full copy makes a full export.
   container rules (ARC-010..013), check the manifest version (ARC-020),
   compute SHA-256 and the byte and record counts of every entry and
   compare them with the manifest (ARC-021), validate every record against
-  its schema, check every reference (ARC-030), and check the invariants
+  its schema, build the complete typed record/execution index and resolve
+  forward and backward references (ARC-014, ARC-030, ARC-035), then check
+  the keep/remap result (ARC-084..086) and the invariants
   (ARC-095, ARC-077). Any failure is `422 archive_invalid` with the file
   name and line number. Nothing is created.
 - **ARC-106** The importer MUST stop reading and reject the archive as
@@ -752,8 +803,10 @@ yak board verify-archive FILE [--json]
   policy-revision bump, mark open exports of the board in the same
   transaction; downloads also check the board head for later redaction
   events.
-- Import: one transaction on a board that no one can see until commit;
-  it takes the new board's lock, so ordinary position allocation works.
+- Import: validate/index staged files before creating records; resolve
+  cycles with deferred constraints or staged writes, not file-order
+  foreign-key insertion. Use one transaction on a board that no one can
+  see until commit; it takes the new board's lock, so ordinary position allocation works.
   Imported rows set `credential_id` to the import credential (ARC-100),
   which keeps the `NOT NULL` foreign keys valid.
 - Creation order: threads and tasks whose creation event was truncated
@@ -806,7 +859,7 @@ a second base URL and a server-admin credential on it (ADR-0017 decision
 | ARC-001..002 | CT TestDiscovery (archive fields); schema checks |
 | ARC-010..015 | CT TestCT043ArchiveIntegrity; REF TestArchiveDeterministicBytes; CLI verify-archive tests |
 | ARC-020..025 | CT TestCT043ArchiveIntegrity; CT TestCT042PartialExport (manifest); REF TestManifestMinorVersionTolerance |
-| ARC-030 | CT TestCT043ArchiveIntegrity (dangling ID) |
+| ARC-030, ARC-035 | CT TestCT039 (P2-CYCLE fixture below); CT TestCT043ArchiveIntegrity (dangling, wrong-kind, duplicate execution, mismatched claim/execution); focused TestArchiveContractFixture |
 | ARC-034 | CT TestCT042PartialExport (dense order values) |
 | ARC-031..033 | CT TestCT039 (delegated attribution and `direct_action_required` round trip, on servers with `yak.delegation`; imported canceled or failed gate reopened directly lands in `blocked`, flag kept; delegated cancel/reopen returns `403 direct_action_required`, CT-DLG-12); CT TestCT048ArchiveNoSecrets (no delegation records, no restriction flags); REF TestImportRejectsMissingDelegationProfile |
 | ARC-040..041 | CT TestCT048ArchiveNoSecrets |
@@ -816,7 +869,7 @@ a second base URL and a server-admin credential on it (ADR-0017 decision
 | ARC-105..107 | CT TestCT043ArchiveIntegrity; REF TestImportBoundsDecompression |
 | ARC-075..078 | CT TestCT040RedactionRoundTrip; CT TestCT041RedactionAfterCapture; REF TestImportRescrubs (tombstone with text rejected) |
 | ARC-080..083 | CT TestArchiveImportAuthorization (board admin, not server admin → 403); CT TestCT039 (importer has no read); REF TestImportAllOrNothing (fault injection) |
-| ARC-084..086 | CT TestCT045ImportTwice; REF TestRemapRewritesPayloadIDs; REF TestRemapRejectsUnknownEventType |
+| ARC-084..086 | CT TestCT039 (P2-CYCLE keep/remap execution mapping); CT TestCT045ImportTwice; REF TestRemapRewritesPayloadIDs; REF TestRemapRejectsUnknownEventType |
 | ARC-102 | CT TestCT042PartialExport (dependent with omitted prerequisite arrives `blocked`) |
 | ARC-088..089 | CT TestArchiveActorMapping (placeholder disabled and cannot authenticate; `handle` only on request; explicit map wins) |
 | ARC-090..092 | CT TestArchiveActorMapping (`any_actor` revoked by default); CT TestCT039 |
@@ -828,6 +881,46 @@ a second base URL and a server-admin credential on it (ADR-0017 decision
 | ARC-110..113 | CT TestCT039; CT TestCT041; REF TestExportExpiry; REF TestExportLimit |
 | ARC-115..117 | CT TestCT039; CT TestArchiveImportDigestMismatch; CT TestCT002 pattern on import create |
 | ARC-120..122 | CLI tests with a fake server; CT TestCT039 driven through the CLI in `scripts/` |
+
+### 15.1 P2-CYCLE fixture and rejection variants
+
+[The concrete P2 source graph](fixtures/archive/p2-cycle.json) contains
+complete archive records, grouped by the fixed file names rather than
+packaged in tar. It is input for planned CT-039/043/045, not a claim that
+an archive importer exists. `TestArchiveContractFixture` checks the
+public schema portions, cyclic relations and execution mappings now;
+container hashing, upload, persistence and rollback remain planned.
+
+The board owner is in the later actor file. Thread `thr_cycle` refers to
+later root `msg_root`, reply `msg_reply` and task `task_cycle`; both
+messages refer back to the thread, and the reply refers to the root.
+Batch `bat_cycle` names that task. The task points back to its thread
+and forward to last claim `clm_second`. Claims `clm_first` and
+`clm_second` declare **different** executions `exe_first` and
+`exe_second` on the same task in epochs 1 and 2. The failed task's
+outcome uses the second pair; the retained `task.reopened` event holds
+`previous_outcome` with the first pair. Retained claim and settlement
+events embed full public task and claim views, not just IDs. Retention
+has removed the earlier message-creation events; it has not removed
+claim declarations. This prevents a one-claim fixture from hiding an
+incorrect mapping that substitutes claim IDs for execution IDs.
+
+Planned checks, all with CT-039 round-trip reads on B:
+
+| Variant | Required result |
+|---|---|
+| Fixed-order P2-CYCLE | Offline validation and import accept the forward references and cycles; each thread/message/task/batch/claim relation resolves before commit. |
+| `keep` on a fresh target | Each execution has its own identity mapping entry; claims, task outcome, historical embedded views and `previous_outcome` retain the same execution pair. |
+| `remap`, and a second `auto` import | Every execution gets one fresh, distinct mapping, different from the claim mapping; all its references use that value. Epochs and opaque `run_id`, `data` and evidence strings remain unchanged. |
+| Execution ID already occupied, with record IDs free | `keep` rejects atomically with `409 archive_id_conflict`; `auto` remaps records and executions together. |
+| Missing root/reply, batch task or last claim | `422 archive_invalid` with referencing file/line; no resources created. A late reference alone is accepted. |
+| Missing execution declaration, two claims declaring one execution, or outcome paired with the other claim's execution | `422 archive_invalid`; apply each mutation to task outcome, embedded claim and historical `previous_outcome` as separate cases. |
+| Claim points to another task, root belongs to another thread, or thread/task links disagree | `422 archive_invalid`; no partially resolved graph becomes visible. |
+
+Negative copies update manifest hashes and byte/record counts so that
+CT-043 reaches reference validation rather than failing only integrity.
+A late reference failure must leave no board, placeholder actor, claim,
+execution identity or event behind (ARC-082).
 
 ## 16 Notes on the design baseline
 
