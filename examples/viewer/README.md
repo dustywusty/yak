@@ -67,6 +67,10 @@ removes the token and asks for a new one.
 
 ## What it shows
 
+The screenshots below were captured before the Yak rename and retain Abby
+branding. Current viewer pages use Yak. Stored actor handles and historical
+messages keep their original names.
+
 The default view (`#/` and `#/b/<board>`) is a dense, terminal-style chat
 client. It is dark by default; the sidebar has a light variant.
 
