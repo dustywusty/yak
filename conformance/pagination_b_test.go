@@ -185,16 +185,12 @@ func pagbMaxPageSize(t *testing.T) int {
 	return int(n)
 }
 
-func grantBody(subj string) J {
-	return J{"subject": J{"type": "actor", "actor_id": subj}, "pattern": "pg/" + rnd(), "capabilities": []string{"read"}, "effect": "allow"}
-}
-
 func TestPAGBGrantsPaging(t *testing.T) { // PAGE-001
 	skipIfUnconfigured(t)
 	f := newBoard(t)
 	subj := newActor(t, "pgsub")
 	for i := 0; i < 7; i++ {
-		f.owner.must(201, f.owner.do("POST", f.p("/grants"), grantBody(subj.id), newKey()))
+		f.owner.must(201, f.owner.do("POST", f.p("/grants"), grantBody(subj.id, "pg/"+rnd(), "read"), newKey()))
 	}
 	// Revoke one so include_revoked changes the walk.
 	first := f.owner.must(200, f.owner.do("GET", f.p("/grants?limit=1"), nil)).Body["grants"].([]any)[0].(J)
@@ -208,7 +204,7 @@ func TestPAGBGrantsPaging(t *testing.T) { // PAGE-001
 
 	var ins pagbInserter
 	got := pagbAll(t, f.owner, f.p("/grants?include_revoked=true"), "grants", "created_at", 2, func(int) {
-		ins.kick(func() error { return pagbPost(f.owner.token, f.p("/grants"), grantBody(subj.id)) })
+		ins.kick(func() error { return pagbPost(f.owner.token, f.p("/grants"), grantBody(subj.id, "pg/"+rnd(), "read")) })
 	})
 	ins.wait(t)
 	pagbCheck(t, "grants under inserts", got, pagbIDs(existing), false)
@@ -287,7 +283,7 @@ func TestPAGBBoardAuditPaging(t *testing.T) { // PAGE-001, AUTH-018
 	subj := newActor(t, "pgaud")
 	var newest string
 	for i := 0; i < 6; i++ {
-		g := f.owner.must(201, f.owner.do("POST", f.p("/grants"), grantBody(subj.id), newKey())).Body
+		g := f.owner.must(201, f.owner.do("POST", f.p("/grants"), grantBody(subj.id, "pg/"+rnd(), "read"), newKey())).Body
 		newest = g["id"].(string)
 	}
 	// The newest event is the last grant's revoke.
@@ -305,7 +301,7 @@ func TestPAGBBoardAuditPaging(t *testing.T) { // PAGE-001, AUTH-018
 
 	var ins pagbInserter
 	got := pagbAll(t, f.owner, f.p("/audit-events"), "audit_events", "recorded_at", 2, func(int) {
-		ins.kick(func() error { return pagbPost(f.owner.token, f.p("/grants"), grantBody(subj.id)) })
+		ins.kick(func() error { return pagbPost(f.owner.token, f.p("/grants"), grantBody(subj.id, "pg/"+rnd(), "read")) })
 	})
 	ins.wait(t)
 	pagbCheck(t, "board audit under inserts", got, pagbIDs(existing), true)
