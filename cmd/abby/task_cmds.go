@@ -918,8 +918,10 @@ Exit 0 completes the task; other exits fail it. COMMAND may write
 $ABBY_RESULT_FILE. Evidence kinds are message, commit, url, artifact, or
 other; the runner records any other kind in the file as "other" with the
 original kind at the start of the note. If the server still rejects the
-result (400/413), the runner never settles without it: it releases the
-claim with a reason that names the rejection and exits 13.
+result (400/413), or the result file exists but is unusable (unreadable,
+over 1 MiB, not one JSON object, unknown fields, non-object data), the
+runner never settles without it: it releases the claim with a reason that
+names the problem and exits 13 (also if the release fails).
 Exit codes: 0 completed, 7 no work, 9 claim lost,
 10 renewal not confirmed (command stopped), 11 command failed (task failed),
 12 interrupted (claim released), 13 result rejected (claim released).`,

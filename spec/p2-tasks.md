@@ -611,7 +611,14 @@ and to any client that claims to implement the managed-runner behavior.
   right it MUST stop at once.
 - **RUN-005** Exit status maps to settlement: 0 → complete; non-zero → fail
   with the exit status in `data`; runner interrupt (SIGINT/SIGTERM) →
-  stop the subprocess, then release.
+  stop the subprocess, then release. The runner MUST NOT settle without
+  the result it was given. If the server rejects the complete or fail
+  request with 400 or 413, or if the subprocess wrote a result that the
+  runner cannot read or parse, the runner MUST NOT settle again without
+  that result. It MUST keep the claim alive until it releases the claim,
+  MUST release with a reason that names the rejection or the parse
+  problem, and MUST report the result that was not settled. The reference
+  CLI exits 13 in this case (spec/cli.md).
 - **RUN-006** Every settlement retry MUST reuse its original
   `Idempotency-Key` until the outcome is known (§5.3 of the design).
 - **RUN-007** After an outage the runner MUST NOT resume work from local
@@ -797,7 +804,7 @@ script. New scenario IDs CT-029..CT-038 extend design §14.1.
 | BRIEF-001..005 | CT TestCT026BriefUpdateVsTerminal; CT TestBriefVersions |
 | BRIEF-010..011 | CT TestCT034RootProtection; CT TestCT025 (author controls intact when conversion is refused) |
 | BRIEF-020..022 | CT TestCT034RootProtection; CT TestCT017 extended (brief bodies scrubbed from replay and snapshots) |
-| RUN-001..007 | REF runner tests with a fake subprocess; OPS BOOT-04 drill (kill a claimed runner; replacement claims after lapse; old proof → `claim_lost`) |
+| RUN-001..007 | REF runner tests with a fake subprocess (RUN-005 result handling: TestRunMapsUnknownEvidenceKinds, TestRunResultRejectedReleasesWithoutSettling, TestRunUnusableResultFileReleasesWithoutSettling, TestRunRejectedReleaseReasonIsValidUTF8, TestRunRejectedReleaseFailureStillExits13); OPS BOOT-04 drill (kill a claimed runner; replacement claims after lapse; old proof → `claim_lost`) |
 
 ## 21 Notes on the design baseline
 

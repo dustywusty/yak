@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/abby-protocol/abby/sdk/go/abby"
 )
@@ -52,6 +53,8 @@ type fakeServer struct {
 	claimNext func(n int) string
 	nexts     int
 	claimCode string // if set, the claim route fails with this 409 code
+	// settleDetail is the problem detail for other settle statuses.
+	settleDetail string
 }
 
 func newFakeServer(t *testing.T, lease int) *fakeServer {
@@ -168,6 +171,10 @@ func (f *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if reason, ok := body["reason"].(string); ok && !utf8.ValidString(reason) {
+			problem(w, 400, "validation_failed") // "reason must be valid UTF-8"
+			return
+		}
 		if replay && prev == op {
 			w.Header().Set("Idempotent-Replayed", "true")
 			writeJSON(w, 200, taskView(state))
@@ -194,6 +201,10 @@ func (f *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			f.mu.Unlock()
 			problem(w, 503, "temporarily_unavailable")
 		default:
+			if f.settleDetail != "" {
+				writeJSON(w, st, map[string]any{"status": st, "code": "limit_exceeded", "detail": f.settleDetail, "request_id": "req"})
+				return
+			}
 			problem(w, st, "error")
 		}
 	default:
@@ -689,6 +700,150 @@ func TestRunResultRejectedReleasesWithoutSettling(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Review F1 of 7d760f6: a result file that exists but cannot be used was
+// ignored, and the runner completed with no evidence. Now the runner
+// never settles: it renews, releases with a reason that names the
+// problem, keeps the raw file in the report, and exits 13.
+func TestRunUnusableResultFileReleasesWithoutSettling(t *testing.T) {
+	oversize := `{"evidence":[{"kind":"commit","ref":"abc"}],"summary":"` + strings.Repeat("a", maxResultFileBytes) + `"}`
+	for _, tc := range []struct {
+		name, file, exit, wantDetail string
+	}{
+		{"unknown-evidence-field", `{"evidence":[{"kind":"commit","ref":"abc","sha":"abc"}]}`, "0", `unknown field "sha"`},
+		{"unknown-top-level-key", `{"summary":"s","branch":"fix/x","evidence":[{"kind":"commit","ref":"abc"}]}`, "0", `unknown field "branch"`},
+		{"trailing-comma", `{"evidence":[{"kind":"commit","ref":"abc"},]}`, "0", "invalid character"},
+		{"content-after-object", `{"evidence":[{"kind":"commit","ref":"abc"}]} {"x":1}`, "0", "content after the result object"},
+		{"oversize", oversize, "0", "larger than"},
+		{"non-object-data", `{"evidence":[{"kind":"commit","ref":"abc"}],"data":[1,2]}`, "0", "must be a JSON object"},
+		{"fail-path-trailing-comma", `{"reason":"r","evidence":[{"kind":"commit","ref":"abc"},]}`, "3", "invalid character"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeServer(t, 30)
+			fixture := filepath.Join(t.TempDir(), "result.json")
+			if err := os.WriteFile(fixture, []byte(tc.file), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r := testRunner(t, f, sh(`cp `+fixture+` "$ABBY_RESULT_FILE"; exit `+tc.exit), nil)
+			rep, err := r.run(context.Background())
+			if code(err) != exitResultRejected {
+				t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
+			}
+			if rep.Outcome != "result_rejected" {
+				t.Errorf("outcome = %s", rep.Outcome)
+			}
+			for _, op := range []string{"/complete", "/fail"} {
+				if n := len(f.requests(op)); n != 0 {
+					t.Errorf("%s called %d times; must not settle without the result file", op, n)
+				}
+			}
+			rel := f.requests("/release")
+			if len(rel) != 1 || rel[0].Proof != testProof {
+				t.Fatalf("release calls = %+v", rel)
+			}
+			reason := fmt.Sprint(rel[0].Body["reason"])
+			if !strings.Contains(reason, "result file") || !strings.Contains(reason, "result_file_unusable") || !utf8.ValidString(reason) {
+				t.Errorf("release reason = %q", reason)
+			}
+			rs := f.requests("/renew")
+			if len(rs) == 0 || !rs[len(rs)-1].At.Before(rel[0].At) {
+				t.Error("no renewal before the release")
+			}
+			if rep.Task == nil || rep.Task.State != "ready" {
+				t.Errorf("task after release = %+v", rep.Task)
+			}
+			rr := rep.RejectedResult
+			if rr == nil || rr.Code != "result_file_unusable" || rr.Status != 0 || !strings.Contains(rr.Detail, tc.wantDetail) {
+				t.Fatalf("rejected_result = %+v", rr)
+			}
+			wantSettlement := map[string]string{"0": "complete", "3": "fail"}[tc.exit]
+			if rr.Settlement != wantSettlement {
+				t.Errorf("settlement = %s, want %s", rr.Settlement, wantSettlement)
+			}
+			if !strings.Contains(rr.Raw, `"ref":"abc"`) || len(rr.Raw) > maxReportRawBytes+len("…") {
+				t.Errorf("raw in report: %d bytes, has ref: %v", len(rr.Raw), strings.Contains(rr.Raw, `"ref":"abc"`))
+			}
+		})
+	}
+}
+
+// Review R1: the release reason is cut on a rune boundary, so a
+// multi-byte problem detail cannot make the release fail.
+func TestRunRejectedReleaseReasonIsValidUTF8(t *testing.T) {
+	f := newFakeServer(t, 30)
+	f.settle = func(op string, n int) int {
+		if op == "complete" {
+			return 413
+		}
+		return 200
+	}
+	f.settleDetail = "x" + strings.Repeat("é", 600) // 1201 bytes, odd offsets split runes
+	r := testRunner(t, f, sh("exit 0"), nil)
+	rep, err := r.run(context.Background())
+	if code(err) != exitResultRejected {
+		t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
+	}
+	if rep.ReleaseError != "" || rep.Task == nil || rep.Task.State != "ready" {
+		t.Fatalf("release did not succeed: release_error=%q task=%+v", rep.ReleaseError, rep.Task)
+	}
+	rel := f.requests("/release")
+	reason := fmt.Sprint(rel[0].Body["reason"])
+	if !utf8.ValidString(reason) || !strings.Contains(reason, "…") || len(reason) > 800 {
+		t.Errorf("reason (%d bytes) = %q", len(reason), reason)
+	}
+}
+
+func TestTruncateUTF8(t *testing.T) {
+	s := "x" + strings.Repeat("é", 10) // é is 2 bytes: offsets 2, 4, … split a rune
+	for n := 0; n <= len(s)+1; n++ {
+		got := truncateUTF8(s, n)
+		if !utf8.ValidString(got) {
+			t.Fatalf("n=%d: invalid UTF-8 %q", n, got)
+		}
+		if n >= len(s) && got != s {
+			t.Fatalf("n=%d: changed a short string: %q", n, got)
+		}
+		if n < len(s) && len(strings.TrimSuffix(got, "…")) > n {
+			t.Fatalf("n=%d: kept %d bytes", n, len(strings.TrimSuffix(got, "…")))
+		}
+	}
+}
+
+// Review R2: if the release after a rejection fails, the runner still
+// exits 13 (nothing was settled) and reports the release error.
+func TestRunRejectedReleaseFailureStillExits13(t *testing.T) {
+	f := newFakeServer(t, 30)
+	f.settle = func(op string, n int) int {
+		switch op {
+		case "complete":
+			return 413
+		case "release":
+			return 400
+		}
+		return 200
+	}
+	script := `printf '{"evidence":[{"kind":"commit","ref":"abc123"}]}' > "$ABBY_RESULT_FILE"`
+	r := testRunner(t, f, sh(script), nil)
+	rep, err := r.run(context.Background())
+	if code(err) != exitResultRejected {
+		t.Fatalf("exit = %d (%v), want %d", code(err), err, exitResultRejected)
+	}
+	if rep.Outcome != "result_rejected" || rep.ReleaseError == "" {
+		t.Errorf("outcome = %s, release_error = %q", rep.Outcome, rep.ReleaseError)
+	}
+	if !strings.Contains(err.Error(), "release failed") {
+		t.Errorf("error = %v", err)
+	}
+	if rep.RejectedResult == nil || !strings.Contains(fmt.Sprint(rep.RejectedResult.Evidence), "abc123") {
+		t.Errorf("rejected_result = %+v", rep.RejectedResult)
+	}
+	if n := len(f.requests("/complete")); n != 1 {
+		t.Errorf("complete attempts = %d, want 1", n)
+	}
+	if n := len(f.requests("/release")); n != 1 {
+		t.Errorf("release attempts = %d, want 1 (a 400 is final)", n)
 	}
 }
 
