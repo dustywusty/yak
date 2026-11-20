@@ -802,7 +802,67 @@ async function op17021ActorRetryCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-021 executed ${assertions} assertions across ${fixtures} fresh actor retry fixtures`);
 }
-const operatorCases = new Map([['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+async function op17010StoreActorsCase() {
+ let assertions = 0, fixtures = 0;
+ const assert = (name, ok, detail = '') => { assertions++; check(`OP17-010: ${name}`,ok,detail); };
+ for (const skin of ['terminal','irc']) {
+  await freshIdentityFixture("window.__op.scope=['read'];window.__op.enableStorePagination();sessionStorage.setItem('yak-viewer-token','synthetic-pagination-token');"); fixtures++;
+  try {
+   await until("document.body.dataset.view==='boards'");
+   await ev(`location.hash=${JSON.stringify(skin==='irc'?'#/irc?b=brd_test':'#/b/brd_test?ch=ops&t=th')}`);
+   await until(skin==='irc' ? "!!document.querySelector('.i-nick')" : "!!document.querySelector('.t-who')");
+   await sleep(150);
+   const rows = await ev(`Array.from(document.querySelectorAll(${JSON.stringify(skin==='irc'?'.i-nick':'.t-who')}),e=>e.textContent)`);
+   assert(`${skin}: page two human message shows handle and kind`,rows.some(t=>t.includes('pageHuman') && t.includes('human')),JSON.stringify(rows));
+   assert(`${skin}: delegated message shows both handles and kinds`,rows.some(t=>t.includes('bot') && t.includes('agent') && t.includes('pagePrincipal') && t.includes('human')),JSON.stringify(rows));
+   if (skin==='terminal') {
+    await ev("location.hash='#/'"); await until("document.querySelector('#feed').textContent.includes('page human event')");
+   }
+   const text = await ev(`document.querySelector(${JSON.stringify(skin==='irc'?'#skin':'#feed')}).textContent`);
+   assert(`${skin}: human task event resolves page two kind`,text.includes('pageHuman (human)'),text);
+   assert(`${skin}: delegated task event resolves both handles`,text.includes('bot (agent) for '+(skin==='terminal'?'@':'')+'pagePrincipal'),text);
+   assert(`${skin}: follows opaque actor token with page size`,await ev("window.__op.storeActorReads.some(r=>r.token==='opaque +/actors2' && r.limit==='200')"));
+   assert(`${skin}: read-only rendering sends no operator writes`,await count()===0);
+  } finally { await ev("document.querySelector('#forget').click()"); await until("!document.querySelector('#login').hidden"); }
+ }
+ for (const variant of ['later failure','later unauthorized','replacement abort']) {
+  await freshIdentityFixture('window.__op.enableStoreProbe();'); fixtures++;
+  try {
+   await ev(`(async()=>{
+    const {createStore}=await import('/skin-kit.js');
+    window.__op.probe=createStore({api:window.__op.storeApi,boardId:'brd_test',
+      onChange:()=>window.__op.storePublications.push([...window.__op.probe.S.actors.keys()]),
+      onStatus:s=>window.__op.storeStatuses.push(s),onUnauthorized:()=>window.__op.storeAuth++});
+   })()`);
+   await until("window.__op.storeReads.some(r=>r.path.endsWith('/actors'))");
+   await ev("window.__op.storeReads.find(r=>r.path.endsWith('/actors')).resolve({actors:[{id:'old',handle:'old',kind:'human'}],next_page_token:null})");
+   await until("window.__op.probe.S.cursor==='probe-cursor' && !!window.__op.storeResync");
+   await ev('window.__op.storeResync()');
+   await until("window.__op.storeReads.filter(r=>r.path.endsWith('/actors')).length===2");
+   await ev("window.__op.storeReads.filter(r=>r.path.endsWith('/actors'))[1].resolve({actors:[{id:'partial',handle:'partial',kind:'human'}],next_page_token:'opaque +/later'})");
+   await sleep(100);
+   assert(`${variant}: replacement waits for later actor page`,await ev("window.__op.storeReads.filter(r=>r.path.endsWith('/actors')).length===3"));
+   assert(`${variant}: incomplete directory does not replace accepted actors`,await ev("window.__op.probe.S.actors.has('old') && !window.__op.probe.S.actors.has('partial')"));
+   if (variant==='replacement abort') {
+    await ev("window.__op.probe.stop();window.__op.storeReads.filter(r=>r.path.endsWith('/actors'))[2]?.resolve({actors:[{id:'late',handle:'late',kind:'human'}],next_page_token:null})");
+   } else {
+    await ev(`window.__op.storeReads.filter(r=>r.path.endsWith('/actors'))[2]?.reject(Object.assign(new Error('synthetic later-page failure'),{status:${variant==='later unauthorized'?401:503}}))`);
+   }
+   await sleep(100);
+   assert(`${variant}: late failure or abort cannot publish actors`,await ev("window.__op.probe.S.actors.has('old') && !window.__op.probe.S.actors.has('partial') && !window.__op.probe.S.actors.has('late') && window.__op.storePublications.every(ids=>ids.length===1 && ids[0]==='old')"));
+   assert(`${variant}: no replacement snapshot starts`,await ev("window.__op.writes.filter(r=>r.method==='POST').length===1"));
+   assert(`${variant}: preserves authorization semantics`,await ev(`window.__op.storeAuth===${variant==='later unauthorized'?1:0}`));
+   if (variant==='later failure') assert('later failure: existing reconnect status',await ev("window.__op.storeStatuses.at(-1)==='reconnecting'"));
+  } finally {
+   await ev('window.__op.probe.stop()');
+   assert(`${variant}: cleanup aborts all reads`,await ev("window.__op.storeReads.filter(r=>r.path.endsWith('/actors')).every(r=>r.signal.aborted)"));
+  }
+ }
+ assert('all five fresh fixtures execute assertions',fixtures===5 && assertions>=30);
+ assert('no browser exceptions',errors.length===0,errors.join(' | '));
+ console.log(`OP17-010 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
+}
+const operatorCases = new Map([['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");

@@ -113,6 +113,49 @@ export function operatorFixture() {
     return new Response(status === 204 ? null : fault.startsWith('truncated') ? '{"claim":' : '{broken', { status });
   };
 
+  // OP17-010: complete actor provenance and independently controlled store pages.
+  T.enableStorePagination = () => {
+    const base = window.fetch;
+    T.storeActorReads = [];
+    const human = {id:'page-human',handle:'pageHuman',kind:'human'};
+    const principal = {id:'page-principal',handle:'pagePrincipal',kind:'human'};
+    root.author_actor_id = 'bot'; root.on_behalf_of_actor_id = principal.id;
+    const direct = {...root,id:'page-direct',seq:2,is_root:false,author_actor_id:human.id,on_behalf_of_actor_id:null,text:'page two human message'};
+    const event = {id:'page-event',type:'task.unblocked',actor_id:human.id,credential_id:'synthetic-page-credential',recorded_at:iso(),thread_id:'th',channel_path:'ops',payload:{task:{...task},reason:'page human event'}};
+    T.events.push(event,{...event,id:'page-delegated-event',actor_id:'bot',on_behalf_of_actor_id:principal.id});
+    window.fetch = async (url, opts = {}) => {
+      const u = new URL(url,location.href);
+      if ((opts.method || 'GET') === 'GET' && u.pathname.endsWith('/actors')) {
+        T.storeActorReads.push({token:u.searchParams.get('page_token'),signal:opts.signal,limit:u.searchParams.get('limit')});
+        return json(u.searchParams.get('page_token') ? {actors:[human,principal],next_page_token:null} : {actors,next_page_token:'opaque +/actors2'});
+      }
+      const response = await base(url,opts);
+      if ((opts.method || 'GET') !== 'GET' || !response.ok) return response;
+      if (u.pathname.endsWith('/messages')) return json({messages:[root,direct],next_page_token:null});
+      if (/\/snapshots\//.test(u.pathname)) {
+        const data = await response.json(); data.items.push({type:'message',id:direct.id,data:direct}); return json(data);
+      }
+      return response;
+    };
+  };
+  T.enableStoreProbe = () => {
+    T.storeReads = []; T.storeStatuses = []; T.storePublications = []; T.storeAuth = 0;
+    T.storeApi = async (method,path,params,signal) => {
+      const read = {method,path,params,signal}; T.storeReads.push(read);
+      if (method === 'GET' && path.endsWith('/actors')) return new Promise((resolve,reject) => Object.assign(read,{resolve,reject}));
+      if (method === 'GET' && path.endsWith('/channels')) return {channels:[]};
+      if (path === '/v1/me') return {actor:actors[0]};
+      if (method === 'POST') { T.writes.push({method,path,params}); return {id:'synthetic-store-snapshot'}; }
+      if (method === 'DELETE') { T.writes.push({method,path,params}); return {}; }
+      if (/\/snapshots\//.test(path)) return {items:[],next_page_token:null,continuation_cursor:'probe-cursor'};
+      if (path.endsWith('/events')) return new Promise((resolve,reject) => {
+        T.storeResync = () => reject(Object.assign(new Error('resync'),{status:409,problem:{code:'resync_required'}}));
+        signal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError')),{once:true});
+      });
+      return {id:B,name:'synthetic-store'};
+    };
+  };
+
   // OP17-009: deferred actor pages can settle even after cancellation/removal.
   T.enableFeedPagination = (variant) => {
     T.actorReads = []; T.feedReads = []; T.feedDraws = 0;

@@ -159,9 +159,9 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
 
   async function snapshot() {
     invalidateRefresh();
-    const [board, actors, channels, me] = await Promise.all([get(B), get(`${B}/actors`), get(`${B}/channels`), get('/v1/me')]);
+    const [board, actors, channels, me] = await Promise.all([get(B), all(`${B}/actors`, 'actors'), get(`${B}/channels`), get('/v1/me')]);
     if (abort.signal.aborted) throw new DOMException('Store stopped', 'AbortError');
-    Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.actors.map((a) => [a.id, a])),
+    Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.map((a) => [a.id, a])),
       threads: new Map(), msgs: new Map(), tasks: new Map(), order: [] });
     let info;
     try {
