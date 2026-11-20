@@ -580,7 +580,7 @@ Planned tests:
 | UX-LOGOUT | Logout releases claims, revokes, clears memory; the old token then gets `401`. |
 | UX-401 | Revoke the token with the CLI → next request `401` → page leaves operator mode and does not retry. |
 | UX-XSS | Messages, titles, labels, handles, and reasons with `<script>`, `<img onerror>`, `javascript:` links, and Markdown HTML render as text; no script runs; CSP violation reports are empty. |
-| UX-CONFIRM | Each of A6, A7, A9, A10 shows the confirmation fields of OPR-401; Cancel has focus; Enter in a text field does not confirm. |
+| UX-CONFIRM | Parameterize A6, A7, A9, A10, A11, A12 and A13 over the matrix below; check every OPR-401 field and OPR-402 button. A11 runs with Needs my approval both off and on; A13 runs both false→true and true→false. Before explicit confirmation, after Cancel, and after Enter in any text field: no write request, including neither call of A6/A12. Cancel has initial focus. Only the named confirm button sends the displayed intent, once. |
 | UX-IDEM | Drop the response of a confirmed unblock (proxy fault injection) → the retry reuses the key and shows success with `Idempotent-Replayed`; a double click sends one intent. |
 | UX-412 | Change the task in another session between read and confirm → `412` → page shows the change and asks again; no automatic retry. |
 | UX-GATE | Approve offered only on `blocked` + `direct_action_required: true` for a manager; unblock first, then label with `expect`; the flag stays set; fault after step 1 → "Approved; label not updated" and retry of step 2 only. Label-only `gate=approved` on a blocked task → shown as not approved. `gate=pending` without the flag → "label only; not a gate", no Approve. Server without the field → no Approve. Delegated `task.unblocked` → "A for P", no approval badge. Direct `task.unblocked` by an agent with reason `gate approved` → "unblocked by <handle> (agent), not a person's approval", no approval badge. Gate task directly canceled and then reopened → `blocked`, flag kept, new block recorded, no approval; an earlier approval does not approve the new block. Legacy history or a task whose flag was cleared that reaches `ready` without a human `task.unblocked` after the latest block → "not approved". `task.completed` alone → no human gate approval. Request changes → reply, then `gate=changes_requested` with `expect`; task stays `blocked`. |
@@ -598,6 +598,34 @@ Planned tests:
 | CT-OPR-GATE | Unblock by a non-manager with `label` → `403`; setting `gate=approved` changes no task state (extends TestCT035); unblock by a `task_admin` person records `actor_id`, `credential_id`, reason, and `on_behalf_of_actor_id: null` in `task.unblocked`; delegated unblock of a gate task → `403 direct_action_required` (CT-DLG-12). |
 | CT-OPR-CEILING | A credential with `read,post,label,claim,task_manage` cannot create grants, channels, actors, or boards; its self-issued child is no broader and expires no later; revoking it makes the child `401` (existing AUTH-005 tests plus the issuance-chain check). With `may_manage_credentials: false` and `may_delegate: false`: issue, list, revoke-other, and delegation routes → `403 credential_restricted`; revoke-self → success (CT-DLG-18). |
 | CT-OPR-NOCORS | `OPTIONS` preflight to the API from a foreign origin gets no `Access-Control-Allow-*` headers. |
+
+### 9.1 UX-CONFIRM action matrix
+
+For each row, capture outgoing writes with a fake transport. Open the
+confirmation, inspect its displayed read values, cancel it, reopen it,
+press Enter in each text input, and finally click the action button in a
+fresh confirmation. The first three paths send zero writes. The last
+path sends only the intended call(s), with the values shown; A6 and A12
+send their second call only after the first succeeds. Reads and automatic
+renewals for an existing claim are not new confirmation writes.
+
+| Action variant | Fields in addition to acting handle | Named confirm button |
+|---|---|---|
+| A6 approve | Task title, channel, blocked→ready/waiting, assignee, claim holder, revision, current gate block reason | Approve and unblock |
+| A7 claim | Task title, channel, ready→claimed, assignee, claim holder, revision | Claim |
+| A9 release | Task title, channel, claimed→ready, assignee, claim holder, revision | Release |
+| A10 assign and unassign | Task title, channel, unchanged state, old/new assignee (null for unassign), claim holder, revision | Assign to @x / Unassign |
+| A11 create, approval off and on | New title, channel, assignee, Needs my approval false/true; no fabricated current task or revision | Create task |
+| A12 request changes | Task title, channel, blocked→blocked, assignee, claim holder, revision, requested-change text; gate flag remains set | Request changes |
+| A13 false→true | Task title, channel, unchanged state, assignee, claim holder, revision, current false and new true flag | Require my approval |
+| A13 true→false | Task title, channel, unchanged state, assignee, claim holder, revision, current true and new false flag | Remove approval requirement |
+
+Specifically test that opening the A13 clear dialog, Cancel, or Enter
+cannot clear the gate flag. A12 cannot post the requested-change reply
+before confirmation or update the gate label after cancellation. A11
+cannot create either form of task before confirmation. These planned
+cases cover OPR-401..403; UX-TASK and UX-GATE continue to check the
+request bodies and gate behavior.
 
 ## 10 Traceability
 
