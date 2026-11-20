@@ -211,24 +211,6 @@ func pageArgs(r *http.Request, s *domain.Service) (int64, int, error) {
 	return after, limit, nil
 }
 
-// keysetArgs parses page_token and limit for a keyset-paginated list
-// (domain/pagination.go). A malformed token or out-of-range limit is 400.
-func keysetArgs(r *http.Request, s *domain.Service) (domain.PageRequest, error) {
-	tok := r.URL.Query().Get("page_token")
-	if _, _, _, err := domain.DecodeKeyset(tok); err != nil {
-		return domain.PageRequest{}, err
-	}
-	limit := s.Cfg.DefaultPageSize
-	if l := r.URL.Query().Get("limit"); l != "" {
-		n, err := strconv.Atoi(l)
-		if err != nil || n < 1 || n > s.Cfg.MaxPageSize {
-			return domain.PageRequest{}, domain.Validation("limit must be 1..%d", s.Cfg.MaxPageSize)
-		}
-		limit = n
-	}
-	return domain.PageRequest{Token: tok, Limit: limit}, nil
-}
-
 // respond writes a mutation result. On idempotent replay the current,
 // authorized projection of the committed resource is regenerated, so
 // redactions and revocations apply (ADR-003).
@@ -473,11 +455,11 @@ func (a *API) routes() {
 		return a.respond(w, r, p, "", res)
 	}))
 	m.HandleFunc("GET /v1/boards", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		tok, limit, err := keysetArgs(r, a.S)
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		l, next, err := a.S.ListBoards(r.Context(), p, tok, limit)
+		l, next, err := a.S.ListBoards(r.Context(), p, pg)
 		if err != nil {
 			return err
 		}
@@ -533,11 +515,11 @@ func (a *API) boardRoutes() {
 		return a.respond(w, r, p, bid(r), res)
 	}))
 	m.HandleFunc("GET "+B+"/channels", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		tok, limit, err := keysetArgs(r, a.S)
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		l, next, err := a.S.ListChannels(r.Context(), p, bid(r), tok, limit)
+		l, next, err := a.S.ListChannels(r.Context(), p, bid(r), pg)
 		if err != nil {
 			return err
 		}
@@ -558,11 +540,11 @@ func (a *API) boardRoutes() {
 		return writeJSON(w, 200, v)
 	}))
 	m.HandleFunc("GET "+B+"/actors", a.authed(func(w http.ResponseWriter, r *http.Request, p *domain.Principal) error {
-		tok, limit, err := keysetArgs(r, a.S)
+		pg, err := keysetArgs(r, a.S)
 		if err != nil {
 			return err
 		}
-		l, next, err := a.S.BoardActors(r.Context(), p, bid(r), tok, limit)
+		l, next, err := a.S.BoardActors(r.Context(), p, bid(r), pg)
 		if err != nil {
 			return err
 		}

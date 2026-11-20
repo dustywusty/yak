@@ -86,7 +86,7 @@ func (s *Service) GetBoard(ctx context.Context, p *Principal, boardID string) (*
 
 // ListBoards returns one page of boards whose metadata the caller may see,
 // in (created_at, id) order (PAGE-001).
-func (s *Service) ListBoards(ctx context.Context, p *Principal, pageToken string, limit int) ([]BoardView, *string, error) {
+func (s *Service) ListBoards(ctx context.Context, p *Principal, pg PageRequest) ([]BoardView, *string, error) {
 	fetch := func(after *keyRef, n int) ([]keyRef, error) {
 		return s.fetchKeys(ctx, `SELECT b.id, b.created_at FROM boards b
 			WHERE (b.owner_actor_id=$1 OR EXISTS (SELECT 1 FROM grants g WHERE g.board_id=b.id AND g.revoked_at IS NULL
@@ -97,7 +97,7 @@ func (s *Service) ListBoards(ctx context.Context, p *Principal, pageToken string
 	}
 	// GetBoard below is the authority on visibility; the query only narrows
 	// the candidates (credential board_ids included) so that pages stay cheap.
-	return keysetPage(pageToken, limit, fetch, func(k keyRef) (BoardView, bool, error) {
+	return keysetPage(pg.Token, pg.Limit, fetch, func(k keyRef) (BoardView, bool, error) {
 		bv, err := s.GetBoard(ctx, p, k.ID)
 		var de *Error
 		if errors.As(err, &de) && de.Status == 404 {
@@ -244,7 +244,7 @@ func (b *btx) bumpPolicy() error {
 
 // ListChannels returns one page of the channels the caller may read, in
 // (created_at, id) order (PAGE-001).
-func (s *Service) ListChannels(ctx context.Context, p *Principal, boardID, pageToken string, limit int) ([]ChannelView, *string, error) {
+func (s *Service) ListChannels(ctx context.Context, p *Principal, boardID string, pg PageRequest) ([]ChannelView, *string, error) {
 	v, err := s.viewBoard(ctx, s.DB, p, boardID)
 	if err != nil {
 		return nil, nil, err
@@ -256,7 +256,7 @@ func (s *Service) ListChannels(ctx context.Context, p *Principal, boardID, pageT
 		byID[c.ID] = c
 		keys = append(keys, keyRef{T: c.CreatedAt, ID: c.ID})
 	}
-	return keysetPage(pageToken, limit, sliceFetch(keys), func(k keyRef) (ChannelView, bool, error) {
+	return keysetPage(pg.Token, pg.Limit, sliceFetch(keys), func(k keyRef) (ChannelView, bool, error) {
 		c := byID[k.ID]
 		if !admin && !v.policy.Has(c.Path, authz.Read) {
 			return ChannelView{}, false, nil
@@ -540,7 +540,7 @@ func (s *Service) RevokeGrant(ctx context.Context, p *Principal, boardID, grantI
 // administrators see every actor with a grant on the board. One page is
 // returned, in actor (created_at, id) order (PAGE-001); the visibility filter
 // is applied while scanning, so pages never skip or repeat a visible actor.
-func (s *Service) BoardActors(ctx context.Context, p *Principal, boardID, pageToken string, limit int) ([]ActorView, *string, error) {
+func (s *Service) BoardActors(ctx context.Context, p *Principal, boardID string, pg PageRequest) ([]ActorView, *string, error) {
 	v, err := s.viewBoard(ctx, s.DB, p, boardID)
 	if err != nil {
 		return nil, nil, err
@@ -559,7 +559,7 @@ func (s *Service) BoardActors(ctx context.Context, p *Principal, boardID, pageTo
 			AND (NOT $2 OR (a.created_at, a.id) > ($3, $4))
 			ORDER BY a.created_at, a.id LIMIT $5`, after, n, boardID)
 	}
-	return keysetPage(pageToken, limit, fetch, func(k keyRef) (ActorView, bool, error) {
+	return keysetPage(pg.Token, pg.Limit, fetch, func(k keyRef) (ActorView, bool, error) {
 		visible := admin || k.ID == p.ActorID
 		if !visible {
 			other := &Principal{ActorID: k.ID, Scopes: []string{authz.AllScopes}}
