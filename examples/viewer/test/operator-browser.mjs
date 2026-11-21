@@ -317,7 +317,7 @@ async function freshIdentityFixture(setup = '') {
  try {
   await cmd('Page.navigate', {url:'about:blank'});
   await cmd('Page.navigate', {url:ORIGIN+'/#/boards'});
-  await until("!!window.__op && !document.querySelector('#operator-option').hidden && ['login','boards'].includes(document.body.dataset.view)");
+  await until("!!window.__op && !!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden && ['login','boards'].includes(document.body.dataset.view)");
  } finally { await cmd('Page.removeScriptToEvaluateOnNewDocument', {identifier}); }
 }
 async function identityNavigationCase() {
