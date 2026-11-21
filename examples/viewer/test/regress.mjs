@@ -206,22 +206,24 @@ try {
     throw new Error(`condition not reached: ${expr}`);
   };
 
-  check('prominent working and waiting summary', (await activity()).includes('Working now') && (await activity()).includes('Waiting'), await activity());
-  check('counts actors separately from multiple claims', (await activity()).includes('1 working actor') && (await activity()).includes('2 claimed tasks'), await activity());
+  check('prominent ownership and waiting summary', (await activity()).includes('Claimed tasks') && (await activity()).includes('Waiting'), await activity());
+  const windowOwnership = await activity();
+  check('ownership does not imply worker activity', ['Task ownership', 'Worker activity unavailable. A claim does not confirm worker activity.'].every((t) => (windowOwnership || '').includes(t)) && !/Working now|Working for|working actors?/i.test(windowOwnership), windowOwnership);
+  check('counts actors separately from multiple claims', (await activity()).includes('1 claiming actor') && (await activity()).includes('2 claimed tasks'), await activity());
   check('unclaimed agents are named without a process-status guess', (await activity()).includes('No active claimed task: bot-b'), await activity());
   check('longest waits stand out', await ev(`getComputedStyle(document.querySelector('[data-activity-task="task_owner"] time')).color !== getComputedStyle(document.querySelector('[data-activity-task="task_wait"] time')).color`));
-  check('working clock uses acquired_at', (await activity()).includes('Working for 8m'), await activity());
+  check('claim clock uses acquired_at', (await activity()).includes('Claim held for 8m'), await activity());
   const windowActivity = await activity();
   check('waits show assignee, reason, dependency and time in state', ['bot-a', 'review', 'waiting on @alice', '20m in waiting'].every((t) => (windowActivity || '').includes(t)), '');
   await ev(`window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() + 300000).toISOString() }, updated_at: new Date().toISOString() }, 'task.claim_renewed'); 1`);
   await sleep(700);
-  check('renewal does not reset working clock', (await activity()).includes('Working for 8m'), await activity());
+  check('renewal does not reset claim clock', (await activity()).includes('Claim held for 8m'), await activity());
   await ev(`window.__taskEvent('task_owner', { updated_at: new Date().toISOString(), block: { reason: 'Changed reason' } }); 1`);
   await sleep(700);
   check('reason update keeps duration labeled as time in state', (await activity()).includes('1h 30m in blocked') && (await activity()).includes('Changed reason'), await activity());
   await ev(`window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, id: 'clm_new', acquired_at: new Date(Date.now() - 120000).toISOString() } }, 'task.claimed'); 1`);
   await sleep(700);
-  check('new claim uses new acquired_at', (await ev(`document.querySelector('[data-activity-task="task_work"] time').textContent`)).includes('Working for 2m'), await activity());
+  check('new claim uses new acquired_at', (await ev(`document.querySelector('[data-activity-task="task_work"] time').textContent`)).includes('Claim held for 2m'), await activity());
   await ev(`window.__taskEvent('task_wait', { state: 'blocked', state_changed_at: new Date().toISOString(), block: { reason: 'Check results' } }, 'task.blocked'); 1`);
   await sleep(700);
   check('state transition resets state clock and shows explicit reason', /[0-2]s in blocked/.test(await activity()) && (await activity()).includes('Check results'), await activity());
@@ -410,7 +412,7 @@ try {
     window.__taskEvent('task_wait', {state:'waiting',state_changed_at:new Date(Date.now()-1202000).toISOString(),dependencies:[{task_id:'task_owner',state:'blocked'}]}); 1`);
   await sleep(800);
   check('failed and canceled tasks have their own truthful lists', await ev(`!!document.querySelector('.w-col-failed [data-task="task_second"]') && !!document.querySelector('.w-col-canceled [data-task="task_review"]') && !document.querySelector('.w-col-completed [data-task="task_second"]')`));
-  check('Lanes reuses activity summary and real task clocks', await ev(`document.querySelector('.w-wrap .t-agent-activity')?.textContent.includes('Working for 8m') && document.querySelector('[data-task="task_work"]')?.textContent.includes('Working for 8m') && document.querySelector('[data-task="task_wait"]')?.textContent.includes('20m in waiting')`), await ev(`({summary:document.querySelector('.w-wrap .t-agent-activity')?.textContent,work:document.querySelector('[data-task="task_work"]')?.textContent,wait:document.querySelector('[data-task="task_wait"]')?.textContent})`).then(JSON.stringify));
+  check('Lanes reuses activity summary and real task clocks', await ev(`document.querySelector('.w-wrap .t-agent-activity')?.textContent.includes('Claim held for 8m') && document.querySelector('[data-task="task_work"]')?.textContent.includes('Claim held for 8m') && document.querySelector('[data-task="task_wait"]')?.textContent.includes('20m in waiting')`), await ev(`({summary:document.querySelector('.w-wrap .t-agent-activity')?.textContent,work:document.querySelector('[data-task="task_work"]')?.textContent,wait:document.querySelector('[data-task="task_wait"]')?.textContent})`).then(JSON.stringify));
   check('Lanes cards link visible wait prerequisites and show hidden hints', await ev(`!!document.querySelector('[data-task="task_wait"] .w-reason a[href*="thr_deploy"]') && document.querySelector('[data-task="task_hidden"]')?.textContent.includes('details not visible')`));
   check('Lanes cards carry real labels and actor badges', await ev(`!!document.querySelector('[data-task="task_owner"] .w-label') && !!document.querySelector('[data-task="task_work"] .av')`));
   await ev(`for(let i=0;i<18;i++) window.__addTask('task_list_'+i,'Check browser case '+(i+1)); 1`);
@@ -442,7 +444,7 @@ try {
   check('Lanes expired claims stay unconfirmed until authoritative read', await ev(`document.querySelector('[data-task="task_work"]')?.textContent.includes('Status unconfirmed') && document.querySelector('[data-task="task_work"] time')?.classList.contains('w-stale') && document.querySelector('.a-counts').textContent.includes('to confirm')`));
   await ev(`window.__taskEvent('task_work',{state:'ready',current_claim:null},'task.released');window.__fake.holdTask=null;window.__fake.heldTasks[0].release();1`);
   await sleep(700);
-  check('Lanes release removes working clock and late read cannot restore claim', await ev(`!!document.querySelector('.w-col-ready [data-task="task_work"]') && !document.querySelector('[data-task="task_work"] time')`));
+  check('Lanes release removes claim clock and late read cannot restore claim', await ev(`!!document.querySelector('.w-col-ready [data-task="task_work"]') && !document.querySelector('[data-task="task_work"] time')`));
   await cmd('Emulation.setDeviceMetricsOverride', { width:1280,height:900,deviceScaleFactor:1,mobile:false });
   await go('#/irc?b=brd_test');
   check('IRC frame fills entire viewport with square blue chrome', await ev(`(() => {const r=document.querySelector('.i-win').getBoundingClientRect();return r.x===0 && r.y===0 && r.width===innerWidth && r.height===innerHeight && getComputedStyle(document.querySelector('.i-title')).backgroundImage==='none';})()`));
