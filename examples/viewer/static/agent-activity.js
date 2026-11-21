@@ -58,7 +58,7 @@ export function createAgentActivity(store, href, status) {
   const freshness = h('p', { class: 'a-freshness', role: 'status' });
   const workingRows = [...groups].map(([id, held]) => {
     const rows = held.map((t) => h('li', { 'data-activity-task': t.id, 'data-expires': t.current_claim.expires_at },
-      link(t, `${store.num(t.id)} ${t.title}`), duration(t.current_claim.acquired_at, 'Working for '), h('span', { class: 'a-unconfirmed' })));
+      link(t, `${store.num(t.id)} ${t.title}`), duration(t.current_claim.acquired_at, 'Claim held for '), h('span', { class: 'a-unconfirmed' })));
     return h('div', { class: 'a-agent' }, h('b', {}, store.handle(id)), h('ul', {}, rows));
   });
   const waitingRows = waiting.map((t) => {
@@ -69,10 +69,11 @@ export function createAgentActivity(store, href, status) {
       h('span', { class: 'a-assignee' }, t.assignee_actor_id ? `Assigned to @${store.handle(t.assignee_actor_id)}` : 'Unassigned'),
       duration(t.state_changed_at, '', ` in ${t.state} state`), h('div', { class: 'a-reasons' }, reasons));
   });
-  const root = h('section', { class: 't-agent-activity', 'aria-label': 'Agent activity', tabindex: '0' },
-    h('header', { class: 'a-heading' }, h('b', {}, `${store.S.board.name} · Agent activity`), counts), freshness,
+  const root = h('section', { class: 't-agent-activity', 'aria-label': 'Task ownership', tabindex: '0' },
+    h('header', { class: 'a-heading' }, h('b', {}, `${store.S.board.name} · Task ownership`), counts), freshness,
+    h('p', { class: 't-mute' }, 'Worker activity unavailable. A claim does not confirm worker activity.'),
     h('div', { class: 'a-columns' },
-      h('section', {}, h('h2', {}, 'Working now'), workingRows,
+      h('section', {}, h('h2', {}, 'Claimed tasks'), workingRows,
         !groups.size ? h('p', { class: 't-mute' }, 'No active claimed tasks.') : null,
         noClaim.length ? h('p', { class: 'a-unclaimed t-mute' }, `No active claimed task: ${noClaim.map((a) => a.handle).join(', ')}`) : null),
       h('section', {}, h('h2', {}, 'Waiting'), h('ul', {}, waitingRows),
@@ -81,13 +82,13 @@ export function createAgentActivity(store, href, status) {
   function update() {
     const { at, stale, confirmedAt } = activityClock(store, status);
     root.classList.toggle('a-stale', stale);
-    const freshnessText = stale ? `Last known data · ${status === 'live' ? 'connection not confirmed' : status}. Activity may have changed.`
-      : 'Current task claims and waits. Times show time in each task state.';
+    const freshnessText = stale ? `Last known data · ${status === 'live' ? 'connection not confirmed' : status}. Claims and waits may have changed.`
+      : 'Current task claims and waits. Claim clocks show claim age. Wait clocks show time in each task state.';
     if (freshness.textContent !== freshnessText) freshness.textContent = freshnessText;
     const active = claimed.filter((t) => Date.parse(t.current_claim.expires_at) > at);
     const actors = new Set(active.map((t) => t.current_claim.actor_id)).size;
     const plural = (n, singular) => `${n} ${singular}${n === 1 ? '' : 's'}`;
-    counts.textContent = `${stale ? 'Last known: ' : ''}${plural(actors, 'working actor')} · ${plural(active.length, 'claimed task')} · ${plural(waiting.length, 'waiting task')}${active.length < claimed.length ? ` · ${claimed.length - active.length} to confirm` : ''}`;
+    counts.textContent = `${stale ? 'Last known: ' : ''}${plural(actors, 'claiming actor')} · ${plural(active.length, 'claimed task')} · ${plural(waiting.length, 'waiting task')}${active.length < claimed.length ? ` · ${claimed.length - active.length} to confirm` : ''}`;
     for (const el of root.querySelectorAll('time[data-since]')) {
       const row = el.closest('[data-expires]');
       const expires = row ? Date.parse(row.dataset.expires) : Infinity;

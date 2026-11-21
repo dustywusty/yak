@@ -76,7 +76,7 @@ export function wall(root, { threadHref }) {
     for (const { t, time, notice, working } of clocks) {
       const expiry = working ? Date.parse(t.current_claim.expires_at) : Infinity;
       const displayAt = Math.min(confirmedAt, expiry);
-      time.textContent = working ? `Working for ${elapsed(t.current_claim.acquired_at, displayAt)}` : `${elapsed(t.state_changed_at, displayAt)} in ${t.state} state`;
+      time.textContent = working ? `Claim held for ${elapsed(t.current_claim.acquired_at, displayAt)}` : `${elapsed(t.state_changed_at, displayAt)} in ${t.state} state`;
       time.classList.toggle('w-long', !working && displayAt - Date.parse(t.state_changed_at) >= 3600000);
       time.classList.toggle('w-stale', stale || expiry <= at);
       notice.textContent = working && expiry <= at ? 'Status unconfirmed · last reported claim; checking for updates.' : '';
