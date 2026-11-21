@@ -107,7 +107,7 @@ async function op17033ConflictCase() {
  await freshIdentityFixture("Object.assign(window.__op.task,{revision:833,brief_revision:33,assignee_actor_id:'a'});window.__op.conflict=true;");
  try {
   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-conflict-token';document.querySelector('#login-form').requestSubmit()");
-  await until("document.body.dataset.operator==='true'");await open();
+  await until("!!document.body && document.body.dataset.operator==='true'");await open();
   await ev("window.__op.enableConflictClock()");
   const before=await count(),details=await op17030ExpectedDetails('Approve and unblock');
   await click('Approve and unblock');await until("!!document.querySelector('.op-confirm[open]')");
@@ -148,7 +148,7 @@ async function op17033ConflictCase() {
   assert('fresh explicit confirmation still shows latest values',await ev("document.querySelector('.op-confirm pre').textContent")===latest);
   await noRepeat('before fresh confirmation');
   await confirm('Approve and unblock');
-  await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+  await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
   await ev('window.__op.drainConflictClock()');
   const writes=await actionWrites(),unblocks=writes.filter(w=>w.path.endsWith('/unblock'));
   assert('fresh confirmation adds exactly one new state-changing intent',writes.length===3 && unblocks.length===2 && writes[2].method==='PATCH' && writes[2].path==='/v1/boards/brd_test/messages/root/labels' && writes[2].body.operations[0].value==='approved',JSON.stringify(writes));
@@ -190,8 +190,8 @@ async function op17030ConfirmationValuesCase() {
   await freshIdentityFixture(`Object.assign(window.__op.task,{title:'OP17-030 read title',revision:730,brief_revision:43,state:${JSON.stringify(['A7','A9'].includes(variant)?'ready':'blocked')},assignee_actor_id:${JSON.stringify(['A7','A9'].includes(variant)?'a':'bot')},direct_action_required:${action!=='Require my approval'},block:{reason:'OP17-030 waiting for security review'}});window.__op.enableConfirmationDelay();`);fixtures++;
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-values-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");await open();
-   if(action==='Release'){await click('Work on this now (while this tab is open)');await confirm('Claim');await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");}
+   await until("!!document.body && document.body.dataset.operator==='true'");await open();
+   if(action==='Release'){await click('Work on this now (while this tab is open)');await confirm('Claim');await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");}
    await ev(`document.querySelector('input[aria-label^="Task title"]').value='OP17-030 new title';document.querySelector('textarea[aria-label^="Message"]').value='OP17-030 new task text';document.querySelector('select[aria-label="Task assignee"]').value=${JSON.stringify(gate?'a':'bot')};document.querySelector('input[aria-label^="Needs my approval"]').checked=${gate};const note=document.querySelector('textarea[aria-label="Gate note t"]');if(note)note.value='OP17-030 requested security changes';const assignee=document.querySelector('select[aria-label="New assignee"]');if(assignee)assignee.value='';`);
    await matrix(action,named,'',(name,ok,detail)=>assert(`${variant}: ${name}`,ok,detail));
    if(action==='Request changes')assert(`${variant}: gate flag remains true and state remains blocked`,await ev("window.__op.task.direct_action_required===true && window.__op.task.state==='blocked'"));
@@ -235,8 +235,8 @@ async function op17027NativeEnterCase() {
   await freshIdentityFixture(`window.__op.task.state=${JSON.stringify(['A7','A9'].includes(variant)?'ready':'blocked')};window.__op.task.direct_action_required=${action!=='Require my approval'};window.__op.task.assignee_actor_id=${variant==='A10 unassign'?"'a'":'null'};`);fixtures++;
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-enter-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");await open();
-   if(action==='Release'){await click('Work on this now (while this tab is open)');await confirm('Claim');await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");}
+   await until("!!document.body && document.body.dataset.operator==='true'");await open();
+   if(action==='Release'){await click('Work on this now (while this tab is open)');await confirm('Claim');await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");}
    await ev(`document.querySelector('input[aria-label^="Task title"]').value='Native Enter task';document.querySelector('textarea[aria-label^="Message"]').value='Native Enter brief';document.querySelector('input[aria-label^="Needs my approval"]').checked=${approval};const note=document.querySelector('textarea[aria-label="Gate note t"]');if(note)note.value='Please change this';`);
    if(variant==='A10 unassign')await ev("document.querySelector('select[aria-label=\"New assignee\"]').value=''");
    const before=await count();
@@ -300,8 +300,8 @@ async function op17026ConfirmationCase() {
   await freshIdentityFixture(`window.__op.task.state=${JSON.stringify(action.includes('Work on') || action==='Release'?'ready':'blocked')};window.__op.task.direct_action_required=${action!=='Require my approval'};window.__op.task.assignee_actor_id=${action==='Assign / unassign'?"'a'":'null'};`);fixtures++;
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-confirm-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");await open();
-   if(action==='Release') {await click('Work on this now (while this tab is open)');await confirm('Claim');await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");}
+   await until("!!document.body && document.body.dataset.operator==='true'");await open();
+   if(action==='Release') {await click('Work on this now (while this tab is open)');await confirm('Claim');await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");}
    if(action==='Assign / unassign')await ev("document.querySelector('select[aria-label=\"New assignee\"]').value=''");
    await matrix(action,named,`{const note=document.querySelector('textarea[aria-label="Gate note t"]');if(note)note.value='Please change this';}document.querySelector('input[aria-label^="Task title"]').value='Confirmation task';document.querySelector('textarea[aria-label^="Message"]').value='Confirmation brief';document.querySelector('input[aria-label^="Needs my approval"]').checked=${!!gate}`,assert,reject);
    if(reject)assert(`${action}: rejected first step never updates label`,await ev("window.__op.root.labels.gate==='pending' && !document.querySelector('.op-receipts').textContent.includes('Saved.')"));
@@ -317,7 +317,7 @@ async function freshIdentityFixture(setup = '') {
  try {
   await cmd('Page.navigate', {url:'about:blank'});
   await cmd('Page.navigate', {url:ORIGIN+'/#/boards'});
-  await until("!!window.__op && !!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden && ['login','boards'].includes(document.body.dataset.view)");
+  await until("!!window.__op && !!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden && !!document.body && ['login','boards'].includes(document.body.dataset.view)");
  } finally { await cmd('Page.removeScriptToEvaluateOnNewDocument', {identifier}); }
 }
 async function identityNavigationCase() {
@@ -328,12 +328,12 @@ async function identityNavigationCase() {
   assert(`${name} shows ${label}`, await ev(`!document.querySelector('#forget').hidden && document.querySelector('#forget').textContent===${JSON.stringify(label)} && !document.querySelector('#nav').hidden`));
  };
  const cleared = async (name) => {
-  await until("!document.querySelector('#login').hidden");
+  await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
   assert(`${name} clears identity and logout control`, await ev("document.querySelector('#me').textContent==='' && document.querySelector('#forget').hidden && document.querySelector('#operator-session').hidden && !document.body.dataset.operator && !sessionStorage.length"));
  };
  const login = async (operator) => {
   await ev(`document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-identity-token';document.querySelector('#login-form').requestSubmit()`);
-  await until("document.body.dataset.view==='boards'");
+  await until("!!document.body && document.body.dataset.view==='boards'");
  };
  await freshIdentityFixture("window.__op.scope=['read'];");
  await login(false);
@@ -343,7 +343,7 @@ async function identityNavigationCase() {
  await cleared('read-only forget');
  assert('read-only forget sends no writes', await count()===0);
  await freshIdentityFixture("window.__op.scope=['read'];sessionStorage.setItem('yak-viewer-token','synthetic-restored-token');");
- await until("document.body.dataset.view==='boards'");
+ await until("!!document.body && document.body.dataset.view==='boards'");
  await header('restored read-only token', 'Forget token');
  assert('restoration retains read-only tab token without writes', await ev("sessionStorage.getItem('yak-viewer-token')==='synthetic-restored-token' && window.__op.writes.length===0"));
  for (const selector of ['#forget', '#operator-logout']) {
@@ -358,7 +358,7 @@ async function identityNavigationCase() {
  for (const [name, setup, operator] of [['rejected read-only credential', 'window.__op.expired=true', false], ['refused operator credential', "window.__op.kind='agent'", true]]) {
   await freshIdentityFixture();
   await ev(`${setup};document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-invalid-token';document.querySelector('#login-form').requestSubmit()`);
-  await until("!document.querySelector('#login-error').hidden && !document.querySelector('#connect').disabled");
+  await until("!!document.querySelector('#login-error') && !document.querySelector('#login-error').hidden && !!document.querySelector('#connect') && !document.querySelector('#connect').disabled");
   await cleared(name);
   assert(`${name} sends no writes`, await count()===0);
  }
@@ -372,18 +372,18 @@ async function responseBodyFailureCase() {
   await freshIdentityFixture("window.__op.task.state='ready';");
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-body-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'"); await open();
+   await until("!!document.body && document.body.dataset.operator==='true'"); await open();
    await ev(`window.__op.responseFailure=${JSON.stringify(fault)}`);
    await click('Work on this now (while this tab is open)'); await confirm('Claim');
    if (fault === 'broken401') {
-    await until("!document.body.dataset.operator");
+    await until("!!document.body && !document.body.dataset.operator");
     assert('malformed 401 ends without release/revoke/retry', await count() === 1);
     assert('malformed 401 clears session UI', await ev("!document.querySelector('.op-workspace') && !sessionStorage.length"));
    } else if (fault === 'broken412') {
-    await until("document.querySelector('.op-receipts').textContent.includes('No retry was sent')");
+    await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')");
     assert('malformed 412 is a known rejection', await ev("!document.querySelector('.op-receipts').textContent.includes('Retry same intent') && !document.querySelector('.op-receipts').textContent.includes('Saved.') && window.__op.writes.length===1"));
    } else if (fault === 'empty204') {
-    await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+    await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
     assert('204 succeeds with explicit proof unavailable notice', await ev("document.querySelector('#operator-identity').textContent.includes('proof unavailable') && window.__op.writes.length===1"));
    } else {
     assert(`${fault} keeps receipt uncertain without completion or proof`, await ev("document.querySelector('.op-receipts').textContent.includes('Retry same intent') && !document.querySelector('.op-receipts').textContent.includes('Saved.') && !document.querySelector('#operator-identity').textContent.includes('proof unavailable') && !document.querySelector('.op-lease') && window.__op.writes.length===1"));
@@ -391,7 +391,7 @@ async function responseBodyFailureCase() {
     // Continue other variants even against the unfixed transport during RED.
     if (await ev("document.querySelector('.op-receipts').textContent.includes('Retry same intent')")) {
      await click('Retry same intent');
-     await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+     await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
      assert(`${fault} replay uses the same request and key`, await ev("window.__op.writes.length===2 && JSON.stringify(window.__op.writes[0])===JSON.stringify(window.__op.writes[1])"));
      assert(`${fault} replay obtains a usable proof`, await ev("!!document.querySelector('.op-lease') && !document.querySelector('#operator-identity').textContent.includes('proof unavailable')"));
      await click('Release'); await confirm('Release');
@@ -400,7 +400,7 @@ async function responseBodyFailureCase() {
    }
   } finally {
    if (await ev("document.body.dataset.operator==='true'")) {
-    await ev("document.querySelector('#operator-logout').click()"); await until("!document.body.dataset.operator");
+    await ev("document.querySelector('#operator-logout').click()"); await until("!!document.body && !document.body.dataset.operator");
    }
   }
  }
@@ -415,11 +415,11 @@ async function op17032AutomaticRenewalCase() {
   await freshIdentityFixture(`window.__op.task.state='ready';window.__op.testLease=30;window.__op.clock=(${op17032Clock.toString()})();Object.defineProperty(performance,'now',{configurable:true,value:window.__op.clock.now});window.setTimeout=window.__op.clock.schedule;window.clearTimeout=window.__op.clock.unschedule;`);fixtures++;
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-auto-renew';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");await open();
+   await until("!!document.body && document.body.dataset.operator==='true'");await open();
    await click('Work on this now (while this tab is open)');await confirm('Claim');
    const delay=await ev('[...window.__op.clock.timers.values()].map(t=>t.delay).find(ms=>ms>=9000 && ms<=11000)');
    assert(`${variant}: actual timer uses lease/3 jitter`,delay>=9000 && delay<=11000);
-   await until("document.querySelector('.op-lease').textContent.includes('30 seconds remaining')");
+   await until("!!document.querySelector('.op-lease') && document.querySelector('.op-lease').textContent.includes('30 seconds remaining')");
    assert(`${variant}: visible held lease`,await ev("document.querySelector('.op-lease').textContent.includes('30 seconds remaining')"));
    if(variant==='success') {
     const invalid=await ev(`(async()=>{const send=(body,proof,path='q')=>fetch('/v1/boards/brd_test/tasks/t/claims/'+path+'/renew',{method:'POST',body:JSON.stringify(body),headers:{'Yak-Claim-Proof':proof}}).then(async r=>({status:r.status,body:await r.json()}));return Promise.all([send({lease_seconds:30},''),send({lease_seconds:30},'wrong-proof'),send({lease_seconds:1},'fake-secret-proof'),send({lease_seconds:30,extra:true},'fake-secret-proof'),send({lease_seconds:30},'fake-secret-proof','missing')]);})()`);
@@ -429,7 +429,7 @@ async function op17032AutomaticRenewalCase() {
    if(variant==='logout'||variant==='unmount') {
     if(variant==='logout')await ev("document.querySelector('#operator-logout').click()");
     else await ev("window.dispatchEvent(new Event('pagehide'))");
-    await until('!document.body.dataset.operator');
+    await until('!!document.body && !document.body.dataset.operator');
     await ev('window.__op.clock.advance(60000)');
     assert(`${variant}: no later renew and release precedes revoke`,await ev("!window.__op.writes.some(w=>w.path.endsWith('/renew')) && window.__op.writes.at(-2).path.endsWith('/release') && window.__op.writes.at(-1).method==='DELETE'"));
     continue;
@@ -456,7 +456,7 @@ async function op17032AutomaticRenewalCase() {
     assert(`${variant}: claim ended visibly`,await ev("document.querySelector('.op-lease').textContent.includes('Your claim ended') && document.querySelector('#operator-identity').textContent.includes('Your claim ended')"));
     const before=await ev('window.__op.renewAttempts');await ev('window.__op.clock.advance(60000)');
     assert(`${variant}: no timer continues after loss`,await ev('window.__op.renewAttempts')===before);
-    await ev("document.querySelector('#operator-logout').click()");await until('!document.body.dataset.operator');
+    await ev("document.querySelector('#operator-logout').click()");await until('!!document.body && !document.body.dataset.operator');
     assert(`${variant}: dropped proof cannot be released`,await ev("!window.__op.writes.some(w=>w.path.endsWith('/release'))"));
    }
   } finally {await ev("document.querySelector('#operator-logout')?.click()");}
@@ -484,7 +484,7 @@ async function renewalClaimViewCase() {
   await freshIdentityFixture('window.__op.task.state="ready";window.__op.enableRenewTest();');
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-renew-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'"); await open();
+   await until("!!document.body && document.body.dataset.operator==='true'"); await open();
    await click('Work on this now (while this tab is open)'); await confirm('Claim');
    // The fixture grants 30 seconds for these cases so the original bound is observable.
    await ev(`window.__op.renewReply=${JSON.stringify(view)};window.__op.renewDate=${JSON.stringify(name === 'missing Date' ? 'unknown' : date)};window.__op.mono=5000;window.__op.deferRenew=true;window.__op.pendingRenew=window.__op.fireRenew();void 0`);
@@ -500,7 +500,7 @@ async function renewalClaimViewCase() {
    assert(`${name} sends exactly one renewal with proof and receipt`, await ev("window.__op.writes.filter(w=>w.path.endsWith('/renew')).length===1 && window.__op.writes.find(w=>w.path.endsWith('/renew')).headers['Yak-Claim-Proof']==='fake-secret-proof' && !!window.__op.writes.find(w=>w.path.endsWith('/renew')).headers['Idempotency-Key']"));
    if (remaining === null) {
     assert(`${name} drops held claim and tells person to refresh`, await ev("document.querySelector('#operator-identity').textContent.includes('Your claim ended. Refresh') && document.querySelector('.op-lease').textContent.includes('Your claim ended') && window.__op.renewTimers.length===0"));
-    await ev("document.querySelector('#operator-logout').click()"); await until("!document.body.dataset.operator");
+    await ev("document.querySelector('#operator-logout').click()"); await until("!!document.body && !document.body.dataset.operator");
     assert(`${name} discarded proof is never released`, await ev("!window.__op.writes.some(w=>w.path.endsWith('/release'))"));
    } else {
     // changed() runs on the next tick for a retained claim.
@@ -526,7 +526,7 @@ async function boardSwitchCase() {
   const variant = `${fail?'failed':'deferred'} discovery, ${reply?'reply':'new thread'}`;
   await freshIdentityFixture('window.__op.enableBoardSwitch();');
   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-switch';document.querySelector('#login-form').requestSubmit()");
-  await until("document.body.dataset.operator==='true'");
+  await until("!!document.body && document.body.dataset.operator==='true'");
   await ev("document.querySelector('#operator-tools').click()");
   await until("!!document.querySelector('textarea[aria-label^=Message]')");
   if (reply) await selectThread('th');
@@ -590,12 +590,12 @@ async function boardSwitchCase() {
   const variant = `${cosmetic?'cosmetic':'ordinary'} pending recovery after ${transition}`;
   await freshIdentityFixture('window.__op.enableBoardSwitch();');
   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-recovery';document.querySelector('#login-form').requestSubmit()");
-  await until("document.body.dataset.operator==='true'"); await open();
+  await until("!!document.body && document.body.dataset.operator==='true'"); await open();
   await ev(`window.__op.pendingFailurePath=${JSON.stringify(cosmetic?'/v1/boards/brd_test/messages/root/labels':'/v1/boards/brd_test/threads/th/messages')};document.querySelector('textarea[aria-label^=Message]').value='original A body';window.__staleWrites=[...document.querySelectorAll('.op-workspace [data-op-write]')];`);
   if (cosmetic) { await click('Approve and unblock'); await confirm('Approve and unblock'); }
   else await click('Send reply');
   const retry = cosmetic?'Retry label only':'Retry same intent';
-  await until(`document.querySelector('.op-receipts').textContent.includes(${JSON.stringify(retry)})`);
+  await until(`!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes(${JSON.stringify(retry)})`);
   await ev(`window.__retry=[...document.querySelectorAll('.op-pending button')].find(b=>b.textContent===${JSON.stringify(retry)});window.__originalWrite=JSON.stringify(window.__op.writes.at(-1));`);
   assert(`${variant}: receipt identifies original destination`,await ev("document.querySelector('.op-receipts').textContent.includes(JSON.parse(window.__originalWrite).path)"));
   const before = await count();
@@ -627,11 +627,11 @@ async function boardSwitchCase() {
    await ev("window.__retry=[...document.querySelectorAll('.op-pending button')].find(b=>b.textContent==='Retry same intent')");
   }
   // Retained receipt callbacks must also refuse after the session is replaced.
-  await ev("document.querySelector('#operator-logout').click()"); await until("!document.querySelector('#login').hidden");
+  await ev("document.querySelector('#operator-logout').click()"); await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
   const ended=await count(); await ev("window.__retry.dispatchEvent(new Event('click'))"); await sleep(100);
   assert(`${variant}: ended session cannot replay receipt`,await count()===ended);
   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-replacement';window.__op.revoked=false;document.querySelector('#login-form').requestSubmit()");
-  await until("document.body.dataset.operator==='true'");
+  await until("!!document.body && document.body.dataset.operator==='true'");
   const replaced=await count(); await ev("window.__retry.dispatchEvent(new Event('click'))"); await sleep(100);
   assert(`${variant}: replacement session cannot replay receipt`,await count()===replaced);
  }
@@ -647,7 +647,7 @@ async function refreshDiscoveryCase() {
   await freshIdentityFixture('window.__op.enableBoardSwitch();');
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-discovery-refresh';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");
+   await until("!!document.body && document.body.dataset.operator==='true'");
    await ev(`window.__op.deferBoard=true;window.__op.failBoard=${variant === 'failed'};window.__op.emptyBoard=${variant === 'empty'};`);
    if (variant === 'initial') {
     await ev("window.dispatchEvent(new CustomEvent('yak-operator-open',{detail:{board:'brd_other'}}))");
@@ -667,7 +667,7 @@ async function refreshDiscoveryCase() {
    assert(`${variant}: no old channel or writes during discovery`, await ev("!document.querySelector('.op-workspace select[aria-label=Channel]') && !document.querySelector('.op-workspace [data-op-write]')"));
    await ev('window.__op.deferBoard=false;window.__op.resolveBoard()');
    if (variant === 'failed' || variant === 'empty') {
-    await until(variant === 'failed' ? "document.querySelector('.op-workspace [role=status]').textContent.includes('synthetic_discovery_failure')" : "document.querySelector('.op-workspace [role=status]').textContent.includes('No readable channel')");
+    await until(variant === 'failed' ? "!!document.querySelector('.op-workspace [role=status]') && document.querySelector('.op-workspace [role=status]').textContent.includes('synthetic_discovery_failure')" : "!!document.querySelector('.op-workspace [role=status]') && document.querySelector('.op-workspace [role=status]').textContent.includes('No readable channel')");
     assert(`${variant}: Refresh stays disabled and old writes stay absent`, await ev("window.__refresh.disabled && !document.querySelector('.op-workspace [data-op-write]')"));
     const settled = await ev('window.__op.boardReads.length');
     await ev("window.__refresh.dispatchEvent(new Event('click'))"); await sleep(80);
@@ -689,7 +689,7 @@ async function refreshDiscoveryCase() {
    assert(`${variant}: regression sent no writes`, await count() === 0);
   } finally {
    await ev("if(document.body.dataset.operator==='true')document.querySelector('#operator-logout').click()");
-   await until("!document.body.dataset.operator");
+   await until("!!document.body && !document.body.dataset.operator");
   }
  }
  assert('no browser exceptions', errors.length === 0);
@@ -704,7 +704,7 @@ async function openRaceCase() {
   await freshIdentityFixture();
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-open-race';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");
+   await until("!!document.body && document.body.dataset.operator==='true'");
    await ev(`window.__op.enableOpenRace();window.dispatchEvent(new CustomEvent('yak-operator-open',{detail:{board:'brd_test',ch:'ops',t:'th'}}));`);
    await until('window.__op.openReads.length===1');
    assert(`${variant}: A really waits for boards`, await ev("!document.querySelector('.op-workspace select')"));
@@ -752,7 +752,7 @@ async function delayedDraftCase() {
    await freshIdentityFixture('window.__op.enableBoardSwitch();window.__op.enableDraftDelay();');
    try {
     await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-draft-token';document.querySelector('#login-form').requestSubmit()");
-    await until("document.body.dataset.operator==='true'");
+    await until("!!document.body && document.body.dataset.operator==='true'");
     if (kind === 'reply') await open();
     else {
      await ev("document.querySelector('#operator-tools').click()");
@@ -785,14 +785,14 @@ async function delayedDraftCase() {
      await until("!!document.querySelector('textarea[aria-label*=brd_other]')");
      await setField('textarea[aria-label*=brd_other]', 'other board draft');
      await ev('window.__op.resolveDraft()');
-     await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+     await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
      assert(`${kind}/${variant}: completion preserves other board`, await ev("document.querySelector('textarea[aria-label*=brd_other]').value==='other board draft'"));
      await click('Close');
      await ev(`window.dispatchEvent(new CustomEvent('yak-operator-open',{detail:{board:'brd_test',ch:'ops',${kind === 'reply' ? "t:'th'" : ''}}}))`);
      await until(`!!document.querySelector(${JSON.stringify(text)})`);
     } else {
      await ev('window.__op.resolveDraft()');
-     await until(variant === 'network' ? "document.querySelector('.op-receipts').textContent.includes('Retry same intent')" : variant === 'conflict' ? "document.querySelector('.op-receipts').textContent.includes('No retry was sent')" : "document.querySelector('.op-receipts').textContent.includes('Saved.') && !document.querySelector('.op-pending')?.textContent.includes('Sending')");
+     await until(variant === 'network' ? "!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Retry same intent')" : variant === 'conflict' ? "!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')" : "!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.') && !document.querySelector('.op-pending')?.textContent.includes('Sending')");
      if (!['network','conflict'].includes(variant)) {
       if (!['text','both','restore'].includes(variant)) expectedText='';
       if (!['title','both','title-restore'].includes(variant)) expectedTitle='';
@@ -804,7 +804,7 @@ async function delayedDraftCase() {
     assert(`${kind}/${variant}: no implicit resend`, await count()===before+1);
    } finally {
     await ev("window.__op.delayDraft=false;document.querySelector('#operator-logout')?.click()");
-    await until("!document.body.dataset.operator");
+    await until("!!document.body && !document.body.dataset.operator");
    }
   }
  }
@@ -823,16 +823,16 @@ async function cosmeticReceiptCase() {
   await freshIdentityFixture();
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-cosmetic-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'"); await open();
+   await until("!!document.body && document.body.dataset.operator==='true'"); await open();
    await ev(`window.__op.labelFault={status:${status==='approved'?412:status},current:${JSON.stringify(status==='approved'?'approved':'changes_requested')}};document.querySelector('textarea[aria-label="Gate note t"]').value='original changes';`);
    const action=kind==='approve'?'Approve and unblock':'Request changes';
    await click(action); await confirm(action);
    if(status==='approved') {
-    await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+    await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
     assert(`${name}: approved conflict finishes without retry`,await count()===2 && await ev("!document.querySelector('.op-receipts button')"));
     continue;
    }
-   await until("document.querySelector('.op-receipts').textContent.includes('Retry label only')");
+   await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Retry label only')");
    assert(`${name}: explicit partial receipt`,await ev(`document.querySelector('.op-receipts').textContent.includes(${JSON.stringify(kind==='approve'?'Approved; label not updated':'Reply posted; label not updated')})`));
    await ev('window.__receipt=document.querySelector(".op-pending")');
    const original=await ev('window.__op.writes[1]');
@@ -856,7 +856,7 @@ async function cosmeticReceiptCase() {
    assert(`${name}: rapid retry captures one write and blocks new writes`,await count()===before+1 && !await ev(replyEnabled));
    // Resolve the same receipt with an uncertain result, then a successful retry.
    await ev('window.__op.labelFault={status:503};window.__op.resolveLabel();window.__op.deferLabel=false');
-   await until("document.querySelector('.op-receipts').textContent.includes('Retry label only')");
+   await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Retry label only')");
    assert(`${name}: uncertain retry retains receipt and global lock`,await ev("window.__receipt===document.querySelector('.op-pending') && window.__receipt.textContent.includes('Retry label only')") && !await ev(replyEnabled));
    await ev('window.__op.labelFault=null'); await click('Retry label only');
    await until("!document.querySelector('.op-receipts button')");
@@ -866,7 +866,7 @@ async function cosmeticReceiptCase() {
    assert(`${name}: every label retry is original request`,writes.filter(w=>w.path.endsWith('/labels')).every(w=>JSON.stringify(w)===JSON.stringify(original)));
   } finally {
    await ev("window.__op.deferLabel=false;window.__op.resolveLabel?.();document.querySelector('#operator-logout')?.click()");
-   await until('!document.body.dataset.operator');
+   await until('!!document.body && !document.body.dataset.operator');
   }
  }
  assert('all fresh variants executed',fixtures===13 && assertions>=100);
@@ -912,7 +912,7 @@ async function op17031ConditionalLabelsCase() {
   await freshIdentityFixture(`window.__op.root.labels.gate=${JSON.stringify(current)};window.__op.failLabel=${current==='pending'?1:0};`); fixtures++;
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-conditional-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'"); await open();
+   await until("!!document.body && document.body.dataset.operator==='true'"); await open();
    await click('Approve and unblock'); await confirm('Approve and unblock');
    assert(`${current}: unblock then conditional label`,await ev("window.__op.writes.length===2 && window.__op.writes[0].path.endsWith('/unblock') && window.__op.writes[1].body.operations[0].expect.value==='pending' && window.__op.task.state==='ready'"));
    if(current==='approved') {
@@ -926,7 +926,7 @@ async function op17031ConditionalLabelsCase() {
     }
    }
   } finally {
-   await ev("document.querySelector('#operator-logout')?.click()"); await until('!document.body.dataset.operator');
+   await ev("document.querySelector('#operator-logout')?.click()"); await until('!!document.body && !document.body.dataset.operator');
   }
  }
  assert('all variants execute nonzero assertions',fixtures===21 && assertions>=65);
@@ -947,7 +947,7 @@ async function labelOpcodeCase() {
   await freshIdentityFixture();
   try {
    await ev(`${c.old===undefined?'delete window.__op.root.labels.priority':`window.__op.root.labels.priority=${JSON.stringify(c.old)}`};document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-label-token';document.querySelector('#login-form').requestSubmit()`);
-   await until("document.body.dataset.operator==='true'"); await open();
+   await until("!!document.body && document.body.dataset.operator==='true'"); await open();
    await ev(`document.querySelector('input[aria-label="Label key root"]').value=${JSON.stringify(`  ${c.key.toUpperCase()}  `)};document.querySelector('input[aria-label="Label value root"]').value='low'`);
    await click(c.action);
    if (c.refused) {
@@ -955,7 +955,7 @@ async function labelOpcodeCase() {
     assert(`${c.name}: key guard explains refusal`, await ev("document.querySelector('.op-workspace').textContent.includes('Choose an ordinary label key.')"));
     continue;
    }
-   await until("document.querySelector('.op-receipts').textContent.includes('Saved.')");
+   await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
    const writes = await ev('window.__op.writes');
    assert(`${c.name}: exactly one PATCH to selected message labels`, writes.length===1 && writes[0].method==='PATCH' && writes[0].path==='/v1/boards/brd_test/messages/root/labels');
    const ops = writes[0].body.operations, op = ops[0];
@@ -967,7 +967,7 @@ async function labelOpcodeCase() {
    console.log(`OP17-035 WIRE ${JSON.stringify(writes[0].body)}`);
   } finally {
    await ev("document.querySelector('#operator-logout')?.click()");
-   await until('!document.body.dataset.operator');
+   await until('!!document.body && !document.body.dataset.operator');
   }
  }
  assert('all nine fresh fixtures executed nonzero assertions', fixtures===9 && assertions===30);
@@ -988,11 +988,11 @@ async function gateEvidenceCase() {
   await freshIdentityFixture(`window.__op.task.state='ready';window.__op.events=${JSON.stringify(c.events)};`);
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-gate-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");
+   await until("!!document.body && document.body.dataset.operator==='true'");
    await ev("location.hash='#/b/brd_test?v=activity'");
    await until(`[...document.querySelectorAll('#feed .type')].some(el=>el.textContent===${JSON.stringify(c.candidate.type)})`);
    await open();
-   await until("document.querySelector('.op-workspace').textContent.includes('Task event history')");
+   await until("!!document.querySelector('.op-workspace') && document.querySelector('.op-workspace').textContent.includes('Task event history')");
    const workspace = await ev("document.querySelector('.op-workspace').textContent");
    assert(`${c.name}: workspace approval`, workspace.includes('Approved by ')===c.approved, workspace);
    if (c.candidate.type==='task.unblocked') {
@@ -1006,7 +1006,7 @@ async function gateEvidenceCase() {
    assert(`${c.name}: rendering sends no writes`, await count()===0);
   } finally {
    await ev("document.querySelector('#operator-logout')?.click()");
-   await until('!document.body.dataset.operator');
+   await until('!!document.body && !document.body.dataset.operator');
    assert(`${c.name}: cleanup revokes disposable credential only`, await ev("window.__op.writes.length===1 && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
   }
  }
@@ -1022,16 +1022,16 @@ async function briefGenerationCase() {
   await freshIdentityFixture(`window.__op.task.state='ready';window.__op.events=${JSON.stringify(c.events)};`);
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-generation-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");
+   await until("!!document.body && document.body.dataset.operator==='true'");
    await open();
-   await until("document.querySelector('.op-workspace').textContent.includes('Task event history')");
+   await until("!!document.querySelector('.op-workspace') && document.querySelector('.op-workspace').textContent.includes('Task event history')");
    const workspace = await ev("document.querySelector('.op-workspace').textContent");
    assert(`${c.name}: current approval`, workspace.includes('Approved by ')===!!c.approval, workspace);
    if (!c.approval) assert(`${c.name}: explicitly not approved`, workspace.includes('not approved'), workspace);
    assert(`${c.name}: rendering sends no writes`, await count()===0);
   } finally {
    await ev("document.querySelector('#operator-logout')?.click()");
-   await until('!document.body.dataset.operator');
+   await until('!!document.body && !document.body.dataset.operator');
    assert(`${c.name}: cleanup revokes disposable credential only`, await ev("window.__op.writes.length===1 && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
   }
  }
@@ -1055,7 +1055,7 @@ async function op17009ActorPaginationCase() {
    await until("window.__op.actorReads.length===1 && !!window.__op.removeFeedBoard && document.querySelectorAll('#feed .actor').length===2");
    if (variant==='abort' || variant==='removed') {
     if (variant==='abort') await ev('window.__op.feed.stop()');
-    else { await ev('window.__op.removeFeedBoard()'); await until("document.querySelector('#feed-status').textContent.includes('0 boards')"); }
+    else { await ev('window.__op.removeFeedBoard()'); await until("!!document.querySelector('#feed-status') && document.querySelector('#feed-status').textContent.includes('0 boards')"); }
     await ev("window.__op.drawsBefore=window.__op.feedDraws;window.__op.actorReads[0].resolve({actors:[{id:'a',handle:'alice',kind:'human'}],next_page_token:null})");
     await sleep(100);
     assert(`${variant}: late page never renders`,await ev('window.__op.feedDraws===window.__op.drawsBefore'));
@@ -1157,7 +1157,7 @@ async function op17010StoreActorsCase() {
  for (const skin of ['terminal','irc']) {
   await freshIdentityFixture("window.__op.scope=['read'];window.__op.enableStorePagination();sessionStorage.setItem('yak-viewer-token','synthetic-pagination-token');"); fixtures++;
   try {
-   await until("document.body.dataset.view==='boards'");
+   await until("!!document.body && document.body.dataset.view==='boards'");
    await ev(`location.hash=${JSON.stringify(skin==='irc'?'#/irc?b=brd_test':'#/b/brd_test?ch=ops&t=th')}`);
    await until(skin==='irc' ? "!!document.querySelector('.i-nick')" : "!!document.querySelector('.t-who')");
    await sleep(150);
@@ -1165,14 +1165,14 @@ async function op17010StoreActorsCase() {
    assert(`${skin}: page two human message shows handle and kind`,rows.some(t=>t.includes('pageHuman') && t.includes('human')),JSON.stringify(rows));
    assert(`${skin}: delegated message shows both handles and kinds`,rows.some(t=>t.includes('bot') && t.includes('agent') && t.includes('pagePrincipal') && t.includes('human')),JSON.stringify(rows));
    if (skin==='terminal') {
-    await ev("location.hash='#/'"); await until("document.querySelector('#feed').textContent.includes('page human event')");
+    await ev("location.hash='#/'"); await until("!!document.querySelector('#feed') && document.querySelector('#feed').textContent.includes('page human event')");
    }
    const text = await ev(`document.querySelector(${JSON.stringify(skin==='irc'?'#skin':'#feed')}).textContent`);
    assert(`${skin}: human task event resolves page two kind`,text.includes('pageHuman (human)'),text);
    assert(`${skin}: delegated task event resolves both handles`,text.includes('bot (agent) for '+(skin==='terminal'?'@':'')+'pagePrincipal'),text);
    assert(`${skin}: follows opaque actor token with page size`,await ev("window.__op.storeActorReads.some(r=>r.token==='opaque +/actors2' && r.limit==='200')"));
    assert(`${skin}: read-only rendering sends no operator writes`,await count()===0);
-  } finally { await ev("document.querySelector('#forget').click()"); await until("!document.querySelector('#login').hidden"); }
+  } finally { await ev("document.querySelector('#forget').click()"); await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden"); }
  }
  for (const variant of ['later failure','later unauthorized','replacement abort']) {
   await freshIdentityFixture('window.__op.enableStoreProbe();'); fixtures++;
@@ -1358,7 +1358,7 @@ async function op17012IrcContextCase() {
   await freshIdentityFixture(); fixtures++;
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-context';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");
+   await until("!!document.body && document.body.dataset.operator==='true'");
    await ev('window.__op.mountIrcContext()');
    if (variant!=='initial fallback') {
     await ev("document.querySelector('.i-link[data-thread=stale]').click()");
@@ -1393,7 +1393,7 @@ async function op17012IrcContextCase() {
    if (await ev("!!document.querySelector('.op-workspace')")) await click('Close');
    await ev('window.__op.disposeIrcContext()');
    await ev("document.querySelector('#forget').click()");
-   await until("!document.querySelector('#login').hidden");
+   await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
   }
  }
  assert('all four fresh variants executed nonzero assertions',fixtures===4 && assertions>=23);
@@ -1410,7 +1410,7 @@ async function op17014IrcProvenanceCase() {
   await freshIdentityFixture(); fixtures++;
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-provenance';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");
+   await until("!!document.body && document.body.dataset.operator==='true'");
    await ev('window.__op.mountIrcProvenance()');
    const before=await ev("document.querySelector('.i-text').textContent");
    assert(`${variant}: snapshot has no invented task history`,!['opened task','claimed task','completed task','mutable outcome substitute'].some(t=>before.includes(t)),before);
@@ -1449,7 +1449,7 @@ async function op17014IrcProvenanceCase() {
   } finally {
    await ev('window.__op.disposeIrcContext()');
    await ev("document.querySelector('#forget').click()");
-   await until("!document.querySelector('#login').hidden");
+   await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
   }
  }
  assert('all variants executed meaningful assertions',fixtures===7&&assertions>=87);
@@ -1462,7 +1462,7 @@ async function op17040IrcModeCase() {
  await freshIdentityFixture();
  try {
   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-mode';document.querySelector('#login-form').requestSubmit()");
-  await until("document.body.dataset.operator==='true'");
+  await until("!!document.body && document.body.dataset.operator==='true'");
   await ev("location.hash='#/irc?b=brd_test'");
   await until("!!document.querySelector('.i-titletext') && !!document.querySelector('.i-link[data-thread=th]')");
   assert('operator title describes active mode',await ev("document.querySelector('.i-titletext').textContent.endsWith('Operator mode') && !document.querySelector('.i-titletext').textContent.includes('Read-only')"));
@@ -1476,10 +1476,10 @@ async function op17040IrcModeCase() {
   assert('operator status keeps commands disabled with tools guidance',await ev("document.querySelector('.i-text').textContent.includes('Use Operator tools') && document.querySelector('.i-text').textContent.includes('/commands are disabled')"));
   assert('operator navigation and tools opening send no writes',await count()===0);
   await ev("document.querySelector('#operator-logout').click()");
-  await until("!document.querySelector('#login').hidden && !document.body.dataset.operator");
+  await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden && !!document.body && !document.body.dataset.operator");
   assert('logout clears operator workspace and revokes only own credential',await ev("!document.querySelector('.op-workspace') && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
   await ev("window.__op.revoked=false;window.__op.scope=['read'];document.querySelector('#operator-login').checked=false;document.querySelector('#token').value='synthetic-irc-read';document.querySelector('#login-form').requestSubmit()");
-  await until("document.querySelector('#login').hidden && !!document.querySelector('.i-titletext') && !document.body.dataset.operator");
+  await until("!!document.querySelector('#login') && document.querySelector('#login').hidden && !!document.querySelector('.i-titletext') && !!document.body && !document.body.dataset.operator");
   assert('read-only remount restores title',await ev("document.querySelector('.i-titletext').textContent.endsWith('Read-only viewer')"));
   assert('read-only remount restores toolbar',await ev("document.querySelector('.i-tools').textContent.includes('Read-only viewer') && !document.querySelector('.i-tools').textContent.includes('Operator mode')"));
   assert('read-only remount has no write opener and input is disabled',await ev("!document.querySelector('button.i-input') && document.querySelector('input.i-input')?.disabled && !document.querySelector('#operator-tools')?.offsetWidth"));
@@ -1488,7 +1488,7 @@ async function op17040IrcModeCase() {
   assert('read-only navigation sends no further writes',await count()===1);
  } finally {
   await ev("document.querySelector('#forget').click()");
-  await until("!document.querySelector('#login').hidden");
+  await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
  }
  assert('no browser exceptions',errors.length===0);
  if (assertions!==13) throw new Error(`OP17-040 expected 13 assertions, executed ${assertions}`);
@@ -1501,7 +1501,7 @@ async function op17044WireCase() {
   await freshIdentityFixture();
   try {
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-wire-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");await open();
+   await until("!!document.body && document.body.dataset.operator==='true'");await open();
    await ev(`document.querySelector('input[aria-label^="Task title"]').value='Wire task';document.querySelector('textarea[aria-label^="Message"]').value='Wire brief';document.querySelector('select[aria-label="Task assignee"]').value=${JSON.stringify(gate?'a':'')};document.querySelector('input[aria-label^="Needs my approval"]').checked=${gate}`);
    const before=await count();await click('Create task');await confirm('Create task');
    assert(`create ${gate} single write`,await count()===before+1);
@@ -1586,7 +1586,7 @@ async function op17004PagehideCase() {
    await ev(`(async()=>{const {OperatorSession}=await import('/operator.js');const hold=OperatorSession.prototype.hold;
     window.__op004={hold};OperatorSession.prototype.hold=function(...args){window.__op004.session=this;return hold.apply(this,args)};})()`);
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-close-token';document.querySelector('#login-form').requestSubmit()");
-   await until("document.body.dataset.operator==='true'");await open();
+   await until("!!document.body && document.body.dataset.operator==='true'");await open();
    await click('Work on this now (while this tab is open)');await confirm('Claim');
    await until("!!window.__op004.session && !!document.querySelector('.op-lease')");
    await ev(`(()=>{const x=window.__op004,s=x.session;x.claims=[...s.claims.values()];
@@ -1631,7 +1631,7 @@ async function op17004PagehideCase() {
 const operatorCases = new Map([['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
- await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!document.querySelector('#operator-option').hidden");
+ await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
  if (selectedCase && !operatorCases.has(selectedCase)) throw new Error(`Unknown OPERATOR_CASE: ${selectedCase}`);
  if (!selectedCase) {
  // Unsafe credentials fail closed without writing or persistence.
@@ -1640,7 +1640,7 @@ try {
   check(`${name} refused without storage or writes`,await ev("!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !window.__op.writes.length"));
   await ev("window.__op.kind='human';window.__op.scope=null;window.__op.flags=true");
  }
- await ev("document.querySelector('#token').value='fake-operator';document.querySelector('#login-form').requestSubmit()");await until("document.body.dataset.operator==='true'");
+ await ev("document.querySelector('#token').value='fake-operator';document.querySelector('#login-form').requestSubmit()");await until("!!document.body && document.body.dataset.operator==='true'");
  check('operator token memory only and password cleared',await ev("!sessionStorage.length && !localStorage.getItem('yak-viewer-token') && document.querySelector('#token').value==='' && !location.href.includes('fake-operator') && !document.cookie && !history.state"));
  await open();
  check('server content renders as text',await ev("!window.pwned && !document.querySelector('.op-workspace script,.op-workspace img') && document.querySelector('.op-workspace').textContent.includes('<script>')"));
@@ -1652,7 +1652,7 @@ try {
  check('label-only gate is explicit',await ev("document.querySelector('.op-workspace').textContent.includes('label only; not a gate')"));
  for(const principal of [null,'a']) {
   await ev(`window.__op.task.direct_action_required=true;window.__op.task.state='ready';window.__op.events=[{id:'nonhuman'+${JSON.stringify(principal)},type:'task.unblocked',actor_id:'bot',on_behalf_of_actor_id:${JSON.stringify(principal)},credential_id:'agent-c',recorded_at:new Date().toISOString(),payload:{task:{...window.__op.task},reason:'gate approved'}}]`);
-  await click('Refresh permissions and state');await until(`document.querySelector('.op-workspace').textContent.includes("not a person's approval")`);
+  await click('Refresh permissions and state');await until(`!!document.querySelector('.op-workspace') && document.querySelector('.op-workspace').textContent.includes("not a person's approval")`);
   check(`agent unblock is never approval (principal ${principal})`,await ev("document.querySelector('.op-workspace').textContent.includes('not approved')"));
   if(principal)check('delegated provenance shows both actors',await ev("document.querySelector('.op-workspace').textContent.includes('@bot (agent) for @alice (human)')"));
  }
@@ -1687,21 +1687,21 @@ try {
  await ev("window.__op.task.state='ready';window.__op.task.assignee_actor_id=null");await click('Refresh permissions and state');await sleep(150);
  await click('Work on this now (while this tab is open)');await confirm('Claim');await sleep(150);
  await click('Close');
- await ev("document.querySelector('#operator-logout').click()");await until("!document.querySelector('#login').hidden");
+ await ev("document.querySelector('#operator-logout').click()");await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
  check('self logout revokes only own credential and clears session',await ev("window.__op.revoked && window.__op.writes.at(-1).path==='/v1/credentials/cred_test' && !document.body.dataset.operator && !document.querySelector('.op-workspace') && !sessionStorage.length"));
  check('logout releases held claim before revoke',await ev("window.__op.writes.at(-2).path.endsWith('/release')"));
- await ev("window.__op.revoked=false;document.querySelector('#token').value='fake-operator';document.querySelector('#login-form').requestSubmit()");await until("document.body.dataset.operator==='true'");await open();
- await ev("window.__op.expired=true");await click('Refresh permissions and state');await until("!document.querySelector('#login').hidden");
+ await ev("window.__op.revoked=false;document.querySelector('#token').value='fake-operator';document.querySelector('#login-form').requestSubmit()");await until("!!document.body && document.body.dataset.operator==='true'");await open();
+ await ev("window.__op.expired=true");await click('Refresh permissions and state');await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
  const failures=await ev('window.__op.authFailures');await sleep(400);
  check('stale authorization ends session without retry',await ev(`!document.body.dataset.operator && window.__op.authFailures===${failures}`));
  await cmd('Page.reload');await sleep(500);
  check('reload starts at read-only login without token',await ev("!document.querySelector('#login').hidden && !document.body.dataset.operator && !sessionStorage.length && !window.__op.writes.length"));
 
- await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='fake-operator';document.querySelector('#login-form').requestSubmit()");await until("document.body.dataset.operator==='true'");await open();
+ await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='fake-operator';document.querySelector('#login-form').requestSubmit()");await until("!!document.body && document.body.dataset.operator==='true'");await open();
  await ev("window.__op.task.state='ready'");await click('Refresh permissions and state');await sleep(100);await click('Work on this now (while this tab is open)');await confirm('Claim');
- await ev("window.__realNow=Date.now;Date.now=()=>window.__realNow()+840000");await until("document.querySelector('#operator-identity').textContent.includes('idle logout')");
+ await ev("window.__realNow=Date.now;Date.now=()=>window.__realNow()+840000");await until("!!document.querySelector('#operator-identity') && document.querySelector('#operator-identity').textContent.includes('idle logout')");
  check('idle warning appears at fourteen minutes',await ev("!document.querySelector('#operator-session').hidden"));
- await ev("Date.now=()=>window.__realNow()+901000");await until("!document.querySelector('#login').hidden");
+ await ev("Date.now=()=>window.__realNow()+901000");await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
  check('idle timeout releases then self-revokes without polling extending it',await ev("window.__op.writes.at(-2).path.endsWith('/release') && window.__op.revoked && !document.body.dataset.operator"));
  check('no browser exceptions',errors.length===0,errors.join(' | '));
  }
