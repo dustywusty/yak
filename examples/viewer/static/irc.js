@@ -1,12 +1,15 @@
 // Retro IRC: board channels as tabs, thread messages as chat lines, task
 // changes as action lines, a nick list, and a read-only input line.
 
-import { h, lease, jumpPalette } from './skin-kit.js';
+import { h, gateHint, lease, jumpPalette } from './skin-kit.js';
 
 const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
-// Task events that the current task view cannot show later; logged as they arrive.
+// Task history comes only from events received during this view; no snapshot backfill.
 const LOGGED = {
+  'task.created': () => 'opened task', 'task.claimed': () => 'claimed task',
+  'task.completed': (p) => `completed task${p.outcome?.summary ? `: ${p.outcome.summary}` : ''}`,
+  'task.failed': (p) => `failed task${p.outcome?.reason ? `: ${p.outcome.reason}` : ''}`,
   'task.blocked': (p) => `blocked task: ${p.reason ?? ''}`, 'task.unblocked': (p) => `unblocked task: ${p.reason ?? ''}`,
   'task.released': (p) => `released task (${p.reason ?? 'no reason'})`, 'task.claim_expired': () => 'let the claim on task expire',
   'task.reopened': (p) => `reopened task: ${p.reason ?? ''}`, 'task.became_ready': () => 'task is ready (dependencies satisfied)',
@@ -20,11 +23,11 @@ export function irc(root, { threadHref }) {
   chrome.before(chromeHome);
   let connection = 'resyncing';
 
-  const nick = (st, id) => {
+  const nick = (st, id, principal) => {
     const a = st.actor(id);
     const mode = a?.kind === 'human' ? '@' : '+';
     const via = st.via(id);
-    return h('span', { class: `i-nick ${mode === '@' ? 'i-person' : 'i-agent'}` }, `<${mode}${st.handle(id)}${via ? `|${via}` : ''}>`);
+    return h('span', { class: `i-nick ${mode === '@' ? 'i-person' : 'i-agent'}` }, `<${mode}${st.handle(id)}${via ? `|${via}` : ''}> (${a?.kind || 'unknown'})${principal ? ` for ${st.handle(principal)} (${st.actor(principal)?.kind || 'unknown'})` : ''}`);
   };
 
   // Message text with highlighted mentions; text nodes only.
@@ -41,16 +44,9 @@ export function irc(root, { threadHref }) {
     for (const t of threads) {
       for (const m of st.messages(t.id)) {
         out.push({ ts: m.created_at, thread: t.id, el: m.deleted
-          ? [h('span', { class: 'i-act' }, `* ${st.handle(m.author_actor_id)}'s message was deleted`)]
-          : [nick(st, m.author_actor_id), ' ', body(st, m)] });
+          ? [nick(st, m.author_actor_id, m.on_behalf_of_actor_id), h('span', { class: 'i-act' }, ' message was deleted')]
+          : [nick(st, m.author_actor_id, m.on_behalf_of_actor_id), ' ', body(st, m)] });
       }
-    }
-    for (const task of st.tasks().filter((t) => t.channel_path === tab)) {
-      const act = (ts, who, text) => out.push({ ts, thread: task.thread_id, el: [h('span', { class: 'i-act' }, `* ${st.handle(who)} ${text}`)] });
-      act(task.created_at, task.created_by_actor_id, `opened task ${st.num(task.id)}`);
-      const c = task.current_claim;
-      if (c) act(c.acquired_at, c.actor_id, `claimed task ${st.num(task.id)} (lease ${Math.round(c.lease_seconds / 60)}m)`);
-      if (task.outcome) act(task.outcome.at, task.outcome.by_actor_id, `${task.outcome.kind} task ${st.num(task.id)}${task.outcome.summary ? `: ${task.outcome.summary}` : task.outcome.reason ? `: ${task.outcome.reason}` : ''}`);
     }
     for (const x of log) if (x.channel === tab) out.push(x);
     out.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -73,7 +69,7 @@ export function irc(root, { threadHref }) {
     const S = st.S;
     const items = [`*** ${connection} · ${S.board.name} as ${S.me?.handle}`,
       `*** ${S.channels.length} channels, ${S.threads.size} threads, ${S.tasks.size} tasks`,
-      '*** This window is read-only. /commands are disabled.',
+      document.body.dataset.operator ? '*** Use Operator tools for messages and confirmed task actions. /commands are disabled.' : '*** This window is read-only. /commands are disabled.',
       ...log.map((x) => `[${hhmm(x.ts)}] #${x.channel} ${x.text}`)];
     return items.map((t) => h('div', { class: 'i-line i-status' }, t));
   }
@@ -85,7 +81,7 @@ export function irc(root, { threadHref }) {
     const c = task?.current_claim;
     leaseEl = c ? h('span', {}) : null;
     if (c) leaseEl.dataset.exp = c.expires_at;
-    return [`Topic: ${t.title} | ${task ? `state=${task.state}` : `${t.message_count} messages`}`,
+    return [`Topic: ${t.title} | ${task ? `state=${task.state}` : `${t.message_count} messages`}`, task && gateHint(task, st.labels(task)) ? ` | ${gateHint(task, st.labels(task))}` : '',
       c ? [` | ${st.num(task.id)} claimed by ${st.handle(c.actor_id)} (`, leaseEl, ')'] : '',
       ' | ', h('a', { href: threadHref(t.id), 'data-focus': 'topic' }, 'open thread')];
   }
@@ -119,12 +115,14 @@ export function irc(root, { threadHref }) {
     const th = topicThread && st.thread(topicThread)?.channel_path === tab ? topicThread : lastThread;
     const actors = [...S.actors.values()].sort((a, b) => a.handle.localeCompare(b.handle));
     const people = actors.filter((a) => a.kind === 'human'), agents = actors.filter((a) => a.kind !== 'human');
+    const operator = !!document.body.dataset.operator;
+    const mode = operator ? 'Operator mode' : 'Read-only viewer';
     const win = h('div', { class: 'i-win' },
       h('div', { class: 'i-title' }, h('span', { class: 'i-icon', 'aria-hidden': 'true' }, 'Y'),
-        h('span', { class: 'i-titletext' }, `Yak IRC - ${S.board.name} - ${tab === 'status' ? 'Status' : `#${tab}`} - Read-only`)),
+        h('span', { class: 'i-titletext' }, `Yak IRC - ${S.board.name} - ${tab === 'status' ? 'Status' : `#${tab}`} - ${mode}`)),
       chrome,
       h('div', { class: 'i-tools' }, h('button', { type: 'button', 'data-focus': 'jump', onclick: () => palette.open() }, 'Jump to channel…'),
-        h('span', {}, 'Ctrl-K · Alt-1…9 · Read-only viewer')),
+        h('span', {}, `Ctrl-K · Alt-1…9 · ${mode}${operator ? ' · Use Operator tools for messages and confirmed task actions. /commands are disabled.' : ''}`)),
       h('div', { class: 'i-tabs', role: 'tablist' }, [['status', 'Status'], ...S.channels.map((c) => [c.path, `#${c.path}`])].map(([key, label]) =>
         h('button', { type: 'button', role: 'tab', 'aria-selected': String(key === tab), 'data-channel': key, class: `i-tab${key === tab ? ' on' : ''}${unread.get(key) ? ' unread' : ''}`,
           onclick: () => select(key) }, label, unread.get(key) ? ` (${unread.get(key)})` : ''))),
@@ -139,7 +137,7 @@ export function irc(root, { threadHref }) {
           agents.map((a) => h('div', { class: 'i-agent' }, `+${a.handle}`)),
           h('div', { class: 'i-count' }, `${actors.length} board actors`), h('div', { class: 'i-count' }, ` ${people.length} people (@)`),
           h('div', { class: 'i-count' }, ` ${agents.length} agents/services (+)`))),
-      h('input', { class: 'i-input', type: 'text', disabled: true, 'aria-label': 'message input (read-only)', placeholder: 'read-only viewer: /commands and messages are disabled' }),
+      document.body.dataset.operator ? h('button', { type: 'button', class: 'i-input', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: S.board.id, ch: tab, t: th } })) }, 'Reply / task actions') : h('input', { class: 'i-input', type: 'text', disabled: true, 'aria-label': 'message input (read-only)', placeholder: 'read-only viewer: /commands and messages are disabled' }),
       h('div', { class: 'i-statusbar' }, h('span', {}, `${connection} · ${S.board.name} as ${S.me?.handle}`),
         h('span', {}, 'Ctrl-K jump'), h('span', {}, `${S.channels.length} channels`)));
     root.replaceChildren(h('div', { class: 'i-desk' }, win));
@@ -166,9 +164,16 @@ export function irc(root, { threadHref }) {
     const p = ev.payload || {};
     const channel = p.message?.channel_path || p.thread?.channel_path || p.task?.channel_path;
     if (!channel) return;
-    if (LOGGED[ev.type]) log.push({ ts: ev.recorded_at, thread: ev.thread_id, channel, text: `* ${st.handle(ev.actor_id)} ${LOGGED[ev.type](p)} ${st.num(p.task.id)}`,
-      el: [h('span', { class: 'i-act' }, `* ${st.handle(ev.actor_id)} ${LOGGED[ev.type](p)} ${st.num(p.task.id)}`)] });
-    if (log.length > 300) log.shift();
+    if (LOGGED[ev.type]) {
+      if (ev.id && log.some((x) => x.id === ev.id)) return;
+      const actor = `${st.handle(ev.actor_id)} (${st.actor(ev.actor_id)?.kind || 'unknown'})`;
+      const principal = ev.on_behalf_of_actor_id;
+      const provenance = `${actor}${principal ? ` for ${st.handle(principal)} (${st.actor(principal)?.kind || 'unknown'})` : ''}`;
+      const text = `* ${provenance} ${LOGGED[ev.type](p)} ${st.num(p.task.id)} · credential ${ev.credential_id || 'unknown'}${ev.type === 'task.unblocked' && (principal || ev.delegation_id || st.actor(ev.actor_id)?.kind !== 'human') ? ", not a person's approval" : ''}`;
+      log.push({ id: ev.id, ts: ev.recorded_at, thread: ev.thread_id || p.task.thread_id, channel, text,
+        el: [h('span', { class: 'i-act' }, text)] });
+      if (log.length > 300) log.shift();
+    }
     if ((ev.type === 'message.created' || ev.type === 'thread.created' || LOGGED[ev.type]) && channel !== tab) unread.set(channel, (unread.get(channel) || 0) + 1);
   }
 

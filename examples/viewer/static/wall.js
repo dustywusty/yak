@@ -1,5 +1,5 @@
 // Read-only Lanes: task state is the list, not a guess about progress.
-import { h, avatar } from './skin-kit.js';
+import { h, avatar, gateHint } from './skin-kit.js';
 import { createAgentActivity, waitingReasons, elapsed, activityClock } from './agent-activity.js';
 
 const COLUMNS = [
@@ -66,6 +66,7 @@ export function wall(root, { threadHref }) {
         t.state === 'ready' ? h('span', {}, 'Ready · no active claim') : null,
         waiting ? h('div', { class: 'w-reason' }, reasons) : null,
         st.gated(t) ? h('span', {}, 'Approval pending') : null,
+        gateHint(t, st.labels(t)) ? h('span', {}, gateHint(t, st.labels(t))) : null,
         t.outcome ? h('span', { class: 'w-outcome' }, `${t.state}: ${t.outcome.summary || t.outcome.reason || 'See task discussion'}`) : null));
   }
 

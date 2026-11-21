@@ -150,18 +150,76 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': TYPES[extname(path)] || 'application/octet-stream' }).end(body); }
   catch { res.writeHead(404).end(); }
 });
+// Keep startup failure output bounded and free of paths, URLs and credentials.
+const sanitize = (value) => String(value)
+  .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi, '<url>')
+  .replace(/\b(?:authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\r\n,;]+/gi, 'authorization=<redacted>')
+  .replace(/\b(?:[\w-]*(?:token|password|credential|secret|api[_-]?key)[\w-]*)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, 'credential=<redacted>')
+  .replace(/[A-Za-z]:\\[^\s"'<>]+|\/[^\s"'<>]+/g, '<path>');
+const safeCode = (value) => value == null ? null : String(value).replace(/[^A-Z0-9_]/gi, '').slice(0, 80);
+const startupFailure = (fields) => console.error('VIEWER_CHROME_STARTUP ' + JSON.stringify(fields)
+  .replace(/::/g, '\\u003a\\u003a').replace(/##\[/g, '\\u0023\\u0023['));
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
 if (process.env.VIEWER_PREVIEW) { console.log(`Synthetic viewer: ${ORIGIN}`); await new Promise(() => {}); }
-const profile = await mkdtemp(join(tmpdir(), 'viewer-regress-'));
-const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = '';
-  chrome.stderr.on('data', (d) => { buf += d; const m = /DevTools listening on (ws:\S+)/.exec(buf); if (m) resolve(m[1]); });
-  setTimeout(() => reject(new Error('Chrome did not start')), 15000);
-});
-const browser = new WebSocket(wsUrl);
-await new Promise((r) => browser.addEventListener('open', r));
+let profile, chrome, browser;
+let exitObserved = false, exitCode = null, exitSignal = null, spawnError = null, childClosed = false;
+let totalBytes = 0, tail = Buffer.alloc(0);
+const collect = (d) => {
+  totalBytes += d.length;
+  tail = Buffer.concat([tail, d.subarray(-4096)]).subarray(-4096);
+};
+try {
+  profile = await mkdtemp(join(tmpdir(), 'viewer-regress-'));
+  chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  chrome.on('error', (e) => { spawnError = safeCode(e.code); });
+  chrome.on('exit', (code, signal) => { exitObserved = true; exitCode = code; exitSignal = safeCode(signal); });
+  chrome.on('close', () => { childClosed = true; });
+  chrome.stderr.on('data', collect);
+  const wsUrl = await new Promise((resolve, reject) => {
+    let buf = '';
+    const announce = (d) => {
+      buf += d;
+      const m = /DevTools listening on (ws:\S+)/.exec(buf);
+      if (m) { clearTimeout(timer); chrome.stderr.removeListener('data', announce); resolve(m[1]); }
+    };
+    const timer = setTimeout(() => { chrome.stderr.removeListener('data', announce); reject(new Error('Chrome did not start')); }, 15000);
+    chrome.stderr.on('data', announce);
+  });
+  chrome.stderr.removeListener('data', collect);
+  tail = Buffer.alloc(0);
+  browser = new WebSocket(wsUrl);
+  await new Promise((r) => browser.addEventListener('open', r));
+} catch (error) {
+  chrome?.stderr.removeListener('data', collect);
+  // Drop a possibly truncated first line before sanitizing the retained tail.
+  const stderr = totalBytes > tail.length ? tail.subarray(tail.indexOf(10) < 0 ? tail.length : tail.indexOf(10) + 1) : tail;
+  startupFailure({ marker: 'startup_failed', error_code: safeCode(error.code), spawn_error_code: spawnError,
+    exit_observed: exitObserved, exit_code: exitCode, signal: exitSignal,
+    stderr_truncated: totalBytes > tail.length, sanitized_stderr_tail: sanitize(stderr.toString()) });
+  let cleanupError = null;
+  const waitForClose = (ms) => new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); chrome.removeListener('close', done); resolve(); };
+    const timer = setTimeout(done, ms);
+    chrome.once('close', done);
+  });
+  try {
+    if (browser) { try { browser.close(); } catch { /* Connecting sockets may already be closed. */ } }
+    await new Promise((resolve) => server.close(resolve));
+    if (chrome && !childClosed) {
+      if (!exitObserved && chrome.pid) chrome.kill('SIGTERM');
+      await waitForClose(300);
+      if (!childClosed) {
+        if (!exitObserved && chrome.pid) chrome.kill('SIGKILL');
+        await waitForClose(1000);
+      }
+    }
+    if (chrome && !childClosed) cleanupError = 'direct_child_close_not_observed';
+    else if (profile) await rm(profile, { recursive: true, force: true });
+  } catch (e) { cleanupError = safeCode(e.code) || 'cleanup_failed'; }
+  startupFailure({ marker: 'cleanup_complete', complete: !cleanupError, error_code: cleanupError });
+  process.exit(1);
+}
 let id = 0; const pending = new Map(); const errors = [];
 browser.addEventListener('message', (m) => {
   const d = JSON.parse(m.data);

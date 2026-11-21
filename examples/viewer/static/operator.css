@@ -1,0 +1,17 @@
+#operator-session:not([hidden]) { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; padding: .4rem; border-bottom: 1px solid #888; background: #eee; color: #111; font: 12px/1.4 monospace; flex: none; }
+body[data-operator] { display: flex; flex-direction: column; }
+body[data-operator][data-view=term] #term { flex: 1; min-height: 0; height: auto; }
+body[data-operator][data-skin=irc] #skin { flex: 1; min-height: 0; }
+.op-workspace { position: fixed; inset: 5vh 1rem 1rem auto; margin: 0; width: min(42rem, calc(100vw - 2rem)); max-height: 90vh; overflow: auto; z-index: 100; }
+.op-workspace, .op-confirm { box-sizing: border-box; padding: 1rem; background: #fff; color: #111; border: 2px solid #555; font: 14px/1.5 system-ui, sans-serif; }
+.op-confirm { max-width: min(40rem, 95vw); max-height: 90vh; overflow: auto; }
+.op-confirm::backdrop { background: #0008; }
+.op-workspace label { display: block; margin: .5rem 0; }
+.op-workspace textarea { display: block; width: 95%; min-height: 5rem; }
+.op-workspace input:not([type=checkbox]), .op-workspace select { display: block; max-width: 95%; }
+.op-workspace pre, .op-confirm pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.op-workspace button, .op-confirm button { margin: .25rem; padding: .35rem .6rem; }
+.op-workspace section, .op-message, .op-pending { border-top: 1px solid #aaa; padding-top: .7rem; margin-top: .7rem; }
+.op-workspace :focus-visible, .op-confirm :focus-visible, #operator-session :focus-visible { outline: 3px solid #0066cc; outline-offset: 2px; }
+#operator-identity { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.op-workspace, .op-confirm, #operator-session { color-scheme: light; --panel: #f4f4f4; --line: #888; }

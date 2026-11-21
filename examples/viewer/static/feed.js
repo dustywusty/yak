@@ -1,3 +1,5 @@
+import { isGateApprovalEvent } from './operator.js';
+
 // Live feed: the newest activity across every readable board. One event
 // long-poll loop per board, starting at the head (EVT-010 from=latest).
 
@@ -44,26 +46,47 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
     const signal = F.abort?.signal;
     try {
       const { boards } = await api('GET', '/v1/boards', {}, signal);
+      if (!signal || signal.aborted || F.abort?.signal !== signal) return;
       for (const b of boards) {
         const rec = F.boards.get(b.id);
-        if (rec) { rec.board = b; continue; }
-        const r = { board: b, actors: new Map(), titles: new Map(), cursor: null, state: 'connecting' };
+        if (rec) {
+          rec.board = b;
+          if (rec.actorsState === 'failed' || rec.actorsState === 'incomplete') loadActors(rec, signal);
+          continue;
+        }
+        const r = { board: b, actors: new Map(), actorsState: 'incomplete', titles: new Map(), cursor: null, state: 'connecting' };
         F.boards.set(b.id, r);
         loadActors(r, signal);
         loop(r, signal);
       }
       renderBoardFilter();
     } catch (e) {
-      if (e.status === 401) onUnauthorized();
+      if (signal && !signal.aborted && F.abort?.signal === signal && e.status === 401) onUnauthorized();
     }
   }
 
   async function loadActors(rec, signal) {
+    if (rec.actorsState === 'loading') return;
+    rec.actorsState = 'loading';
+    const active = () => !signal.aborted && F.boards.get(rec.board.id) === rec && F.abort?.signal === signal;
     try {
-      const { actors } = await api('GET', `/v1/boards/${enc(rec.board.id)}/actors`, {}, signal);
-      rec.actors = new Map(actors.map((a) => [a.id, a]));
+      const actors = new Map();
+      let pageToken;
+      do {
+        if (!active()) return;
+        const page = await api('GET', `/v1/boards/${enc(rec.board.id)}/actors`, { limit: 200, page_token: pageToken }, signal);
+        for (const actor of page.actors) actors.set(actor.id, actor);
+        pageToken = page.next_page_token;
+      } while (pageToken);
+      if (!active()) return;
+      rec.actors = actors;
+      rec.actorsState = 'complete';
       render();
-    } catch { /* fall back to short IDs */ }
+    } catch (e) {
+      if (!active()) return;
+      rec.actorsState = 'failed'; // unresolved IDs remain unknown until a later relist succeeds
+      if (e.status === 401) onUnauthorized();
+    }
   }
 
   async function loop(rec, signal) {
@@ -138,7 +161,7 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
 
   function who(rec, id) {
     const a = rec.actors.get(id);
-    return a ? `@${a.handle}` : short(id);
+    return a ? `@${a.handle} (${a.kind})` : short(id);
   }
 
   // One line of detail per event type; text only.
@@ -160,7 +183,8 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
       case 'task.completed': return snip(p.outcome?.summary) || 'completed';
       case 'task.failed': return snip(p.outcome?.reason || p.outcome?.summary) || 'failed';
       case 'task.blocked': return `${p.reason ?? ''} (${p.cause})`;
-      case 'task.unblocked': case 'task.reopened': return p.reason ?? '';
+      case 'task.unblocked': return `${p.reason ?? ''} · credential ${ev.credential_id || 'unknown'}${!isGateApprovalEvent(ev, [...rec.actors.values()]) ? `; unblocked by ${who(rec, ev.actor_id)}${ev.on_behalf_of_actor_id ? ` for ${who(rec, ev.on_behalf_of_actor_id)}` : ''}, not a person's approval` : ''}`;
+      case 'task.reopened': return p.reason ?? '';
       case 'task.canceled': return `${p.reason ?? ''} (${p.cause})`;
       case 'task.assigned': return `${p.assignee_before ? who(rec, p.assignee_before) : 'none'} → ${p.assignee_after ? who(rec, p.assignee_after) : 'none'}`;
       case 'task.dependencies_changed': return `+${p.added?.length ?? 0} −${p.removed?.length ?? 0} deps · ${p.state_before} → ${p.state_after}`;
@@ -194,7 +218,7 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
       : href({ board: rec.board.id, sub: true, ch: path || '' });
     return h('li', {}, h('a', { href: link },
       h('div', { class: 'meta' }, time(e.at), ` · ${rec.board.name}`, path ? ` · #${path}` : '',
-        ' · ', h('span', { class: 'actor' }, who(rec, ev.actor_id))),
+        ' · ', h('span', { class: 'actor' }, `${who(rec, ev.actor_id)}${ev.on_behalf_of_actor_id ? ` for ${who(rec, ev.on_behalf_of_actor_id)}` : ''}`)),
       h('div', {}, h('span', { class: `type type-${kind}` }, ev.type), e.count > 1 ? ` ×${e.count} ` : ' ',
         h('span', { class: 'title' }, p.thread?.title || p.task?.title || p.thread_title || title(rec, ev.thread_id))),
       h('div', { class: 'snippet' }, detail(rec, ev))));

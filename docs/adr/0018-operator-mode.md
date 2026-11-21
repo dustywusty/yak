@@ -81,10 +81,16 @@ the workflow locally.
   8 h is the recommended value.
 - Idle timeout: 15 minutes of no user input, client-side (OPR-113). The
   server has no idle concept in v1.
-- Logout and idle timeout **revoke** the credential with
-  `DELETE /v1/credentials/{own id}` (OPR-131), and release held claims
-  first (OPR-130). Tab close sends a best-effort `keepalive` revoke
-  (OPR-132).
+- Logout and idle timeout stop renewal loops, await best-effort held-claim
+  releases, then revoke the credential with `DELETE /v1/credentials/{own id}`
+  and clear local session state (OPR-130, OPR-131); the first `401` stops
+  further requests with that credential. Pagehide uses the D004 exception
+  (OPR-132, OPR-342): stop renewal loops, synchronously dispatch any optional
+  held-claim `keepalive` releases followed by best-effort `keepalive`
+  self-revoke without awaiting responses, then immediately clear local
+  session state, the credential, proofs, and timers. Capture immutable
+  request arguments before clearing and consume rejections. This orders
+  dispatch only; server arrival and completion are best effort.
 
 ### 4 Ceiling
 
@@ -118,7 +124,9 @@ message delete (owner decisions 3 and 4).
 
 Claim as a person: a claim is runner-shaped (lease ≤ 300 s, proof,
 renewal). The page runs a renewal loop while the tab is open (OPR-340)
-and releases on logout. A closed or sleeping tab lets the claim lapse.
+and releases on logout. On pagehide it may dispatch best-effort releases
+before self-revoke, without awaiting responses (OPR-132, OPR-342). A closed
+or sleeping tab whose release does not arrive lets the claim lapse.
 For a durable "this is mine", assignment is the better tool. The page
 offers both (owner decision 5).
 
@@ -190,7 +198,17 @@ writes as "A for P" and never as an approval (OPR-606).
   for the caller's own actor. A stolen operator token can mint children
   (bounded: no broader, no longer, revoked with the parent) and can revoke
   the person's other credentials (for example their CLI token). The proxy
-  allowlist stops this through the page, not through a stolen token.
+  allowlist stops this through the viewer, including direct proxy requests.
+  D017 authorizes a request-scoped authenticated `GET /v1/me` to the same
+  configured upstream before credential DELETE. The proxy clones the opaque
+  authentication envelope without parsing or retaining bearer values, strips
+  body/query/cookie/proof/mutation headers from discovery, disables redirects,
+  and bounds discovery time and body size. It parses only `credential.id` and
+  compares the exact decoded target: mismatch is `403`, discovery `401` stays
+  `401`, and discovery failures are `502`. Only a match forwards the original
+  DELETE with its allowed headers unchanged. No identity cache or token
+  association survives the request, and browser-supplied IDs are not proof.
+  These proxy checks do not constrain a stolen token used outside the viewer.
 - **C2 — Approving needs full manager rights.** **Accepted for v1**
   (owner decision 2). The gate check now uses `direct_action_required`,
   so a delegated agent with `task_admin` still cannot approve. Unblock needs owner +

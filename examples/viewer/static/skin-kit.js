@@ -2,6 +2,8 @@
 // store, server-relative time, lease math, avatars, and a jump palette.
 // All content is inserted as text, never as HTML.
 
+import { parseWireJSON, compareRevision } from './wire-json.js';
+
 const enc = encodeURIComponent;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TERMINAL = ['completed', 'failed', 'canceled'];
@@ -20,7 +22,7 @@ export async function syncClock() {
     const t1 = Date.now();
     const d = Date.parse(res.headers.get('Date'));
     if (!Number.isNaN(d)) clock.offset = d + 500 - (t0 + t1) / 2; // mid-second estimate
-    const doc = await res.json();
+    const doc = await res.text().then(parseWireJSON);
     Object.assign(clock.limits, doc.limits || {});
   } catch { /* keep the last offset */ }
 }
@@ -127,10 +129,18 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const abort = new AbortController();
   // Each replacement snapshot owns its refresh requests and bookkeeping.
   // A task revision orders rows only within one snapshot generation.
-  const newRefresh = () => ({ abort: new AbortController(), reads: new Set(), retry: new Map(), ready: false });
+  const newRefresh = () => ({ abort: new AbortController(), reads: new Set(), retry: new Map(), tickets: new Map(), dirty: new Map(), ready: false });
   let refresh = newRefresh();
   const currentRefresh = (generation) => generation === refresh && !abort.signal.aborted;
-  const invalidateRefresh = () => { refresh.abort.abort(); refresh = newRefresh(); };
+  const cancelRefresh = () => {
+    refresh.abort.abort();
+    for (const entry of refresh.dirty.values()) clearTimeout(entry.timer);
+    refresh.dirty.clear();
+  };
+  const invalidateRefresh = () => { cancelRefresh(); refresh = newRefresh(); };
+  const stopStore = () => { abort.abort(); cancelRefresh(); clearInterval(clockTimer); clearInterval(expiryTimer); };
+  const unauthorized = () => { if (!abort.signal.aborted) { stopStore(); onUnauthorized?.(); } };
+  const projectionStatus = () => onStatus([...refresh.dirty.values()].some(e => e.attempts > 0) ? 'reconnecting' : 'live');
   const B = `/v1/boards/${enc(boardId)}`;
   const get = async (path, params) => {
     const result = await api('GET', path, params, abort.signal);
@@ -152,14 +162,70 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const putTask = (t) => {
     const cur = S.tasks.get(t.id);
     if (!cur) S.order.push(t.id);
-    if (!cur || t.revision >= cur.revision) S.tasks.set(t.id, t);
+    if (!cur || compareRevision(t.revision, cur.revision) >= 0) S.tasks.set(t.id, t);
   };
+
+  // Tickets order resource reads and event payloads within one generation.
+  // Revision checks additionally protect rows returned by a lagging server.
+  const nextTicket = (generation, key) => {
+    const ticket = (generation.tickets.get(key) || 0) + 1;
+    generation.tickets.set(key, ticket);
+    const dirty = generation.dirty.get(key);
+    if (dirty) dirty.ticket = ticket;
+    return ticket;
+  };
+  // Dirty entries survive cursor advancement; only their latest ticket can clear them.
+  const runProjection = (generation, key, entry) => {
+    if (!currentRefresh(generation) || entry.inflight) return;
+    const ticket = entry.ticket;
+    entry.inflight = true;
+    api('GET', entry.path, {}, generation.abort.signal).then((r) => {
+      if (!currentRefresh(generation)) return;
+      if (generation.tickets.get(key) === ticket && entry.ticket === ticket) {
+        if (entry.publish(r) !== false) onChange();
+        generation.dirty.delete(key);
+      }
+    }).catch((e) => {
+      if (!currentRefresh(generation)) return;
+      if (e.status === 401) return unauthorized();
+      entry.attempts++;
+      entry.deadline = Date.now() + Math.min(1000 * 2 ** Math.min(entry.attempts - 1, 5), 30000);
+      onStatus('reconnecting');
+    }).finally(() => {
+      if (!currentRefresh(generation)) return;
+      entry.inflight = false;
+      if (generation.dirty.get(key) === entry) {
+        const delay = Math.max(0, entry.deadline - Date.now());
+        if (delay) entry.timer = setTimeout(() => runProjection(generation, key, entry), delay);
+        else runProjection(generation, key, entry);
+      }
+      projectionStatus();
+    });
+  };
+  const readProjection = (key, path, publish) => {
+    const generation = refresh;
+    const ticket = nextTicket(generation, key);
+    let entry = generation.dirty.get(key);
+    if (entry) {
+      Object.assign(entry, {ticket, path, publish});
+      return; // Coalesce invalidations without bypassing an existing retry deadline.
+    }
+    entry = {ticket, path, publish, attempts: 0, deadline: 0, inflight: false, timer: null};
+    generation.dirty.set(key, entry);
+    runProjection(generation, key, entry);
+  };
+  const readThread = (id) => readProjection(`thread:${id}`, `${B}/threads/${enc(id)}`, (r) => {
+    const cur = S.threads.get(r.thread.id);
+    if (cur?.revision != null && r.thread.revision != null
+      && compareRevision(r.thread.revision, cur.revision) < 0) return false;
+    S.threads.set(r.thread.id, r.thread);
+  });
 
   async function snapshot() {
     invalidateRefresh();
-    const [board, actors, channels, me] = await Promise.all([get(B), get(`${B}/actors`), get(`${B}/channels`), get('/v1/me')]);
+    const [board, actors, channels, me] = await Promise.all([get(B), all(`${B}/actors`, 'actors'), get(`${B}/channels`), get('/v1/me')]);
     if (abort.signal.aborted) throw new DOMException('Store stopped', 'AbortError');
-    Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.actors.map((a) => [a.id, a])),
+    Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.map((a) => [a.id, a])),
       threads: new Map(), msgs: new Map(), tasks: new Map(), order: [] });
     let info;
     try {
@@ -205,7 +271,11 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
     if (S.seen.size > 5000) S.seen.delete(S.seen.values().next().value);
     S.events++;
     const p = ev.payload || {};
-    if (p.thread) S.threads.set(p.thread.id, p.thread);
+    if (p.thread) {
+      nextTicket(refresh, `thread:${p.thread.id}`);
+      S.threads.set(p.thread.id, p.thread);
+    }
+    if (p.message) nextTicket(refresh, `thread:${p.message.thread_id}`);
     if (p.message && !S.threads.has(p.message.thread_id)) {
       // A thread we have not seen: use thread_title from the event (EVT-013) at once,
       // then read the thread. Events recorded before the upgrade have no thread_title.
@@ -215,7 +285,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
           title: p.thread_title, labels: {}, message_count: m.seq, last_message_id: m.id, root_message_id: null,
           created_by_actor_id: m.author_actor_id, created_at: m.created_at, updated_at: m.created_at, task_id: p.task_id ?? null });
       }
-      get(`${B}/threads/${enc(m.thread_id)}`).then((r) => { S.threads.set(r.thread.id, r.thread); onChange(); }).catch(() => {});
+      readThread(m.thread_id);
     }
     if (p.message) {
       bucket(p.message.thread_id).set(p.message.id, p.message);
@@ -225,8 +295,8 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
       }
     }
     if (p.task) putTask(p.task);
-    if (ev.type === 'channel.created') get(`${B}/channels`).then((r) => { S.channels = r.channels; onChange(); }).catch(() => {});
-    if (ev.type === 'thread.view_invalidated') get(`${B}/threads/${enc(ev.thread_id)}`).then((r) => { S.threads.set(r.thread.id, r.thread); onChange(); }).catch(() => {});
+    if (ev.type === 'channel.created') readProjection('channels', `${B}/channels`, (r) => { S.channels = r.channels; });
+    if (ev.type === 'thread.view_invalidated') readThread(ev.thread_id);
     onEvent(ev);
     return true;
   }
@@ -241,7 +311,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
           if (abort.signal.aborted) return;
           refresh.ready = true;
           S.lastSync = now();
-          onStatus('live');
+          projectionStatus();
           onChange();
         }
         const wait = backoff > 1000 ? 0 : Math.min(25000, clock.limits.max_wait_ms);
@@ -251,12 +321,12 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
         for (const ev of page.events) changed = apply(ev) || changed;
         S.cursor = page.next_cursor;
         S.lastSync = now();
-        onStatus('live');
+        projectionStatus();
         backoff = 1000;
         if (changed) onChange();
       } catch (e) {
         if (abort.signal.aborted || e.name === 'AbortError') return;
-        if (e.status === 401) return onUnauthorized();
+        if (e.status === 401) return unauthorized();
         const code = e.problem?.code;
         if (code === 'resync_required' || code === 'cursor_expired' || code === 'snapshot_expired' || e.status === 400) {
           invalidateRefresh();
@@ -284,7 +354,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
       generation.retry.set(t.id, now() + 10000);
       api('GET', `${B}/tasks/${enc(t.id)}`, {}, generation.abort.signal)
         .then((r) => { if (currentRefresh(generation)) { putTask(r); onChange(); } })
-        .catch((e) => { if (currentRefresh(generation) && e.status === 401) onUnauthorized(); })
+        .catch((e) => { if (currentRefresh(generation) && e.status === 401) unauthorized(); })
         .finally(() => { if (currentRefresh(generation)) generation.reads.delete(t.id); });
     }
   }, 1000);
@@ -308,6 +378,13 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const clockTimer = setInterval(syncClock, 60000);
   return {
     S, actor, handle, via, num, tasks, thread, messages, latest, labels, gated, blockers, settled,
-    stop: () => { abort.abort(); refresh.abort.abort(); clearInterval(clockTimer); clearInterval(expiryTimer); },
+    stop: stopStore,
   };
+}
+
+// The gate label is display data. Never derive approval from it.
+export function gateHint(task, labels = {}) {
+  if (labels.gate != null && task.direct_action_required !== true) return 'label only; not a gate';
+  if (task.state === 'blocked' && task.direct_action_required === true && labels.gate === 'approved') return 'label says approved; task is still blocked';
+  return '';
 }

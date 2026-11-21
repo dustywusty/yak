@@ -67,6 +67,11 @@ jobs:
       - name: Viewer regression checks (synthetic API, Chrome)
         run: node examples/viewer/test/regress.mjs
 
+      - name: Operator session and browser contract (synthetic API)
+        run: |
+          node --test examples/viewer/test/operator-unit.mjs
+          node examples/viewer/test/operator-browser.mjs
+
       - name: Create databases
         run: |
           psql -d yak -c "CREATE DATABASE yak_ref"

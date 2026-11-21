@@ -1,0 +1,850 @@
+import { op17020Cases, op17042ClaimCorpus, op17032Clock, operatorFixture } from './operator-fixture.mjs';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { op17036Cases } from './operator-fixture.mjs';
+import { credentialRefusal, allowedRequest, OperatorSession, approvalRecord, taskIntent } from '../static/operator.js';
+const now=Date.now();
+const me=()=>({actor:{id:'a',handle:'alice',kind:'human'},credential:{id:'c',scopes:['read','post','label','claim','task_manage'],board_ids:['b'],expires_at:new Date(now+28800000).toISOString(),may_manage_credentials:false,may_delegate:false}});
+const server={capabilities:['yak.credentials.restrictions'],limits:{claim_lease_max_seconds:300}};
+test('credential ceiling fails closed with specific reasons',()=>{
+ assert.equal(credentialRefusal(me(),server,now),'');
+ for(const [key,value] of [['scopes',['*']],['scopes',['strange']],['board_ids',null],['expires_at',null],['expires_at',new Date(now+86400000).toISOString()],['may_delegate',true],['may_manage_credentials',true]]) {const m=me();m.credential[key]=value;assert.ok(credentialRefusal(m,server,now),key)}
+ for(const edit of [m=>m.actor.kind='agent',m=>m.delegation={},m=>m.credential.delegation_id='d']) {const m=me();edit(m);assert.ok(credentialRefusal(m,server,now))}
+ assert.ok(credentialRefusal(me(),server,NaN));
+});
+test('client allowlist is exact and self revoke only',()=>{
+ assert.ok(allowedRequest('DELETE','/v1/credentials/c','c'));
+ for(const [method,path] of [['GET','/v1/credentials'],['DELETE','/v1/credentials/other'],['POST','/v1/delegations'],['POST','/v1/boards/b/tasks/t/complete'],['PATCH','/v1/boards/b/snapshots/s'],['POST','/v1/boards/b/tasks/t/../cancel']]) assert.equal(allowedRequest(method,path,'c'),false,path);
+ assert.ok(allowedRequest('POST','/v1/boards/b/tasks/t/unblock','c'));
+});
+test('confirmed intents use read revisions and limit gate patch fields',()=>{
+ const t={id:'t',revision:5,brief_revision:2,state:'blocked',direct_action_required:true,thread_id:'th'};
+ const i=taskIntent('flag','/v1/boards/b',t,{value:false});
+ assert.deepEqual(i.steps[0].body,{direct_action_required:false});assert.equal(i.steps[0].headers['If-Match'],'"5"');
+ const a=taskIntent('approve','/v1/boards/b',t,{root:'m',note:'ship'});
+ assert.ok(a.steps[0].path.endsWith('/unblock'));assert.equal(a.steps[0].body.reason,'gate approved: ship');
+ assert.deepEqual(a.steps[1].body.operations[0].expect,{value:'pending'});
+});
+test('ambiguous retries reuse key and never repeat successful first step',async()=>{
+ const calls=[];let fail=true;
+ const s=new OperatorSession({send:async(method,path,body,headers)=>{calls.push({path,headers});if(path.endsWith('labels')&&fail){fail=false;throw Object.assign(new Error('network'),{status:0})}return {}},changed:()=>{}});
+ s.start(me(),server,now);
+ const i=s.intent({steps:[{method:'POST',path:'/v1/boards/b/tasks/t/unblock',body:{}},{method:'PATCH',path:'/v1/boards/b/messages/m/labels',body:{}}]});
+ await assert.rejects(s.perform(i));await s.perform(i);
+ assert.equal(calls.length,3);assert.equal(calls[1].headers['Idempotency-Key'],calls[2].headers['Idempotency-Key']);assert.notEqual(calls[0].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key']);
+ await s.end();
+});
+test('logout releases before self revoke, idle ignores polling, 401 is not retried',async()=>{
+ let mono=0;const calls=[];
+ const s=new OperatorSession({send:async(m,p)=>{calls.push(p);return {}},mono:()=>mono,changed:()=>{}});s.start(me(),server,now);
+ mono=800000;s.hold('/v1/boards/b/tasks/t',{claim:{id:'q',lease_seconds:300},proof:'SECRET'});
+ mono=900001;await s.tick();assert.deepEqual(calls,['/v1/boards/b/tasks/t/release','/v1/credentials/c']);assert.equal(s.active,false);assert.equal(s.claims.size,0);
+});
+test('approval comes from direct known human event after latest block only',()=>{
+ const actors=[{id:'a',kind:'human',handle:'alice'},{id:'bot',kind:'agent',handle:'bot'}];
+ const ev=(type,id,extra={})=>({type,actor_id:id,recorded_at:'2026-01-01',payload:{task:{id:'t',direct_action_required:true},reason:'gate approved'},...extra});
+ const e=ev('task.unblocked','a');assert.equal(approvalRecord([e],actors,'t'),e);
+ for(const x of [ev('task.unblocked','bot'),ev('task.completed','a'),ev('task.unblocked','a',{on_behalf_of_actor_id:'p'}),ev('task.unblocked','missing')]) assert.equal(approvalRecord([x],actors,'t'),null);
+ assert.equal(approvalRecord([e,ev('task.blocked','bot')],actors,'t'),null);
+});
+test('412 is a known rejection, same confirmed revision is never replaced',async()=>{
+ const seen=[];const s=new OperatorSession({send:async(m,p,b,h)=>{seen.push(h);throw Object.assign(new Error('stale'),{status:412,problem:{revision:9}})}});s.start(me(),server,now);
+ const i=s.intent(taskIntent('flag','/v1/boards/b',{id:'t',revision:2},{value:true}));await assert.rejects(s.perform(i));assert.equal(seen.length,1);assert.equal(seen[0]['If-Match'],'"2"');s.send=async()=>{};await s.end();
+});
+test('401 ends once without release or revoke retry; revoke failure clears memory',async()=>{
+ const calls=[];const s=new OperatorSession({send:async(m,p)=>{calls.push(p);throw Object.assign(new Error('unauthenticated'),{status:401})}});s.start(me(),server,now);await assert.rejects(s.perform(s.intent({steps:[{method:'POST',path:'/v1/boards/b/threads',body:{}}]})));assert.equal(s.active,false);assert.equal(calls.length,1);assert.equal(s.me,null);
+ s.send=async()=>{throw Object.assign(new Error('no'),{status:503})};s.start(me(),server,now);await s.end();assert.equal(s.me,null);assert.match(s.notice,/revocation failed/);
+});
+test('expiry ends at server-relative monotonic deadline and pagehide sends keepalive',async()=>{
+ let mono=0;const calls=[];const s=new OperatorSession({mono:()=>mono,send:async(m,p,b,h,o)=>{calls.push({p,o});return {}}});const m=me();m.credential.expires_at=new Date(now+60000).toISOString();s.start(m,server,now);mono=60001;await s.tick();assert.equal(s.active,false);assert.equal(calls[0].p,'/v1/credentials/c');
+ s.start(me(),server,now);await s.end({keepalive:true});assert.equal(calls.at(-1).o.keepalive,true);
+});
+test('second-stage approved label conflict is completed without another unblock',async()=>{
+ const calls=[];const s=new OperatorSession({send:async(m,p)=>{calls.push(p);if(p.endsWith('/labels'))throw Object.assign(new Error('already approved'),{status:412,problem:{key:'gate',current:'approved'}});return {}}});s.start(me(),server,now);const i=s.intent(taskIntent('approve','/v1/boards/b',{id:'t',revision:1},{root:'m'}));await s.perform(i);assert.equal(i.done,true);assert.equal(calls.length,2);await s.end();
+});
+test('late 401 from an old intent cannot end a replacement session',async()=>{
+ let rejectOld;const s=new OperatorSession({send:async()=>new Promise((resolve,reject)=>{rejectOld=reject})});s.start(me(),server,now);
+ const pending=s.perform(s.intent({steps:[{method:'POST',path:'/v1/boards/b/threads',body:{}}]}));
+ await s.end({unauthorized:true});s.start(me(),server,now);rejectOld(Object.assign(new Error('old token'),{status:401}));await assert.rejects(pending);assert.equal(s.active,true);await s.end({unauthorized:true});
+});
+test('late lost-renew response cannot drop a replacement claim',async()=>{
+ let rejectOld;const s=new OperatorSession({schedule:()=>0,send:async()=>new Promise((resolve,reject)=>{rejectOld=reject})});s.start(me(),server,now);
+ const path='/v1/boards/b/tasks/t';s.hold(path,{claim:{id:'old',lease_seconds:300},proof:'old'});const renewing=s.renew(path,s.claims.get(path));
+ s.hold(path,{claim:{id:'new',lease_seconds:300},proof:'new'});rejectOld(Object.assign(new Error('old claim lost'),{status:409}));await renewing;assert.equal(s.claims.get(path)?.id,'new');await s.end({unauthorized:true});
+});
+test('idle cleanup still runs after sleep when the browser monotonic clock pauses',async()=>{
+ let wall=0;const s=new OperatorSession({mono:()=>0,wall:()=>wall,send:async()=>({})});s.start(me(),server,now);wall=900001;await s.tick();assert.equal(s.active,false);
+});
+test('first input after the idle deadline cannot revive the session',async()=>{
+ let mono=0;const s=new OperatorSession({mono:()=>mono,send:async()=>({})});s.start(me(),server,now);mono=900001;s.input();await new Promise(resolve=>setImmediate(resolve));assert.equal(s.active,false);
+});
+test('overview gate warnings never treat a display label as approval',async()=>{
+ const {gateHint}=await import('../static/skin-kit.js');
+ assert.equal(gateHint({state:'blocked',direct_action_required:true},{gate:'approved'}),'label says approved; task is still blocked');
+ assert.equal(gateHint({state:'ready',direct_action_required:false},{gate:'pending'}),'label only; not a gate');
+ assert.equal(gateHint({state:'ready',direct_action_required:true},{gate:'approved'}),'');
+});
+
+
+for (const method of ['PUT', 'DELETE']) {
+ for (const key of ['like', '+1', '%2B1', '%F0%9F%91%8D']) {
+  test(`OP17-001 ${method} accepts ${key}`, () => {
+   assert.equal(allowedRequest(method, `/v1/boards/b/messages/m/reactions/${key}`, 'c'), true);
+  });
+ }
+ for (const key of ['', '%', '%2', '%GG', '%2f', '%2F', '%5c', '%5C', '%252f', '%252B1', '.', '..', '%2e', '%2E%2e', 'a%2e%2eb', '%00', '%1f', '%7f', '%C2%85', '%FF', '%C0%AF', 'like/extra', 'like?x=y', 'like?', 'like#fragment', 'a\\b']) {
+  test(`OP17-001 ${method} refuses ${JSON.stringify(key)}`, () => {
+   assert.equal(allowedRequest(method, `/v1/boards/b/messages/m/reactions/${key}`, 'c'), false);
+  });
+ }
+}
+test('OP17-001 other methods and encoded non-key segments remain refused', () => {
+ for (const method of ['GET', 'POST', 'PATCH', 'HEAD', 'OPTIONS']) {
+  for (const key of ['like', '+1', '%2B1', '%F0%9F%91%8D']) assert.equal(allowedRequest(method, `/v1/boards/b/messages/m/reactions/${key}`, 'c'), false, `${method} ${key}`);
+ }
+ for (const path of ['/v1/boards/b%2fx/messages/m/reactions/like', '/v1/boards/b/messages/m%2Fx/reactions/like', '/v1/boards/b%41/messages/m/reactions/like', '/v1/boards/b/tasks/t%41/assignee', '/v1/boards/b/snapshots/s%41', '/v1/boards/b/messages/m%41']) {
+  for (const method of ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']) assert.equal(allowedRequest(method, path, 'c'), false, `${method} ${path}`);
+ }
+});
+
+// Execute the production transport without booting the DOM or owning a token.
+async function op17029Transport(fetch, performance = globalThis.performance) {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
+ const error = source.slice(source.indexOf('class ApiError'), source.indexOf('\nasync function api('));
+ const transport = source.slice(source.indexOf('async function write('), source.indexOf('\nsession = new OperatorSession'));
+ return runInNewContext(`${error}\n${transport}\nwrite`, { fetch, performance, S: { operatorEnabled: true, token: 'synthetic' }, session: { active: true, me: me() }, parseWireJSON, stringifyWireJSON, allowedRequest, AbortController, setTimeout, clearTimeout });
+}
+for (const [name, status, response] of [
+ ['claim headers then rejected body read', 200, () => ({ ok: true, status: 200, text: async () => { throw new TypeError('stream interrupted'); } })],
+ ['broken 200 JSON', 200, () => new Response('{broken', { status: 200 })],
+ ['truncated 201 body', 201, () => new Response('{"id":', { status: 201 })],
+]) {
+ test(`OP17-029 ${name} retains the same intent/index/key for replay`, async () => {
+  const calls = []; let first = true;
+  const send = await op17029Transport(async (path, options) => {
+   calls.push({ path, headers: options.headers });
+   if (first) { first = false; return response(); }
+   return Response.json({ claim: { id: 'q', lease_seconds: 300 }, proof: 'synthetic-proof' });
+  });
+  const s = new OperatorSession({ send, schedule: () => 0 }); s.start(me(), server, now);
+  try {
+   const i = s.intent(taskIntent('claim', '/v1/boards/b', { id: 't', brief_revision: 1 }));
+   await assert.rejects(s.perform(i), e => e.status === 0 && e.problem.code === 'network');
+   assert.equal(i.index, 0); assert.equal(i.done, undefined); assert.equal(i.busy, false);
+   assert.equal(s.claims.size, 0); assert.equal(s.notice, null); assert.ok(s.pending.has(i)); assert.equal(s.pending.size, 1);
+   await s.perform(i);
+   assert.equal(i.done, true); assert.equal(i.index, 1); assert.equal(s.pending.size, 0);
+   assert.equal(s.claims.get('/v1/boards/b/tasks/t').proof, 'synthetic-proof');
+   assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]);
+  } finally { await s.end({ unauthorized: true }); }
+ });
+}
+for (const status of [401, 412]) for (const broken of ['json', 'stream', 'null']) {
+ test(`OP17-029 malformed ${status} ${broken} retains the known HTTP rejection`, async () => {
+  let calls = 0;
+  const send = await op17029Transport(async () => { calls++; return broken === 'stream' ? { ok: false, status, text: async () => { throw new TypeError('stream interrupted'); } } : new Response(broken === 'null' ? 'null' : '{broken', { status }); });
+  const s = new OperatorSession({ send }); s.start(me(), server, now);
+  try {
+   const i = s.intent(taskIntent('flag', '/v1/boards/b', { id: 't', revision: 2 }, { value: true }));
+   await assert.rejects(s.perform(i), e => e.status === status && typeof e.problem === 'object');
+   assert.equal(calls, 1); assert.equal(i.index, 0); assert.equal(i.done, undefined);
+   assert.equal(s.active, status !== 401);
+   if (status === 401) { await s.perform(i); assert.equal(calls, 1); assert.equal(s.pending.size, 0); }
+   else assert.ok(s.pending.has(i));
+  } finally { await s.end({ unauthorized: true }); }
+ });
+}
+test('OP17-029 204 succeeds without reading a body', async () => {
+ let reads = 0;
+ const send = await op17029Transport(async () => ({ ok: true, status: 204, text: async () => { reads++; throw new Error('must not read'); } }));
+ assert.equal(await send('POST', '/v1/boards/b/tasks', {}), null); assert.equal(reads, 0);
+});
+test('OP17-029 replay without proof explicitly completes as proof unavailable', async () => {
+ const send = await op17029Transport(async () => Response.json({ claim: { id: 'q' } }));
+ const s = new OperatorSession({ send }); s.start(me(), server, now);
+ try {
+  const i = s.intent(taskIntent('claim', '/v1/boards/b', { id: 't', brief_revision: 1 })); await s.perform(i);
+  assert.equal(i.done, true); assert.equal(s.claims.size, 0); assert.match(s.notice, /proof unavailable/);
+ } finally { await s.end({ unauthorized: true }); }
+});
+
+// OP17-042 uses the consumer's Go-marshalled views, not claim-create envelopes.
+const op17042Date = Date.parse('2026-11-20T00:00:00Z');
+const op17042Path = '/v1/boards/b/tasks/t';
+function op17042Response(edits = {}, timing = { serverDate: op17042Date, requestMono: 5000 }) {
+ const view = { ...op17042ClaimCorpus[0], ...edits };
+ if (timing) Object.defineProperty(view, '__responseTiming', { value: timing });
+ return view;
+}
+async function op17042Run(send, run) {
+ let mono = 0; const timers = new Set();
+ const s = new OperatorSession({ mono: () => mono, wall: () => -9e12, send, schedule: fn => { timers.add(fn); return fn; }, unschedule: fn => timers.delete(fn) });
+ s.start(me(), server, now); s.hold(op17042Path, { claim: { id: 'q', lease_seconds: 30 }, proof: 'synthetic' });
+ const c = s.claims.get(op17042Path); timers.clear(); mono = 5000;
+ try { await run(s, c, timers, value => mono = value); } finally { await s.end({ unauthorized: true }); }
+}
+for (const view of op17042ClaimCorpus) test(`OP17-042 Go ClaimView ${view.status}`, async () => {
+ await op17042Run(async () => op17042Response(view), async (s, c, timers) => {
+  await s.renew(op17042Path, c);
+  if (view.status === 'active') { assert.equal(c.proof, 'synthetic'); assert.equal(c.deadline, 34000); assert.equal(timers.size, 1); }
+  else { assert.equal(c.proof, null); assert.equal(s.claims.size, 0); assert.equal(timers.size, 0); assert.match(s.notice, /claim ended.*Refresh/); }
+ });
+});
+for (const [name, edits] of [ ['wrong id', { id: 'other' }], ['missing status', { status: undefined }], ['unknown status', { status: 'unknown' }], ['zero lease', { lease_seconds: 0 }], ['fractional lease', { lease_seconds: 1.5 }], ['oversized lease', { lease_seconds: Number.MAX_SAFE_INTEGER }], ['invalid expiry', { expires_at: 'invalid' }], ['invalid acquisition', { acquired_at: null }], ['inverted timestamps', { acquired_at: '2026-11-20T00:01:00Z' }], ['active ended', { ended_at: '2026-11-20T00:00:01Z' }], ['active end recorded', { end_recorded_at: '2026-11-20T00:00:01Z' }] ]) test(`OP17-042 rejects ${name}`, async () => {
+ await op17042Run(async () => op17042Response(edits), async (s, c, timers) => { await s.renew(op17042Path, c); assert.equal(c.proof, null); assert.equal(timers.size, 0); assert.match(s.notice, /Refresh/); });
+});
+// Keep the other timestamp and server Date sane so normalization alone causes rejection.
+for (const value of [
+ '2026-11-20T24:00:00Z', '2027-02-30T00:00:00Z', '2027-02-29T00:00:00Z',
+ '1900-02-29T00:00:00Z', '2026-04-31T00:00:00Z', '2026-00-20T00:00:00Z',
+ '2026-13-20T00:00:00Z', '2026-11-00T00:00:00Z', '2026-11-32T00:00:00Z',
+ '2026-11-20T25:00:00Z', '2026-11-20T00:60:00Z', '2026-11-20T00:00:60Z',
+ '2026-11-20T00:00:00+24:00', '2026-11-20T00:00:00+00:60',
+]) for (const field of ['acquired_at', 'expires_at']) test(`OP17-042 rejects ${field} calendar/time ${value}`, async () => {
+ const normalized = Date.parse(value), base = Number.isFinite(normalized) ? normalized : op17042Date;
+ const serverDate = field === 'acquired_at' ? base : base - 30000;
+ const edits = { acquired_at: new Date(serverDate).toISOString(), expires_at: new Date(serverDate + 30000).toISOString(), [field]: value };
+ await op17042Run(async () => op17042Response(edits, { serverDate, requestMono: 5000 }), async (s, c, timers) => {
+  await s.renew(op17042Path, c);
+  assert.equal(c.proof, null); assert.equal(s.claims.size, 0); assert.equal(timers.size, 0); assert.match(s.notice, /claim ended.*Refresh/);
+ });
+});
+for (const [acquired_at, expires_at] of [
+ ['2028-02-29T23:59:30Z', '2028-03-01T00:00:00Z'],
+ ['2000-02-29T00:00:00Z', '2000-02-29T00:00:30Z'],
+ ['2026-11-20T23:59:29.123456789+23:59', '2026-11-20T23:59:59.123456789+23:59'],
+ ['2026-11-19T00:01:00.5-23:59', '2026-11-19T00:01:30.5-23:59'],
+]) test(`OP17-042 accepts calendar/time ${acquired_at}`, async () => {
+ const timing = { serverDate: Math.floor(Date.parse(acquired_at) / 1000) * 1000, requestMono: 5000 };
+ await op17042Run(async () => op17042Response({ acquired_at, expires_at }, timing), async (s, c, timers) => {
+  await s.renew(op17042Path, c);
+  assert.equal(c.proof, 'synthetic'); assert.equal(s.claims.size, 1); assert.equal(timers.size, 1); assert.equal(s.notice, null);
+  assert.equal(c.deadline, Math.min(35000, 5000 + Date.parse(expires_at) - timing.serverDate - 1000));
+ });
+});
+for (const [name, edits, timing, receive, expected] of [
+ ['old replay expiry', { expires_at: '2026-11-20T00:00:10Z' }, { serverDate: op17042Date, requestMono: 5000 }, 7000, 14000],
+ ['delayed response and skewed wall', {}, { serverDate: op17042Date, requestMono: 5000 }, 20000, 34000],
+ ['elapsed started lease', {}, { serverDate: op17042Date, requestMono: 5000 }, 35001, null],
+ ['elapsed server expiry', { expires_at: '2026-11-20T00:00:01Z' }, { serverDate: op17042Date, requestMono: 5000 }, 7000, null],
+ ['missing timing retains old bound', {}, null, 7000, 30000],
+ ['invalid timing retains old bound', {}, { serverDate: NaN, requestMono: 5000 }, 7000, 30000],
+ ['future dispatch retains old bound', {}, { serverDate: op17042Date, requestMono: 9000 }, 7000, 30000],
+ ['unknown timing after old deadline', {}, null, 30001, null],
+]) test(`OP17-042 ${name}`, async () => {
+ let advance; await op17042Run(async () => { advance(receive); return op17042Response(edits, timing); }, async (s, c, timers, setMono) => {
+  advance = setMono; await s.renew(op17042Path, c);
+  if (expected === null) { assert.equal(c.proof, null); assert.equal(timers.size, 0); }
+  else { assert.equal(c.deadline, expected); assert.equal(c.proof, 'synthetic'); assert.equal(timers.size, 1); if (!timing || !Number.isFinite(timing.serverDate) || timing.requestMono > receive) assert.match(s.notice, /Refresh/); }
+ });
+});
+test('OP17-042 accepted lease uses original ambiguous dispatch', async () => {
+ let advance, fail = true; const keys = [];
+ await op17042Run(async (m, p, b, h) => { keys.push(h['Idempotency-Key']); if (fail) { fail = false; throw new Error('network'); } return op17042Response({ lease_seconds: 20 }, { serverDate: op17042Date, requestMono: 10000 }); }, async (s, c, timers, setMono) => {
+  advance = setMono; await s.renew(op17042Path, c); advance(10000); timers.clear(); await s.renew(op17042Path, c);
+  assert.equal(c.deadline, 25000); assert.equal(c.lease, 20); assert.equal(keys[0], keys[1]); assert.equal(c.key, null);
+ });
+});
+test('OP17-042 late successful terminal response cannot drop replacement', async () => {
+ let resolve; await op17042Run(async () => new Promise(r => resolve = r), async (s, c) => {
+  const pending = s.renew(op17042Path, c); s.hold(op17042Path, { claim: { id: 'new', lease_seconds: 30 }, proof: 'new' });
+  resolve(op17042Response({ status: 'revoked' })); await pending; assert.equal(s.claims.get(op17042Path).proof, 'new'); assert.equal(s.notice, null);
+ });
+});
+test('OP17-042 transport samples dispatch before delayed body and hides metadata', async () => {
+ let mono = 5000;
+ const send = await op17029Transport(async () => { mono = 9000; return new Response(JSON.stringify(op17042ClaimCorpus[0]), { headers: { Date: 'Fri, 20 Nov 2026 00:00:00 GMT' } }); }, { now: () => mono });
+ const result = await send('POST', op17042Path + '/claims/q/renew', {});
+ assert.equal(result.__responseTiming.serverDate, op17042Date); assert.equal(result.__responseTiming.requestMono, 5000);
+ assert.equal(Object.keys(result).includes('__responseTiming'), false); assert.deepEqual(JSON.parse(JSON.stringify(result)), { ...op17042ClaimCorpus[0], revision: '2', brief_revision: '1' });
+});
+
+for (const ending of ['logout', 'idle', 'expiry', 'pagehide']) test(`OP17-039 ${ending} shares session provenance across actions, renewals, releases and revoke`, async () => {
+ let mono = 0, finishRevoke; const calls = [];
+ const path = '/v1/boards/b/tasks/t';
+ const s = new OperatorSession({ mono: () => mono, wall: () => 0, schedule: () => 0, send: async (method, path, body, headers, options) => {
+  calls.push({ method, path, headers: { ...headers }, options, memoryRun: s.run });
+  if (method === 'DELETE') return new Promise(resolve => finishRevoke = resolve);
+  return { ...op17042ClaimCorpus[0] };
+ } });
+ s.start(me(), server, now); const run = s.run;
+ try {
+  assert.match(run, /^operator\/[0-9a-f]{32}$/);
+  await s.perform(s.intent(taskIntent('flag', '/v1/boards/b', { id: 't', revision: 1 }, { value: true })));
+  s.hold(path, { claim: { id: 'q', lease_seconds: 300 }, proof: 'synthetic' });
+  await s.renew(path, s.claims.get(path));
+  await s.perform(s.intent(taskIntent('release', '/v1/boards/b', { id: 't' })));
+  if (ending === 'idle') mono = 800000;
+  s.hold(path, { claim: { id: 'q', lease_seconds: 300 }, proof: 'synthetic' });
+  if (ending === 'idle') mono = 900001;
+  if (ending === 'expiry') s.expiry = 0;
+  const pending = ending === 'idle' || ending === 'expiry' ? s.tick() : s.end({ keepalive: ending === 'pagehide' });
+  // Ordinary cleanup awaits responses; pagehide clears immediately after dispatch.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.map(c => c.path), [path, `${path}/claims/q/renew`, `${path}/release`, `${path}/release`, '/v1/credentials/c']);
+  assert.equal(s.run, ending === 'pagehide' ? null : run); assert.equal(s.active, ending !== 'pagehide'); assert.equal(s.ending, ending !== 'pagehide');
+  for (const call of calls) {
+   assert.equal(call.memoryRun, run, `${call.path} dispatch retains run`);
+   assert.equal(call.headers['Yak-Run-Id'], run, `${call.path} carries session run`);
+  }
+  for (const call of calls.slice(-2)) assert.equal(call.options.keepalive, ending === 'pagehide');
+  finishRevoke(); await pending;
+  assert.equal(s.run, null); assert.equal(s.active, false); assert.equal(s.me, null); assert.equal(s.claims.size, 0);
+ } finally {
+  finishRevoke?.();
+  await new Promise(resolve => setImmediate(resolve));
+  await s.end({ unauthorized: true });
+ }
+});
+test('OP17-039 each new start generates a different run and revoke captures that session', async () => {
+ const runs = [], calls = [];
+ const s = new OperatorSession({ send: async (m, p, b, h) => { calls.push(h['Yak-Run-Id']); } });
+ try {
+  for (let i = 0; i < 3; i++) { s.start(me(), server, now); runs.push(s.run); await s.end(); assert.equal(s.run, null); }
+  assert.equal(new Set(runs).size, 3); for (const run of runs) assert.match(run, /^operator\/[0-9a-f]{32}$/);
+  assert.deepEqual(calls, runs);
+ } finally { await s.end({ unauthorized: true }); }
+});
+for (const source of ['explicit', 'action', 'renew', 'release']) test(`OP17-039 unauthorized ${source} cleanup emits no revoke`, async () => {
+ const calls = []; const path = '/v1/boards/b/tasks/t';
+ const s = new OperatorSession({ schedule: () => 0, send: async (method, path, body, headers) => {
+  calls.push({ method, path, headers }); throw Object.assign(new Error('synthetic unauthorized'), { status: 401 });
+ } });
+ s.start(me(), server, now); const run = s.run;
+ try {
+  s.hold(path, { claim: { id: 'q', lease_seconds: 300 }, proof: 'synthetic' });
+  if (source === 'explicit') await s.end({ unauthorized: true });
+  if (source === 'action') await assert.rejects(s.perform(s.intent(taskIntent('flag', '/v1/boards/b', { id: 't', revision: 1 }, { value: true }))), { status: 401 });
+  if (source === 'renew') await s.renew(path, s.claims.get(path));
+  if (source === 'release') await s.end();
+  assert.equal(calls.length, source === 'explicit' ? 0 : 1);
+  assert.equal(calls.some(c => c.method === 'DELETE'), false);
+  for (const call of calls) assert.equal(call.headers['Yak-Run-Id'], run);
+  assert.equal(s.active, false); assert.equal(s.run, null); assert.equal(s.claims.size, 0);
+ } finally { await s.end({ unauthorized: true }); }
+});
+
+// Import the standalone tokenizer suite so the existing unit CI runs it too.
+const { parseWireJSON, stringifyWireJSON, compareRevision } = await import('./wire-json.test.mjs');
+
+test('OP17-043 task confirmation snapshot and If-Match keep exact digits', () => {
+ for (const revision of ['5', '9007199254740993', '9223372036854775807']) {
+  const task = parseWireJSON(`{"id":"t","revision":${revision},"brief_revision":${revision}}`);
+  for (const kind of ['flag', 'approve', 'assign']) {
+   const intent = taskIntent(kind, '/v1/boards/b', task, { value: true, assignee: 'a', root: 'm' });
+   assert.equal(intent.task.revision, revision);
+   assert.equal(intent.steps[0].headers['If-Match'], `"${revision}"`);
+  }
+  const claim = taskIntent('claim', '/v1/boards/b', task);
+  assert.equal(stringifyWireJSON(claim.steps[0].body), `{"lease_seconds":300,"expect_brief_revision":${revision}}`);
+ }
+});
+
+test('OP17-043 production read/write transports retain exact nested revisions', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
+ const start = source.indexOf('class ApiError');
+ const apiSource = source.slice(start, source.indexOf('// ---------- token'));
+ const request = runInNewContext(`${apiSource}\napi`, { parseWireJSON, stringifyWireJSON, fetch: async () => new Response('{"thread":{"revision":9007199254740993},"messages":[{"revision":9223372036854775807}]}'), S: { abort: new AbortController() }, session: null, location: { origin: 'http://synthetic.invalid' }, performance, URL, DOMException });
+ const result = await request('GET', '/v1/boards/b/threads/th');
+ assert.equal(result.thread.revision, '9007199254740993');
+ assert.equal(result.messages[0].revision, '9223372036854775807');
+ let sent;
+ const write = await op17029Transport(async (path, options) => { sent = options; return new Response('{"revision":9223372036854775807}'); });
+ const updated = await write('POST', '/v1/boards/b/tasks/t/claims', { lease_seconds: 300, expect_brief_revision: '9007199254740993' });
+ assert.equal(sent.body, '{"lease_seconds":300,"expect_brief_revision":9007199254740993}');
+ assert.equal(updated.revision, '9223372036854775807');
+});
+
+test('OP17-043 production putTask compares revision strings numerically', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/skin-kit.js', import.meta.url), 'utf8');
+ const body = source.slice(source.indexOf('const putTask ='), source.indexOf('\n\n  async function snapshot'));
+ const S = { tasks: new Map(), order: [] };
+ const putTask = runInNewContext(`${body}\nputTask`, { S, compareRevision });
+ for (const revision of ['9', '10', '9007199254740992', '9007199254740993']) {
+  putTask({ id: 't', revision }); assert.equal(S.tasks.get('t').revision, revision);
+ }
+ putTask({ id: 't', revision: '9007199254740992' }); assert.equal(S.tasks.get('t').revision, '9007199254740993');
+ assert.deepEqual(S.order, ['t']);
+});
+
+test('OP17-043 production message edit header interpolates the exact parsed revision', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/operator-ui.js', import.meta.url), 'utf8');
+ const body = source.slice(source.indexOf('function messageControls('), source.indexOf('\n  function composer('));
+ for (const revision of ['5', '9007199254740993', '9223372036854775807']) {
+  let save, intent;
+  const make = runInNewContext(`${body}\nmessageControls`, { h: () => ({ append() {} }), provenance: () => '', session: { me: { actor: { id: 'a' } }, server: {} }, current: { B: '/v1/boards/b', thread: {} }, rights: () => true, draft: () => ({ dataset: {} }), writeButton: (name, click) => { save = click; return {}; }, field: () => ({}), enc: encodeURIComponent, send: (button, spec) => { intent = spec; } });
+  make(parseWireJSON(`{"id":"m","author_actor_id":"a","text":"old","revision":${revision}}`));
+  save(); assert.equal(intent.steps[0].headers['If-Match'], `"${revision}"`);
+ }
+});
+
+test('OP17-043 production confirmation displays exactly the revision sent', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/operator-ui.js', import.meta.url), 'utf8');
+ const extract = (start, end) => {
+  const first = source.indexOf(start), last = source.indexOf(end, first);
+  assert.ok(first >= 0 && last > first, `missing or unordered production anchors: ${start} / ${end}`);
+  return source.slice(first, last);
+ };
+ const helpers = [
+  extract('const valid =', '\n  function dismissConfirmations('),
+  extract('function writeButton(', '\n  function say('),
+  extract('async function refreshTask(', '\n  function pendingButtons('),
+  extract('async function confirmTask(', '\n  function action(')
+ ].join('\n');
+ for (const revision of ['5', '9007199254740993', '9223372036854775807']) {
+  const task = parseWireJSON(`{"id":"t","thread_id":"th","title":"Synthetic","revision":${revision},"brief_revision":${revision},"state":"ready"}`);
+  const freshThread = { root_message_id: 'm', labels: { gate: 'pending', ordinary: 'fresh' } };
+  const view = Object.freeze({ B: '/v1/boards/b', generation: 7, task, thread: { root_message_id: 'm', labels: { ordinary: 'old' } } });
+  let confirmed;
+  const reads = [];
+  const context = { sequence: 11, current: view, guards: new WeakMap(), enc: encodeURIComponent,
+   button: () => ({ dataset: {} }), manager: () => true, actor: () => '@synthetic',
+   session: { generation: 7, active: true, ending: false, pending: new Set(), me: { actor: { id: 'a' } } },
+   read: async (method, path) => {
+    assert.equal(method, 'GET');
+    assert.equal(path, ['/v1/boards/b/tasks/t', '/v1/boards/b/threads/th'][reads.length]);
+    reads.push(path); return reads.length === 1 ? task : { thread: freshThread };
+   },
+   taskIntent, structuredClone, confirmation: (name, details, spec) => { confirmed = { details, spec }; }, say: message => assert.fail(message)
+  };
+  const { confirmTask, writeButton } = runInNewContext(`${helpers}\n({ confirmTask, writeButton })`, context);
+  const sourceButton = writeButton('Require my approval', () => {});
+  await confirmTask('flag', 'Require my approval', sourceButton, { value: true });
+  assert.ok(confirmed);
+  assert.equal(reads.length, 2);
+  assert.strictEqual(context.current, view);
+  assert.ok(Object.isFrozen(context.current));
+  assert.deepEqual(confirmed.spec.labels, freshThread.labels);
+  assert.notStrictEqual(confirmed.spec.labels, freshThread.labels);
+  assert.ok(confirmed.details.includes(`Revision: ${revision}; brief: ${revision}`));
+  assert.equal(confirmed.spec.steps[0].headers['If-Match'], `"${revision}"`);
+ }
+});
+
+// OP17-019: cosmetic receipts must not own the global lock after known rejection.
+for (const kind of ['approve', 'changes']) {
+ for (const status of [403, 404, 412, 0, 502, 503]) {
+  test(`OP17-019 ${kind} label ${status}: original continuation and write lock`, async () => {
+   const calls=[]; let failure=status, release;
+   const s=new OperatorSession({send:async(method,path,body,headers)=>{
+    calls.push(structuredClone({method,path,body,headers}));
+    if(path.endsWith('/labels')) {
+     if(release==='defer') await new Promise(resolve=>release=resolve);
+     if(failure!==null) throw Object.assign(new Error('synthetic label rejection'),{status:failure,problem:{key:'gate',current:'changes_requested'}});
+    }
+    return {};
+   }});
+   s.start(me(),server,now);
+   try {
+    const i=s.intent(taskIntent(kind,'/v1/boards/b',{id:'t',thread_id:'th',revision:3},{root:'root',note:'original note'}));
+    const generation=i.generation, steps=i.steps;
+    await assert.rejects(s.perform(i));
+    const ambiguous=[0,502,503].includes(status);
+    assert.equal(i.index,1); assert.equal(i.done,undefined);
+    assert.equal(s.pending.size,ambiguous?1:0,'only active or uncertain intents block unrelated writes');
+    const original=calls[1];
+    if(!ambiguous) {
+     const message=s.intent({kind:'message',steps:[{method:'POST',path:'/v1/boards/b/threads/other/messages',body:{text:'unrelated'}}]});
+     const before=calls.length;
+     await s.perform(i,{requeue:true});
+     assert.equal(calls.length,before,'retry cannot conflict with another pending intent');
+     await s.perform(message); assert.equal(message.done,true);
+    }
+    for(let n=0;n<3;n++) {
+     await assert.rejects(s.perform(i,{requeue:true}));
+     assert.equal(s.pending.size,ambiguous?1:0,'repeated retries cannot grow pending');
+     assert.deepEqual(calls.at(-1),original);
+    }
+    failure=503;
+    await assert.rejects(s.perform(i,{requeue:true}));
+    assert.equal(s.pending.size,1,'uncertain retry reestablishes the global lock');
+    assert.equal(i.index,1); assert.deepEqual(calls.at(-1),original);
+    failure=null; release='defer';
+    const retry=s.perform(i,{requeue:true});
+    assert.equal(s.pending.size,1); assert.equal(i.busy,true);
+    const count=calls.length; await s.perform(i,{requeue:true}); assert.equal(calls.length,count,'rapid retry sends once');
+    release(); await retry;
+    assert.equal(i.done,true); assert.equal(i.index,2); assert.equal(s.pending.size,0);
+    assert.equal(i.generation,generation); assert.equal(i.steps,steps);
+    assert.equal(calls.filter(c=>!c.path.endsWith('/labels')&&!c.path.includes('/other/')).length,1,'never repeat unblock or request-changes reply');
+    for(const call of calls.filter(c=>c.path.endsWith('/labels'))) assert.deepEqual(call,original);
+   } finally { await s.end({unauthorized:true}); }
+  });
+ }
+}
+for(const field of ['current','current_value']) test(`OP17-019 approve 412 ${field} approved completes receipt`,async()=>{
+ const calls=[]; const s=new OperatorSession({send:async(m,p)=>{calls.push(p);if(p.endsWith('/labels'))throw Object.assign(new Error('already approved'),{status:412,problem:{key:'gate',[field]:'approved'}});return {}}});
+ s.start(me(),server,now);
+ try {const i=s.intent(taskIntent('approve','/v1/boards/b',{id:'t',revision:3},{root:'root'}));await s.perform(i);assert.equal(i.done,true);assert.equal(i.index,2);assert.equal(s.pending.size,0);assert.equal(calls.length,2);} finally {await s.end({unauthorized:true});}
+});
+
+for (const c of op17020Cases()) test(`OP17-020 ${c.name}`, () => {
+ const actors = [{id:'a',kind:'human'}, {id:'bot',kind:'agent'}];
+ assert.equal(approvalRecord(c.events, actors, 't'), c.approved ? c.candidate : null);
+ assert.equal(approvalRecord(c.events, actors, 'other'), null, 'different task cannot approve');
+});
+for (const type of ['task.blocked', 'task.reopened']) test(`OP17-020 latest ${type} resets approval generation`, () => {
+ const actors = [{id:'a',kind:'human'}], c = op17020Cases().find(c => c.approved);
+ const reset = {...c.candidate, type};
+ assert.equal(approvalRecord([...c.events, reset], actors, 't'), null);
+ assert.equal(approvalRecord([...c.events, reset, c.candidate], actors, 't'), c.candidate);
+});
+
+for (const c of op17036Cases()) test(`OP17-036 ${c.name}`, () => {
+ const actors = [{id:'a',kind:'human'}, {id:'bot',kind:'agent'}];
+ assert.equal(approvalRecord(c.events, actors, 't'), c.approval);
+ assert.equal(approvalRecord(c.events, actors, 'unrelated'), null);
+});
+
+// OP17-044 tests the actual in-page fixture, including its rejection paths.
+test('OP17-044 fixture validates captured production wire artifacts',async()=>{
+ const {operatorFixture}=await import('./operator-fixture.mjs');
+ const {emitOperatorWire}=await import('./emit-operator-wire.mjs');
+ const {runInNewContext}=await import('node:vm');
+ const freshFixture=()=>{const window={};runInNewContext(`(${operatorFixture})()`,{window,location:{href:'http://synthetic/'},Response,URL,Date,setTimeout,DOMException});return window;};
+ const requests=await emitOperatorWire();assert.equal(requests.length,13);
+ for(const r of requests){const window=freshFixture();
+  // Renewal artifacts require the claim/proof they were captured against.
+  if(r.path.endsWith('/renew')){window.__op.claimProof=r.headers['Yak-Claim-Proof'];await window.fetch('/v1/boards/brd_test/tasks/t/claims',{method:'POST',body:JSON.stringify({lease_seconds:300}),headers:{}});}
+  const response=await window.fetch(r.path,{method:r.method,body:JSON.stringify(r.body),headers:r.headers});assert.ok(response.ok,`${r.method} ${r.path}: ${response.status}`);
+  const data=await response.json();
+  if(r.path.endsWith('/tasks')){assert.equal(data.title,'Wire task');assert.equal(data.direct_action_required,r.body.direct_action_required);assert.equal(data.assignee_actor_id,r.body.assignee_actor_id);assert.equal(window.__op.created.thread.channel_path,'ops');assert.equal(window.__op.created.root.text,'Wire brief');}
+  if(r.path.endsWith('/renew')){assert.equal(data.status,'active');assert.equal(data.lease_seconds,300);assert.ok(data.expires_at);}
+ }
+ const window=freshFixture();
+ const create=requests[0], release=requests.at(-1), renew=requests.at(-2);
+ const rejected=[
+  [{...create,body:{...create.body,invalid_thread:create.body.thread,thread:undefined}},400],
+  [{...release,headers:{}},428],
+  [{...renew,body:{lease_seconds:1}},400],
+  [{method:'PATCH',path:'/v1/boards/brd_test/tasks/t',body:{direct_action_required:'true'}},400],
+  [{method:'PATCH',path:'/v1/boards/brd_test/tasks/t',body:{direct_action_required:true,title:'extra'}},400],
+  [{method:'POST',path:'/v1/boards/brd_test/unknown',body:{}},404],
+  [{...create,method:'PUT'},405],
+ ];
+ for(const wrapped of [false,true]) {
+  if(wrapped)window.__op.enableBoardSwitch();
+  for(const [r,status] of rejected)assert.equal((await window.fetch(r.path,{method:r.method,body:JSON.stringify(r.body),headers:r.headers||{}})).status,status,`${wrapped?'board-switch wrapper: ':''}${JSON.stringify(r)}`);
+ }
+});
+
+// OP17-032: exercise the actual renewal callback, never call renew() manually.
+function op17032Session(send) {
+ const clock = op17032Clock(), calls = [], path = '/v1/boards/b/tasks/t';
+ const s = new OperatorSession({ mono: clock.now, schedule: clock.schedule, unschedule: clock.unschedule,
+  send: async (...args) => { calls.push({ args, at: clock.now() }); return send(...args); } });
+ s.start(me(), server, now);
+ s.hold(path, {claim:{id:'q',lease_seconds:30},proof:'synthetic-proof'});
+ return { s, clock, calls, path, c: s.claims.get(path) };
+}
+function op17032View(clock, edits = {}) {
+ const view = {...op17042ClaimCorpus[0], ...edits};
+ Object.defineProperty(view, '__responseTiming', {value:{serverDate:op17042Date,requestMono:clock.now()}});
+ return view;
+}
+test('OP17-032 automatic cadence, new keys, and transport retry keeps original start', async () => {
+ let fixture, fail = false;
+ fixture = op17032Session(async () => { if (fail) { fail=false; throw Object.assign(new Error('transport lost'), {status:0}); } return op17032View(fixture.clock); });
+ const {s,clock,c,calls,path}=fixture;
+ try {
+  const first=[...clock.timers.values()][0];
+  assert.ok(first, 'claim installs an executable timer');
+  assert.ok(first.delay>=9000 && first.delay<=11000, 'one-third lease with production jitter');
+  await clock.advance(first.delay-1); assert.equal(calls.length,0);
+  await clock.advance(1); assert.equal(calls.length,1); assert.equal(clock.timers.size,1);
+  assert.equal(calls[0].args[0],'POST');assert.equal(calls[0].args[1],path+'/claims/q/renew');
+  assert.deepEqual(calls[0].args[2],{lease_seconds:30});
+  assert.equal(calls[0].args[3]['Yak-Claim-Proof'],'synthetic-proof');assert.equal(calls[0].args[3]['Yak-Run-Id'],s.run);
+  const second=[...clock.timers.values()][0];assert.ok(second.delay>=9000 && second.delay<=11000);
+  fail=true;await clock.advance(second.delay);assert.equal(calls.length,2);
+  const started=c.started, deadline=c.deadline, key=c.key;
+  assert.equal(started,calls[1].at);assert.ok(key);assert.notEqual(key,calls[0].args[3]['Idempotency-Key']);
+  assert.equal(deadline,calls[0].at+29000); // Date precision reserve.
+  await clock.advance(1000);assert.equal(calls.length,3);
+  assert.equal(calls[2].args[3]['Idempotency-Key'],key);assert.equal(c.started,started);
+  assert.equal(c.deadline,started+30000);assert.equal(c.key,null);assert.equal(clock.timers.size,1);
+  await clock.advance([...clock.timers.values()][0].delay);assert.equal(calls.length,4);
+  assert.notEqual(calls[3].args[3]['Idempotency-Key'],key);
+ } finally {await s.end({unauthorized:true});}
+});
+for (const outcome of [403,404,409,...op17042ClaimCorpus.slice(1).map(v=>v.status),'deadline']) {
+ test(`OP17-032 automatic ${outcome} stops timer and drops proof`, async () => {
+  let fixture;
+  fixture=op17032Session(async()=>{if(typeof outcome==='number'||outcome==='deadline')throw Object.assign(new Error('failure'),{status:outcome==='deadline'?0:outcome});return op17032View(fixture.clock,{status:outcome});});
+  const {s,clock,c,calls}=fixture;
+  try {
+   await clock.advance(outcome==='deadline'?30001:11000);
+   assert.ok(calls.length>0);assert.equal(c.proof,null);assert.equal(s.claims.size,0);assert.equal(clock.timers.size,0);assert.match(s.notice,/Your claim ended/);
+   const before=calls.length;await clock.advance(60000);assert.equal(calls.length,before);
+  }finally{await s.end({unauthorized:true});}
+ });
+}
+for (const end of [{}, {keepalive:true}]) test(`OP17-032 ${end.keepalive?'unmount':'logout'} cancels queued renewal`,async()=>{
+ const {s,clock,c,calls}=op17032Session(async()=>({}));
+ await s.end(end);assert.equal(c.proof,null);assert.equal(clock.timers.size,0);
+ assert.deepEqual(calls.map(c=>c.args[1]),['/v1/boards/b/tasks/t/release','/v1/credentials/c']);
+ await clock.advance(60000);assert.equal(calls.length,2);
+});
+
+test('OP17-032 fixture renew validates proof and lease and returns ClaimView',async()=>{
+ const {runInNewContext}=await import('node:vm');
+ const window={};runInNewContext(`(${operatorFixture.toString()})()`,{window,location:{href:'http://synthetic.invalid/'},URL,Response,Date,setTimeout,DOMException});
+ const path='/v1/boards/brd_test/tasks/t/claims';
+ const send=(suffix,body,proof='fake-secret-proof',method='POST')=>window.fetch(path+suffix,{method,body:JSON.stringify(body),headers:{'Yak-Claim-Proof':proof}});
+ await send('',{lease_seconds:30});
+ for(const [suffix,body,proof,method,status] of [
+  ['/q/renew',{lease_seconds:30},'', 'POST',428],
+  ['/q/renew',{lease_seconds:30},'wrong','POST',403],
+  ['/q/renew',{lease_seconds:1},undefined,'POST',400],
+  ['/q/renew',{lease_seconds:301},undefined,'POST',400],
+  ['/q/renew',{lease_seconds:30.5},undefined,'POST',400],
+  ['/q/renew',{lease_seconds:30,extra:true},undefined,'POST',400],
+  ['/q/renew',null,undefined,'POST',400],
+  ['/missing/renew',{lease_seconds:30},undefined,'POST',404],
+  ['/q/renew',{lease_seconds:30},undefined,'PUT',405],
+ ]) {
+  const response=await send(suffix,body,proof,method);assert.equal(response.status,status,JSON.stringify({suffix,body,proof,method}));
+  if(status!==405)assert.ok(Object.keys(await response.json()).length>0);
+ }
+ const response=await send('/q/renew',{lease_seconds:30});assert.equal(response.status,200);
+ const view=await response.json();assert.equal(view.id,'q');assert.equal(view.status,'active');assert.equal(view.lease_seconds,30);
+ assert.ok(Date.parse(view.expires_at)>Date.parse(view.acquired_at));assert.equal(view.ended_at,null);assert.equal(view.end_recorded_at,null);
+ window.__op.task.current_claim=null;assert.equal((await send('/q/renew',{lease_seconds:30})).status,409);
+});
+
+function op17004Session(send) {
+ const timers = new Set(), calls = [], claims = [];
+ const s = new OperatorSession({schedule: () => { const id = {}; timers.add(id); return id; }, unschedule: id => timers.delete(id),
+  send: (...args) => { calls.push({args, active:s.active, run:s.run, timers:timers.size}); return send(...args); }});
+ s.start(me(),server,now);
+ for (const id of ['one','two']) { const path=`/v1/boards/b/tasks/${id}`; s.hold(path,{claim:{id,lease_seconds:300},proof:`synthetic-${id}`}); claims.push(s.claims.get(path)); }
+ s.intent({steps:[]});
+ return {s,timers,calls,claims};
+}
+function op17004Cleared({s,timers,claims}) {
+ assert.equal(s.active,false); assert.equal(s.ending,false); assert.equal(s.me,null); assert.equal(s.run,null);
+ assert.equal(s.generation,null); assert.equal(s.pending.size,0); assert.equal(s.claims.size,0); assert.equal(timers.size,0);
+ for(const c of claims) assert.equal(c.proof,null);
+}
+for(const outcome of ['pending','reject','throw']) test(`OP17-004 pagehide dispatches every release then revoke synchronously (${outcome})`,async()=>{
+ const f=op17004Session(()=>{if(outcome==='pending')return new Promise(()=>{});if(outcome==='throw')throw new Error('synthetic failure');return Promise.reject(new Error('synthetic failure'));});
+ const run=f.s.run;
+ try {
+  const ended=f.s.end({keepalive:true});
+  assert.deepEqual(f.calls.map(c=>c.args[1]),['/v1/boards/b/tasks/one/release','/v1/boards/b/tasks/two/release','/v1/credentials/c']);
+  assert.ok(ended instanceof Promise); op17004Cleared(f);
+  for(const [i,c] of f.calls.entries()) {assert.equal(c.active,true);assert.equal(c.timers,0);assert.equal(c.run,run);assert.equal(c.args[3]['Yak-Run-Id'],run);assert.equal(c.args[4].keepalive,true);if(i<2)assert.equal(c.args[3]['Yak-Claim-Proof'],`synthetic-${['one','two'][i]}`);}
+  await ended; await new Promise(resolve=>setImmediate(resolve)); op17004Cleared(f);
+ } finally {if(f.s.active){f.s.ending=false;await f.s.end({unauthorized:true});}}
+});
+test('OP17-004 ordinary logout waits for both releases then clears on failed revoke',async()=>{
+ const waiting=[]; const f=op17004Session((method)=>method==='DELETE'?Promise.reject(Object.assign(new Error('revoke failed'),{status:503})):new Promise(resolve=>waiting.push(resolve)));
+ const ended=f.s.end();
+ assert.equal(f.calls.length,1);assert.equal(f.timers.size,0);assert.equal(f.s.active,true);
+ waiting[0]();await new Promise(resolve=>setImmediate(resolve));assert.equal(f.calls.length,2);assert.ok(f.calls.every(c=>c.args[0]==='POST'));
+ waiting[1]();await ended;assert.equal(f.calls[2].args[0],'DELETE');assert.ok(f.calls.every(c=>c.args[4].keepalive===false));op17004Cleared(f);assert.match(f.s.notice,/revocation failed/);
+});
+test('OP17-004 ordinary release 401 prevents subsequent release and revoke',async()=>{
+ const f=op17004Session(()=>Promise.reject(Object.assign(new Error('unauthorized'),{status:401})));
+ await f.s.end();assert.equal(f.calls.length,1);op17004Cleared(f);
+});
+
+const { int01DataCases, int01Task } = await import('./wire-json.test.mjs');
+async function int01ReadTransport(fetch) {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
+ const first = source.indexOf('class ApiError'), last = source.indexOf('// ---------- token');
+ assert.ok(first >= 0 && last > first);
+ return runInNewContext(`${source.slice(first, last)}\napi`, { parseWireJSON, stringifyWireJSON, fetch, S: { abort: new AbortController() }, session: null, location: { origin: 'http://synthetic.invalid' }, performance, URL, DOMException });
+}
+test('OP17-043 production api retains revision conflict details with unknown revision data', async () => {
+ const request = await int01ReadTransport(async () => new Response(JSON.stringify({
+  type: 'urn:yak:problem:revision_conflict', title: 'Conflict', status: 409,
+  code: 'revision_conflict', detail: 'Stale revision', request_id: 'audit',
+  revision: 5, extra: { revision: 0 }
+ }), { status: 409 }));
+ await assert.rejects(request('GET', '/v1/boards/b/tasks/t'), error => {
+  assert.equal(error.status, 409);
+  assert.equal(error.message, 'Stale revision');
+  assert.equal(error.problem.revision, '5');
+  assert.deepEqual(error.problem.extra, { revision: 0 });
+  return true;
+ });
+});
+for (const envelope of ['task', 'list', 'snapshot', 'event']) {
+ test(`OP17-043 INT-01 production read ${envelope} opaque matrix`, async () => {
+  for (const { name, raw } of int01DataCases) {
+   const task = int01Task(raw);
+   const [path, text, select] = {
+    task: ['/tasks/t', task, d => d],
+    list: ['/tasks', `{"items":[${task}]}`, d => d.items[0]],
+    snapshot: ['/snapshots/s', `{"items":[{"type":"task","data":${task}}]}`, d => d.items[0].data],
+    event: ['/events', `{"events":[{"type":"task.completed","resource":{"revision":9223372036854775807},"payload":{"task":${task},"outcome":{"data":${raw}}}}]}`, d => d.events[0].payload.task]
+   }[envelope];
+   const request = await int01ReadTransport(async (url, options) => {
+    assert.equal(url.pathname, `/v1/boards/b${path}`); assert.equal(options.method, 'GET');
+    return new Response(text);
+   });
+   const result = await request('GET', `/v1/boards/b${path}`), decoded = select(result);
+   assert.deepEqual(decoded.outcome.data, JSON.parse(raw), name);
+   assert.equal(decoded.revision, '9007199254740993');
+   assert.equal(decoded.brief_revision, '9223372036854775807');
+   if (envelope === 'event') {
+    assert.deepEqual(result.events[0].payload.outcome.data, JSON.parse(raw), name);
+    assert.equal(result.events[0].resource.revision, '9223372036854775807');
+   }
+  }
+ });
+}
+for (const type of ['task.completed', 'task.failed', 'task.reopened']) {
+ for (const embedding of type === 'task.reopened' ? ['previous_outcome'] : ['task', 'outcome']) {
+  test(`OP17-043 INT-01 production ${type} independent ${embedding}`, async () => {
+   for (const raw of [...int01DataCases.map(c => c.raw), 'null']) {
+    const currentTask = type === 'task.reopened' ? int01Task('null').replace('"outcome":{"data":null}', '"outcome":null') : int01Task('null');
+    const payload = embedding === 'task' ? `"task":${int01Task(raw)},"outcome":{"data":null}` : `"task":${currentTask},"${embedding}":{"data":${raw}}`;
+    const request = await int01ReadTransport(async () => new Response(`{"events":[{"type":"${type}","payload":{${payload}}}]}`));
+    const p = (await request('GET', '/v1/boards/b/events')).events[0].payload;
+    assert.deepEqual((embedding === 'task' ? p.task.outcome : p[embedding]).data, JSON.parse(raw));
+    assert.equal(p.task.revision, '9007199254740993');
+    if (type === 'task.reopened') assert.equal(p.task.outcome, null);
+   }
+  });
+ }
+}
+test('OP17-043 INT-01 production message and audit opaque envelopes', async () => {
+ for (const { raw } of int01DataCases) {
+  const message = `{"revision":9007199254740993,"extensions":{"vendor.feature":${raw}}}`;
+  for (const [text, select] of [
+   [message, d => d], [`{"messages":[${message}]}`, d => d.messages[0]],
+   [`{"items":[{"type":"message","data":${message}}]}`, d => d.items[0].data],
+   [`{"events":[{"resource":{"revision":9223372036854775807},"payload":{"message":${message}}}]}`, d => d.events[0].payload.message]
+  ]) {
+   const request = await int01ReadTransport(async () => new Response(text));
+   const decoded = await request('GET', '/v1/boards/b/events');
+   if (decoded.events) assert.equal(decoded.events[0].resource.revision, '9223372036854775807');
+   const result = select(decoded);
+   assert.equal(result.revision, '9007199254740993');
+   assert.deepEqual(result.extensions['vendor.feature'], JSON.parse(raw));
+  }
+  const request = await int01ReadTransport(async () => new Response(`{"audit_events":[{"metadata":${raw}}]}`));
+  assert.deepEqual((await request('GET', '/v1/audit-events')).audit_events[0].metadata, JSON.parse(raw));
+ }
+});
+for (const type of ['task.completed', 'task.failed']) {
+ test(`OP17-043 INT-01 production store snapshot and ${type} advance without reconnect`, { timeout: 3000 }, async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { runInNewContext } = await import('node:vm');
+  const source = await readFile(new URL('../static/skin-kit.js', import.meta.url), 'utf8');
+  const raw = int01DataCases.find(c => c.name === 'reported combined object').raw;
+  const calls = [], statuses = [], observations = [];
+  let resolveDone, rejectDone, store, timeout;
+  const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+  const request = await int01ReadTransport(async (url, options) => {
+   calls.push(`${options.method} ${url.pathname}`);
+   if (url.pathname.endsWith('/events')) {
+    assert.equal(url.searchParams.get('cursor'), 'snapshot-cursor');
+    return new Response(`{"events":[{"id":"e","type":"${type}","payload":{"task":${int01Task(raw).replace('9007199254740993', '9007199254740994')},"outcome":{"data":${raw}}}}],"next_cursor":"event-cursor"}`);
+   }
+   if (url.pathname.endsWith('/snapshots/s')) return options.method === 'DELETE' ? new Response(null, { status: 204 }) : new Response(`{"items":[{"id":"t","type":"task","data":${int01Task(raw)}}],"next_page_token":null,"continuation_cursor":"snapshot-cursor"}`);
+   if (url.pathname.endsWith('/snapshots')) return new Response('{"id":"s"}');
+   if (url.pathname.endsWith('/actors')) return new Response('{"actors":[],"next_page_token":null}');
+   if (url.pathname.endsWith('/channels')) return new Response('{"channels":[]}');
+   if (url.pathname === '/v1/me') return new Response('{"actor":{"id":"a"}}');
+   assert.equal(url.pathname, '/v1/boards/b'); return new Response('{"id":"b"}');
+  });
+  const create = runInNewContext(`${source.slice(source.indexOf('export function createStore('), source.indexOf('// The gate label')).replace('export function', 'function')}\ncreateStore`, {
+   compareRevision, enc: encodeURIComponent, AbortController, DOMException, setInterval, clearInterval, setTimeout, clearTimeout,
+   clock: { limits: { max_page_size: 200, max_wait_ms: 1 } }, now: Date.now, syncClock: async () => {},
+   sleep: async () => {}, console
+  });
+  try {
+   timeout = setTimeout(() => rejectDone(new Error(`store stalled: ${statuses}`)), 1000);
+   store = create({ api: request, boardId: 'b', onStatus: status => { statuses.push(status); if (status === 'reconnecting') rejectDone(new Error('valid data caused reconnect')); }, onChange: () => {
+    try {
+     const task = store.S.tasks.get('t');
+     assert.deepEqual(task.outcome.data, JSON.parse(raw));
+     assert.equal(task.brief_revision, '9223372036854775807');
+     observations.push([store.S.cursor, task.revision]);
+     if (store.S.cursor === 'event-cursor') { store.stop(); resolveDone(); }
+    } catch (error) { rejectDone(error); }
+   } });
+   await done;
+   assert.deepEqual(observations, [['snapshot-cursor', '9007199254740993'], ['event-cursor', '9007199254740994']]);
+   assert.equal(statuses.includes('reconnecting'), false);
+   assert.equal(calls.filter(c => c === 'POST /v1/boards/b/snapshots').length, 1);
+   assert.equal(calls.filter(c => c === 'GET /v1/boards/b/events').length, 1);
+  } finally { clearTimeout(timeout); store?.stop(); }
+ });
+}
+
+
+const { int02Event, int02Page } = await import('./wire-json.test.mjs');
+test('OP17-043 INT-02 production api decodes complete nullable EventPage', async () => {
+ const request = await int01ReadTransport(async (url, options) => {
+  assert.equal(options.method, 'GET'); assert.equal(url.pathname, '/v1/boards/b/events');
+  return new Response(int02Page(int02Event));
+ });
+ const page = await request('GET', '/v1/boards/b/events');
+ assert.equal(page.events[0].resource.revision, null);
+ assert.equal(page.events[0].payload.task.revision, '9007199254740993');
+ assert.equal(page.events[0].payload.task.brief_revision, '9223372036854775807');
+});
+test('OP17-043 INT-02 production api and store advance cursor without reconnect on null resource revision', { timeout: 3000 }, async () => {
+ const { readFile } = await import('node:fs/promises');
+ const { runInNewContext } = await import('node:vm');
+ const source = await readFile(new URL('../static/skin-kit.js', import.meta.url), 'utf8');
+ const calls = [], statuses = [], observations = [], events = [];
+ let resolveDone, rejectDone, store, timeout, readError;
+ const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+ const transport = await int01ReadTransport(async (url, options) => {
+  calls.push(`${options.method} ${url.pathname}`);
+  if (url.pathname.endsWith('/events')) {
+   assert.equal(url.searchParams.get('cursor'), 'c1.snapshot-int02');
+   return new Response(int02Page(int02Event.replace('9007199254740993', '9007199254740994')));
+  }
+  if (url.pathname.endsWith('/snapshots/s')) return options.method === 'DELETE' ? new Response(null, { status: 204 }) : new Response(`{"items":[{"id":"t","type":"task","data":${int01Task('null')}}],"next_page_token":null,"continuation_cursor":"c1.snapshot-int02"}`);
+  if (url.pathname.endsWith('/snapshots')) return new Response('{"id":"s"}');
+  if (url.pathname.endsWith('/actors')) return new Response('{"actors":[],"next_page_token":null}');
+  if (url.pathname.endsWith('/channels')) return new Response('{"channels":[]}');
+  if (url.pathname === '/v1/me') return new Response('{"actor":{"id":"a"}}');
+  assert.equal(url.pathname, '/v1/boards/b'); return new Response('{"id":"b"}');
+ });
+ const request = async (...args) => { try { return await transport(...args); } catch (error) { readError = error; throw error; } };
+ const create = runInNewContext(`${source.slice(source.indexOf('export function createStore('), source.indexOf('// The gate label')).replace('export function', 'function')}\ncreateStore`, {
+  compareRevision, enc: encodeURIComponent, AbortController, DOMException, setInterval, clearInterval, setTimeout, clearTimeout,
+  clock: { limits: { max_page_size: 200, max_wait_ms: 1 } }, now: Date.now, syncClock: async () => {},
+  sleep: () => new Promise(() => {}), console
+ });
+ try {
+  timeout = setTimeout(() => rejectDone(new Error(`store stalled: ${statuses}`)), 1000);
+  store = create({ api: request, boardId: 'b', onEvent: event => events.push(event), onStatus: status => {
+   statuses.push(status);
+   if (status === 'reconnecting') rejectDone(new Error(`null resource event caused reconnect: ${readError?.name}: ${readError?.message}`, { cause: readError }));
+  }, onChange: () => {
+   try {
+    const task = store.S.tasks.get('t');
+    assert.equal(task.brief_revision, '9223372036854775807');
+    observations.push([store.S.cursor, task.revision]);
+    if (store.S.cursor === 'c1.next-int02') { store.stop(); resolveDone(); }
+   } catch (error) { rejectDone(error); }
+  } });
+  await done;
+  assert.deepEqual(observations, [['c1.snapshot-int02','9007199254740993'], ['c1.next-int02','9007199254740994']]);
+  assert.equal(events.length, 1); assert.equal(events[0].resource.revision, null);
+  assert.equal(store.S.events, 1); assert.equal(store.S.seen.has('evt-int02'), true); assert.equal(store.S.seen.size, 1);
+  assert.equal(store.S.cursor, 'c1.next-int02'); assert.equal(statuses.includes('reconnecting'), false);
+  assert.equal(calls.filter(c => c === 'POST /v1/boards/b/snapshots').length, 1);
+  assert.equal(calls.filter(c => c === 'GET /v1/boards/b/events').length, 1);
+ } finally { clearTimeout(timeout); store?.stop(); }
+});
