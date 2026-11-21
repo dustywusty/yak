@@ -82,13 +82,14 @@ removes the token and asks for a new one.
 ## What it shows
 
 Chat is the default view (`#/` and `#/b/<board>`).
-The screenshots show current source with the committed synthetic API and a fake token.
+The screenshots use the committed synthetic API and a fake token.
+The Chat and Lanes captures predate the ownership copy correction and still show the old working labels.
 The tasks are examples, not production progress.
 Desktop captures are 1280 × 900. Mobile captures are 390 × 844.
 
 | View | Desktop | Mobile |
 |---|---|---|
-| **Chat** — Channels, threads, task states, and the Working now / Waiting summary. | <img src="../../docs/images/viewer-chat-desktop.png" alt="Chat at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-chat-mobile.png" alt="Chat at 390 by 844" width="195"> |
+| **Chat** — Channels, threads, task states, and the Claimed tasks / Waiting summary. | <img src="../../docs/images/viewer-chat-desktop.png" alt="Chat at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-chat-mobile.png" alt="Chat at 390 by 844" width="195"> |
 | **Switch board** — Two readable boards. Each choice opens its Chat. | <img src="../../docs/images/viewer-switch-board-desktop.png" alt="Switch board at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-switch-board-mobile.png" alt="Switch board at 390 by 844" width="195"> |
 | **Lanes** — Task lists by state, with filters, claims, and waiting reasons. | <img src="../../docs/images/viewer-lanes-desktop.png" alt="Lanes at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-lanes-mobile.png" alt="Lanes at 390 by 844" width="195"> |
 | **IRC** — A full-viewport Windows 3.1 layout with channels, messages, and task lines. | <img src="../../docs/images/viewer-irc-desktop.png" alt="IRC at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-irc-mobile.png" alt="IRC at 390 by 844" width="195"> |
@@ -115,9 +116,11 @@ The preview serves this checkout's `static/` files and makes no requests to a Ya
 | Footer | Live status (`live`, `reconnecting`, `resyncing`), who you are, and key hints |
 | Composer | Shown disabled: the viewer is read-only |
 
-The **Working now / Waiting** area stays above the default chat pane on
+The **Claimed tasks / Waiting** area stays above the default chat pane on
 Activity, channels, mentions, and threads. It groups all current claims by
-actor and links each task to its thread. Working clocks start at
+actor and links each task to its thread. The heading is **Task ownership**.
+The viewer states **Worker activity unavailable** because claims do not confirm worker activity.
+**Claim held for** clocks start at
 `acquired_at`. Renewals do not reset them. Waiting rows show the assignee,
 explicit block reason, and links to unfinished prerequisites. Owner and
 review hints use explicit labels and assignment. Waiting clocks show time
@@ -226,10 +229,10 @@ Chat remains the default. Old `#/wall` links still open Lanes.
 
 | Part | Yak data |
 |---|---|
-| Activity summary | The same Working now / Waiting summary and freshness rules as Chat; all board tasks, even when filters are active |
+| Activity summary | The same Task ownership summary and freshness rules as Chat; all board tasks, even when filters are active |
 | Lists | Ready, Claimed, Waiting, Blocked, Completed, Failed and Canceled, each from the exact task state |
 | Cards | Real title, creation-order number, channel, root labels and holder/assignee/settler initials |
-| Clocks | Working from `acquired_at`; waiting and blocked from `state_changed_at`; renewal keeps the start time |
+| Clocks | Claim age from `acquired_at`; waiting and blocked from `state_changed_at`; renewal keeps the start time |
 | Waiting reasons | Explicit block reason, visible prerequisite links and private-prerequisite hints |
 | Filters | Channel subtree, actor (holder, assignee or settler) and root label (`key` or `key:value`) |
 
