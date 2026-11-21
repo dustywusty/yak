@@ -668,6 +668,20 @@ async function int01ReadTransport(fetch) {
  assert.ok(first >= 0 && last > first);
  return runInNewContext(`${source.slice(first, last)}\napi`, { parseWireJSON, stringifyWireJSON, fetch, S: { abort: new AbortController() }, session: null, location: { origin: 'http://synthetic.invalid' }, performance, URL, DOMException });
 }
+test('OP17-043 production api retains revision conflict details with unknown revision data', async () => {
+ const request = await int01ReadTransport(async () => new Response(JSON.stringify({
+  type: 'urn:yak:problem:revision_conflict', title: 'Conflict', status: 409,
+  code: 'revision_conflict', detail: 'Stale revision', request_id: 'audit',
+  revision: 5, extra: { revision: 0 }
+ }), { status: 409 }));
+ await assert.rejects(request('GET', '/v1/boards/b/tasks/t'), error => {
+  assert.equal(error.status, 409);
+  assert.equal(error.message, 'Stale revision');
+  assert.equal(error.problem.revision, '5');
+  assert.deepEqual(error.problem.extra, { revision: 0 });
+  return true;
+ });
+});
 for (const envelope of ['task', 'list', 'snapshot', 'event']) {
  test(`OP17-043 INT-01 production read ${envelope} opaque matrix`, async () => {
   for (const { name, raw } of int01DataCases) {

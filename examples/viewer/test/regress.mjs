@@ -10,9 +10,9 @@
 
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, extname, dirname, basename, delimiter } from 'node:path';
+import { join, extname, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -150,142 +150,74 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': TYPES[extname(path)] || 'application/octet-stream' }).end(body); }
   catch { res.writeHead(404).end(); }
 });
-// Diagnostics never feed the readiness buffer or change its 15000 ms decision.
-const STARTUP_PREFIX = 'VIEWER_CHROME_STARTUP ';
-let spawnClock;
-const elapsed = () => spawnClock === undefined ? 'not_observed' : Number((performance.now() - spawnClock).toFixed(3));
+// Keep startup failure output bounded and free of paths, URLs and credentials.
 const sanitize = (value) => String(value)
   .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi, '<url>')
   .replace(/\b(?:authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\r\n,;]+/gi, 'authorization=<redacted>')
   .replace(/\b(?:[\w-]*(?:token|password|credential|secret|api[_-]?key)[\w-]*)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, 'credential=<redacted>')
   .replace(/[A-Za-z]:\\[^\s"'<>]+|\/[^\s"'<>]+/g, '<path>');
 const safeCode = (value) => value == null ? null : String(value).replace(/[^A-Z0-9_]/gi, '').slice(0, 80);
-const emit = (marker, fields = {}) => {
-  const record = { marker, elapsed_ms: elapsed(), ...fields };
-  const encode = () => STARTUP_PREFIX + JSON.stringify(record).replace(/::/g, '\\u003a\\u003a').replace(/##\[/g, '\\u0023\\u0023[');
-  let line = encode();
-  // JSON escaping can expand a byte-bounded tail by up to six times.
-  while (Buffer.byteLength(line) + 1 > 32768 && record.sanitized_stderr_tail) {
-    record.sanitized_stderr_tail = record.sanitized_stderr_tail.slice(1024);
-    record.emitted_tail_shortened = true;
-    line = encode();
-  }
-  console.error(line);
-};
-const binaryLabel = (binary) => process.env.CHROME ? `<custom-path>/${sanitize(basename(binary)).slice(0, 256)}` : binary;
-const resolveBinary = () => {
-  try {
-    const candidate = CHROME.includes('/') ? CHROME : (process.env.PATH || '').split(delimiter).map((p) => join(p, CHROME)).find(existsSync);
-    return { resolved_binary: binaryLabel(realpathSync(candidate || CHROME)) };
-  } catch (e) { return { resolution_error: safeCode(e.code) || 'unavailable' }; }
-};
-const versionProbe = () => new Promise((resolve) => {
-  const start = performance.now();
-  const child = spawn(CHROME, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = Buffer.alloc(0), total = 0, error = null, closed = false, observed = false, code = null, signal = null, timedOut = false;
-  const signals = [];
-  const collect = (chunk) => { total += chunk.length; output = Buffer.concat([output, chunk.subarray(0, Math.max(0, 1024 - output.length))]); };
-  child.stdout.on('data', collect);
-  child.stderr.on('data', collect);
-  child.on('error', (e) => { error = safeCode(e.code); });
-  child.on('exit', (c, s) => { observed = true; code = c; signal = s; });
-  const timers = [];
-  const finish = () => {
-    timers.forEach(clearTimeout);
-    resolve({ status: closed && !timedOut && !error && code === 0 ? 'available' : 'unavailable',
-      elapsed_ms: Number((performance.now() - start).toFixed(3)), reaped: closed, timed_out: timedOut,
-      exit_observed: observed, exit_code_or_null: code, signal_or_null: signal, spawn_error_code_or_null: error,
-      retained_bytes: output.length, total_bytes: total, truncated: total > output.length,
-      sanitized_output: sanitize(output.toString()), signals_sent: signals });
-  };
-  child.on('close', () => { closed = true; finish(); });
-  const stop = (s) => { if (!closed && !observed && child.pid) { signals.push(s); child.kill(s); } };
-  // Reserve part of the independent 2000 ms total budget for termination/reaping.
-  timers.push(setTimeout(() => { timedOut = true; stop('SIGTERM'); }, 1600));
-  timers.push(setTimeout(() => stop('SIGKILL'), 1750));
-  timers.push(setTimeout(finish, 2000));
-});
+const startupFailure = (fields) => console.error('VIEWER_CHROME_STARTUP ' + JSON.stringify(fields)
+  .replace(/::/g, '\\u003a\\u003a').replace(/##\[/g, '\\u0023\\u0023['));
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
-emit('server_listening');
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
 if (process.env.VIEWER_PREVIEW) { console.log(`Synthetic viewer: ${ORIGIN}`); await new Promise(() => {}); }
 let profile, chrome, browser;
 let exitObserved = false, exitCode = null, exitSignal = null, spawnError = null, childClosed = false;
-let totalBytes = 0, tail = Buffer.alloc(0), collecting = true, firstByte = false, startupReady = false;
-let failureStage = 'profile_creation';
-const cleanupSignals = [];
+let totalBytes = 0, tail = Buffer.alloc(0);
+const collect = (d) => {
+  totalBytes += d.length;
+  tail = Buffer.concat([tail, d.subarray(-4096)]).subarray(-4096);
+};
 try {
   profile = await mkdtemp(join(tmpdir(), 'viewer-regress-'));
-  emit('profile_created');
-  const launchArgs = ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', 'about:blank'];
-  failureStage = 'devtools_announcement';
-  spawnClock = performance.now();
-  emit('spawn_requested');
-  chrome = spawn(CHROME, launchArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
-  chrome.on('spawn', () => emit('spawned', { pid_or_null: chrome.pid ?? null }));
+  chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   chrome.on('error', (e) => { spawnError = safeCode(e.code); });
-  chrome.on('exit', (code, signal) => {
-    exitObserved = true; exitCode = code; exitSignal = signal;
-    emit('child_exit', { exit_observed: true, exit_code_or_null: code, signal_or_null: signal,
-      cleanup_induced: cleanupSignals.length > 0 ? true : (startupReady ? 'not_observed' : false), signals_sent: [...cleanupSignals] });
-  });
+  chrome.on('exit', (code, signal) => { exitObserved = true; exitCode = code; exitSignal = safeCode(signal); });
   chrome.on('close', () => { childClosed = true; });
-  const collect = (d) => {
-    if (!collecting) return;
-    if (!firstByte) { firstByte = true; emit('stderr_first_byte'); }
-    totalBytes += d.length;
-    tail = Buffer.concat([tail, d.subarray(Math.max(0, d.length - 16384))]).subarray(-16384);
-  };
   chrome.stderr.on('data', collect);
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = '';
-    chrome.stderr.on('data', (d) => { buf += d; const m = /DevTools listening on (ws:\S+)/.exec(buf); if (m) resolve(m[1]); });
-    setTimeout(() => reject(new Error('Chrome did not start')), 15000);
+    const announce = (d) => {
+      buf += d;
+      const m = /DevTools listening on (ws:\S+)/.exec(buf);
+      if (m) { clearTimeout(timer); chrome.stderr.removeListener('data', announce); resolve(m[1]); }
+    };
+    const timer = setTimeout(() => { chrome.stderr.removeListener('data', announce); reject(new Error('Chrome did not start')); }, 15000);
+    chrome.stderr.on('data', announce);
   });
-  collecting = false;
   chrome.stderr.removeListener('data', collect);
   tail = Buffer.alloc(0);
-  startupReady = true;
-  emit('devtools_announced');
-  failureStage = 'websocket_open';
   browser = new WebSocket(wsUrl);
   await new Promise((r) => browser.addEventListener('open', r));
-  emit('websocket_open');
-} catch (originalError) {
-  collecting = false;
-  // Freeze natural observations before either the probe or cleanup sends signals.
-  const snapshot = { failure_stage: failureStage, elapsed_ms: elapsed(), chosen_binary: binaryLabel(CHROME),
-    resolved_binary_or_resolution_error: resolveBinary(),
-    sanitized_launch_args: ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=<profile>', '--no-first-run', 'about:blank'],
-    pid_or_null: chrome?.pid ?? null, node_version: process.version, exit_observed: exitObserved,
-    exit_code_or_null: exitCode, signal_or_null: exitSignal, spawn_error_code_or_null: spawnError,
-    stderr_total_bytes: totalBytes, stderr_retained_bytes: tail.length, stderr_truncated: totalBytes > tail.length,
-    // A truncated first line may start midway through a credential or path.
-    sanitized_stderr_tail: sanitize((totalBytes > tail.length ? tail.subarray(tail.indexOf(10) < 0 ? tail.length : tail.indexOf(10) + 1) : tail).toString()) };
-  let probe;
-  try { probe = await versionProbe(); }
-  catch { probe = { status: 'unavailable', reaped: false, error: 'probe_failed' }; }
-  emit('startup_failed', { ...snapshot, runtime_version_probe_result: probe });
+} catch (error) {
+  chrome?.stderr.removeListener('data', collect);
+  // Drop a possibly truncated first line before sanitizing the retained tail.
+  const stderr = totalBytes > tail.length ? tail.subarray(tail.indexOf(10) < 0 ? tail.length : tail.indexOf(10) + 1) : tail;
+  startupFailure({ marker: 'startup_failed', error_code: safeCode(error.code), spawn_error_code: spawnError,
+    exit_observed: exitObserved, exit_code: exitCode, signal: exitSignal,
+    stderr_truncated: totalBytes > tail.length, sanitized_stderr_tail: sanitize(stderr.toString()) });
   let cleanupError = null;
+  const waitForClose = (ms) => new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); chrome.removeListener('close', done); resolve(); };
+    const timer = setTimeout(done, ms);
+    chrome.once('close', done);
+  });
   try {
-    if (browser) browser.close();
+    if (browser) { try { browser.close(); } catch { /* Connecting sockets may already be closed. */ } }
     await new Promise((resolve) => server.close(resolve));
     if (chrome && !childClosed) {
-      if (!exitObserved && chrome.pid) { cleanupSignals.push('SIGTERM'); chrome.kill('SIGTERM'); }
-      await Promise.race([new Promise((r) => chrome.once('close', r)), sleep(300)]);
+      if (!exitObserved && chrome.pid) chrome.kill('SIGTERM');
+      await waitForClose(300);
       if (!childClosed) {
-        if (!exitObserved && chrome.pid) { cleanupSignals.push('SIGKILL'); chrome.kill('SIGKILL'); }
-        await Promise.race([new Promise((r) => chrome.once('close', r)), sleep(1000)]);
+        if (!exitObserved && chrome.pid) chrome.kill('SIGKILL');
+        await waitForClose(1000);
       }
     }
     if (chrome && !childClosed) cleanupError = 'direct_child_close_not_observed';
     else if (profile) await rm(profile, { recursive: true, force: true });
   } catch (e) { cleanupError = safeCode(e.code) || 'cleanup_failed'; }
-  emit('cleanup_complete', { complete: !cleanupError && probe.reaped === true, error: cleanupError,
-    direct_child_closed: chrome ? childClosed : 'not_spawned', profile_removed: !cleanupError,
-    version_probe_reaped: probe.reaped === true, signals_sent: cleanupSignals, descendants: 'not_asserted' });
-  // Do not serialize arbitrary error messages (they can contain custom paths).
-  console.error('Chrome startup failed');
+  startupFailure({ marker: 'cleanup_complete', complete: !cleanupError, error_code: cleanupError });
   process.exit(1);
 }
 let id = 0; const pending = new Map(); const errors = [];

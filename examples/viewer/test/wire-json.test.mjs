@@ -28,13 +28,21 @@ test('OP17-043 tokenizer respects escaped strings keys arrays and nesting', () =
   assert.equal(parseWireJSON('{"revi\\u0073ion":9007199254740993}').revision, '9007199254740993');
   assert.equal(parseWireJSON('{"revision":1,"revision":10}').revision, '10');
 });
-for (const token of ['-1', '-0', '0', '1.5', '1e2', '9223372036854775808', '01', 'NaN', 'null', 'true', '{}', '[]']) {
-  test(`OP17-043 rejects invalid revision token ${token}`, () => {
-    for (const key of ['revision', 'brief_revision']) assert.throws(() => parseWireJSON(`{"${key}":${token}}`));
-  });
-}
+test('OP17-043 decoding preserves non-revision JSON values without schema validation', () => {
+  for (const token of ['-1', '-0', '0', '1.5', '1e2', 'null', 'true', '{}', '[]']) {
+    for (const key of ['revision', 'brief_revision']) {
+      const raw = `{"unknown":{"${key}":${token}}}`;
+      assert.deepEqual(parseWireJSON(raw), JSON.parse(raw));
+    }
+  }
+  // Preserve exact digits on decode; validate their authority only when used.
+  const revision = parseWireJSON('{"revision":9223372036854775808}').revision;
+  assert.equal(revision, '9223372036854775808');
+  assert.throws(() => compareRevision(revision, '5'), RangeError);
+  assert.throws(() => stringifyWireJSON({ expect_brief_revision: revision }), RangeError);
+});
 test('OP17-043 JSON structure remains strictly validated', () => {
-  for (const raw of ['{"revision":1,}', '{"revision":1} trailing', '{"revision" 1}', '[1,]', '{"x":"unterminated}', '{"x":undefined}']) assert.throws(() => parseWireJSON(raw));
+  for (const raw of ['{"revision":01}', '{"revision":NaN}', '{"revision":1,}', '{"revision":1} trailing', '{"revision" 1}', '[1,]', '{"x":"unterminated}', '{"x":undefined}']) assert.throws(() => parseWireJSON(raw));
 });
 test('OP17-043 claim expectation serializes exact decimal as a JSON number only at schema field', () => {
   for (const revision of ['5', '9007199254740993', '9223372036854775807']) {
@@ -47,7 +55,7 @@ test('OP17-043 claim expectation serializes exact decimal as a JSON number only 
   }
 });
 test('OP17-043 invalid outgoing expectations and unsafe comparison inputs fail closed', () => {
-  for (const value of ['-1', '0', '01', '1e2', '1.5', '9223372036854775808', '1,"injected":true', 9007199254740992, 1n, null]) {
+  for (const value of ['-1', '0', '01', '1e2', '1.5', '9223372036854775808', '1,"injected":true', 9007199254740992, 1n, null, 0, -1, 1.5, false, {}, []]) {
     assert.throws(() => stringifyWireJSON({ expect_brief_revision: value }), String(value));
     assert.throws(() => compareRevision(value, '5'), String(value));
   }
@@ -86,14 +94,14 @@ test('OP17-043 INT-01 positive user number retains number type', () => {
   assert.equal(typeof data.revision, 'number');
   assert.equal(data.revision, 5);
 });
-test('OP17-043 INT-01 escaped boundaries null and strict protocol barriers', () => {
+test('OP17-043 INT-01 escaped boundaries preserve user data and JSON validation', () => {
   const doc = parseWireJSON('{"outc\\u006fme":{"da\\u0074a":{"revision":0}},"extens\\u0069ons":{"vendor.feature":{"revision":null}},"metad\\u0061ta":{"brief_revision":false},"labels":{"revision":"user","brief_revision":"text"}}');
   assert.deepEqual(doc.outcome.data, { revision: 0 });
   assert.deepEqual(doc.extensions, { 'vendor.feature': { revision: null } });
   assert.deepEqual(doc.metadata, { brief_revision: false });
   assert.deepEqual(doc.labels, { revision: 'user', brief_revision: 'text' });
   assert.equal(parseWireJSON('{"outcome":{"data":null}}').outcome.data, null);
-  for (const raw of ['{"outcome":{"data":{"revision":0}},"revision":0}', '{"revision":0,"outcome":{"data":{"revision":0}}}', '{"outcome":{"data":{"x":undefined}}}', '{"metadata":[1,]}', '{"extensions":{"vendor.feature":{"revision":01}}}']) assert.throws(() => parseWireJSON(raw));
+  for (const raw of ['{"outcome":{"data":{"x":undefined}}}', '{"metadata":[1,]}', '{"extensions":{"vendor.feature":{"revision":01}}}']) assert.throws(() => parseWireJSON(raw));
 });
 test('OP17-043 INT-01 typed snapshot event and claim wrappers stay exact', () => {
   const revision = '9007199254740993', max = '9223372036854775807';
@@ -125,13 +133,13 @@ for (const boundary of ['metadata', 'extensions', 'outcome', 'previous_outcome']
   });
 }
 test('OP17-043 INT-01 B2 unrelated unknown and near-miss keys retain behavior', () => {
-  for (const raw of ['{"unknown":{"revision":0}}', '{"unknown":{"brief_revision":null}}']) assert.throws(() => parseWireJSON(raw), RangeError);
+  for (const raw of ['{"unknown":{"revision":0}}', '{"unknown":{"brief_revision":null}}']) assert.deepEqual(parseWireJSON(raw), JSON.parse(raw));
   const unknown = parseWireJSON('{"unknown":{"revision":9007199254740993,"brief_revision":9223372036854775807,"text":{"revision":"user text"}}}').unknown;
   assert.equal(unknown.revision, '9007199254740993');
   assert.equal(unknown.brief_revision, '9223372036854775807');
   assert.equal(unknown.text.revision, 'user text');
   for (const key of ['Metadata', 'metadata_extra', 'extension', 'outcomes']) {
-    assert.throws(() => parseWireJSON(`{"${key}":{"data":{"revision":0}}}`), RangeError);
+    assert.deepEqual(parseWireJSON(`{"${key}":{"data":{"revision":0}}}`), { [key]: { data: { revision: 0 } } });
     assert.equal(parseWireJSON(`{"${key}":{"revision":9007199254740993}}`)[key].revision, '9007199254740993');
   }
 });
@@ -149,13 +157,15 @@ test('OP17-043 INT-01 B4 outcome own revisions remain typed', () => {
     const doc = parseWireJSON(`{"unknown":{"${key}":{"revision":9007199254740993,"data":{"revision":0}}}}`).unknown[key];
     assert.equal(doc.revision, '9007199254740993');
     assert.deepEqual(doc.data, { revision: 0 });
-    assert.throws(() => parseWireJSON(`{"${key}":{"revision":0,"data":{"revision":0}}}`), RangeError);
+    assert.deepEqual(parseWireJSON(`{"${key}":{"revision":0,"data":{"revision":0}}}`), { [key]: { revision: 0, data: { revision: 0 } } });
   }
-  assert.throws(() => parseWireJSON('{"task":{"revision":0,"outcome":{"data":{"revision":0}}}}'), RangeError);
+  assert.deepEqual(parseWireJSON('{"task":{"revision":0,"outcome":{"data":{"revision":0}}}}'), { task: { revision: 0, outcome: { data: { revision: 0 } } } });
 });
 test('OP17-043 INT-01 B5 only direct outcome object data is opaque', () => {
-  for (const raw of ['{"unknown":{"data":{"revision":0}}}', '{"outcome":{"wrapper":{"data":{"revision":0}}}}', '{"payload":{"data":{"revision":0}}}', '{"outcome":[{"data":{"revision":0}}]}', '{"previous_outcome":{"wrapper":{"data":{"revision":0}}}}']) assert.throws(() => parseWireJSON(raw), RangeError);
+  for (const raw of ['{"unknown":{"data":{"revision":0}}}', '{"outcome":{"wrapper":{"data":{"revision":0}}}}', '{"payload":{"data":{"revision":0}}}', '{"outcome":[{"data":{"revision":0}}]}', '{"previous_outcome":{"wrapper":{"data":{"revision":0}}}}']) assert.deepEqual(parseWireJSON(raw), JSON.parse(raw));
   assert.equal(parseWireJSON('{"data":{"revision":9007199254740993}}').data.revision, '9007199254740993');
+  assert.equal(parseWireJSON('{"outcome":[{"data":{"revision":5}}]}').outcome[0].data.revision, '5');
+  assert.equal(parseWireJSON('{"outcome":{"wrapper":{"data":{"revision":5}}}}').outcome.wrapper.data.revision, '5');
 });
 test('OP17-043 INT-01 B6 escaped boundaries and member order preserve entire subtrees', () => {
   for (const { raw } of int01DataCases) {
@@ -203,80 +213,37 @@ test('OP17-043 INT-02 order escaped decoded keys and opaque cursors do not alter
     int02Exact(raw); int02Exact(int02Page(raw), true);
   }
 });
-for (const key of Object.keys(int02Shape)) for (const mode of ['omitted', 'mistyped']) {
-  test(`OP17-043 INT-02 Event marker ${key} ${mode} rejects null`, () => {
-    const shape = structuredClone(int02Shape);
-    if (mode === 'omitted') delete shape[key]; else shape[key] = 7;
-    if (key === 'resource') shape.unknown = { revision: null };
-    for (const raw of [int02Raw(shape), int02Page(int02Raw(shape))]) assert.throws(() => parseWireJSON(raw));
-  });
-}
-for (const key of ['events', 'next_cursor', 'caught_up', 'timed_out']) for (const mode of ['omitted', 'mistyped']) {
-  test(`OP17-043 INT-02 page marker ${key} ${mode} rejects null`, () => {
-    const shape = JSON.parse(int02Page(int02Event));
-    if (mode === 'omitted') delete shape[key]; else shape[key] = 7;
-    if (key === 'resource') shape.unknown = { revision: null };
-    // Keep an unrecognized Event reachable even when the events slot is removed/mistyped.
-    if (key === 'events') shape.other = [int02Shape];
-    assert.throws(() => parseWireJSON(int02Raw(shape)));
-  });
-}
-for (const key of ['type', 'id', 'revision']) for (const mode of ['omitted', 'mistyped']) {
-  test(`OP17-043 INT-02 resource marker ${key} ${mode} cannot establish role`, () => {
-    const shape = structuredClone(int02Shape);
-    if (mode === 'omitted') delete shape.resource[key]; else shape.resource[key] = false;
-    // A nested null guard makes absence of revision observable without requiring schema validation.
-    if (key === 'revision') shape.resource.nested = { revision: null };
-    assert.throws(() => parseWireJSON(int02Raw(shape)));
-  });
-}
-test('OP17-043 INT-02 nonempty patterned and object markers are required', () => {
-  for (const [key, value] of [['id',''], ['cursor',''], ['type','changed'], ['type','Future.changed'], ['payload',null], ['payload',[]], ['resource',null], ['resource',[]]]) {
-    const shape = { ...int02Shape, [key]: value };
-    if (key === 'resource') shape.unknown = { revision: null };
-    assert.throws(() => parseWireJSON(int02Raw(shape)));
+test('OP17-043 nullable resource decoding does not depend on Event or page markers', () => {
+  for (const raw of ['{"revision":null}', '{"resource":{"revision":null}}', '{"type":"future.changed","resource":{"revision":null}}', '{"events":[{"resource":{"revision":null}}]}']) {
+    assert.deepEqual(parseWireJSON(raw), JSON.parse(raw));
   }
-  assert.throws(() => parseWireJSON(int02Page(int02Event).replace('c1.next-int02', '')));
+  for (const raw of [int02Event, `[${int02Event}]`, `{"wrapper":${int02Event}}`]) {
+    const doc = parseWireJSON(raw), event = Array.isArray(doc) ? doc[0] : doc.wrapper || doc;
+    assert.equal(event.resource.revision, null);
+    assert.equal(event.payload.task.revision, '9007199254740993');
+  }
 });
-test('OP17-043 INT-02 numeric tokens stay exact and all nonnull invalid tokens reject', () => {
-  for (const token of ['1','9007199254740993','9223372036854775807','"ordinary string"']) {
-    const raw = int02Event.replace('"revision":null', `"revision":${token}`);
-    for (const text of [raw, int02Page(raw)]) {
-      const doc = parseWireJSON(text), event = doc.events ? doc.events[0] : doc;
-      assert.equal(event.resource.revision, token[0] === '"' ? JSON.parse(token) : token);
+test('OP17-043 nullable resources still require valid JSON and last duplicate wins', () => {
+  for (const raw of [int02Event + ' trailing', int02Event.replace(/}$/, ',}'), int02Event.replace('"revision":null', '"revision":01'), int02Event.replace('"payload":{', '"metadata":[1,],"payload":{')]) {
+    assert.throws(() => parseWireJSON(raw), SyntaxError);
+  }
+  assert.equal(parseWireJSON(int02Event.replace('"revision":null', '"revision":0,"revision":null')).resource.revision, null);
+  assert.equal(parseWireJSON(int02Event.replace('"revision":null', '"revision":null,"revision":9007199254740993')).resource.revision, '9007199254740993');
+});
+test('OP17-043 opaque data preserves fake Events and arbitrary null resources', () => {
+  for (const raw of [int02Event, '{"type":"fake","resource":{"revision":null,"brief_revision":null}}']) {
+    for (const text of [`{"metadata":${raw}}`, `{"wrapper":{"extensions":${raw}}}`, `{"outcome":{"data":${raw}}}`, `{"wrapper":{"previous_outcome":{"data":${raw}}}}`]) {
+      assert.deepEqual(parseWireJSON(text), JSON.parse(text));
     }
   }
-  for (const token of ['-1','-0','0','1.5','1e2','9223372036854775808','true','{}','[]','01']) {
-    const raw = int02Event.replace('"revision":null', `"revision":${token}`);
-    assert.throws(() => parseWireJSON(raw)); assert.throws(() => parseWireJSON(int02Page(raw)));
-  }
-});
-test('OP17-043 INT-02 only direct recognized resource revision may be null', () => {
-  for (const raw of ['{"revision":null}', '{"brief_revision":null}', '{"resource":{"revision":null}}', '{"type":"task.changed","resource":{"type":"task","id":"t","revision":null}}', ...['task','claim'].flatMap(kind => ['revision','brief_revision'].map(key => `{"${kind}":{"${key}":null}}`)), `{"wrapper":${int02Event}}`, `[${int02Event}]`, `{"events":[${int02Event}]}`, `{"wrapper":${int02Page(int02Event)}}`]) assert.throws(() => parseWireJSON(raw));
-  for (const mutate of [e => e.resource.brief_revision = null, e => e.resource.nested = { revision:null }, e => e.unknown = { revision:null }, ...['task','claim'].flatMap(kind => ['revision','brief_revision'].map(key => e => e.payload[kind] = { [key]:null }))]) {
-    const event = structuredClone(int02Shape); mutate(event);
-    assert.throws(() => parseWireJSON(int02Raw(event)));
-  }
-});
-test('OP17-043 INT-02 malformed JSON and duplicate guards retain baseline semantics', () => {
-  for (const raw of [int02Event + ' trailing', int02Event.replace(/}$/, ',}'), int02Event.replace('"id":"t"','"id":"\\q"'), int02Event.replace('"revision":null','"revision":null,"x":01'), int02Event.replace('"payload":{','"metadata":{"revision":01},"payload":{'), int02Event.replace('"payload":{','"metadata":{"x":"\\q"},"payload":{'), int02Event.replace('"payload":{','"metadata":[1,],"payload":{'), int02Event.replace('"revision":null','"revision":0,"revision":null')]) assert.throws(() => parseWireJSON(raw));
-  const duplicate = parseWireJSON(int02Event.replace('"revision":null','"revision":1,"revision":null'));
-  assert.equal(duplicate.resource.revision, null);
-  int02Exact(int02Event.replace('"type":"future.changed"','"type":"ignored","type":"future.changed"'));
-  assert.throws(() => parseWireJSON(int02Event.replace('"type":"future.changed"','"type":"future.changed","type":"ignored"')));
-});
-test('OP17-043 INT-02 INT-01 opaque precedence includes fake Events and arbitrary null resources', () => {
-  for (const raw of [int02Event, '{"type":"fake","resource":{"revision":null,"brief_revision":null}}']) {
-    for (const boundary of [`{"metadata":${raw}}`, `{"wrapper":{"extensions":${raw}}}`, `{"outcome":{"data":${raw}}}`, `{"wrapper":{"previous_outcome":{"data":${raw}}}}`]) assert.deepEqual(parseWireJSON(boundary), JSON.parse(boundary));
-  }
-  assert.throws(() => parseWireJSON(`{"outcome":{"wrapper":{"data":${int02Event}}}}`));
 });
 
-test('OP17-043 INT-02 nullable marker strings and own properties follow approved kinds', () => {
-  const event = { ...int02Shape, board_id: '', actor_id: '', recorded_at: '', effective_at: '', credential_id: 'cred', run_id: 'run', channel_id: null, thread_id: null };
-  int02Exact(int02Raw(event));
-  for (const key of ['id', 'cursor', 'type', 'board_id', 'actor_id', 'credential_id', 'run_id', 'channel_id', 'thread_id', 'recorded_at', 'effective_at', 'payload']) {
-    const own = { ...int02Shape }; delete own[key];
-    assert.throws(() => parseWireJSON(int02Raw(own).replace('{', `{"__proto__":${JSON.stringify({ [key]: int02Shape[key] })},`)));
-  }
+test('OP17-043 revision_conflict decodes unknown revision data without schema rejection', () => {
+  const actualProblem = parseWireJSON(JSON.stringify({
+    type: 'urn:yak:problem:revision_conflict', title: 'Conflict', status: 409,
+    code: 'revision_conflict', detail: 'Stale revision', request_id: 'audit',
+    revision: 5, extra: { revision: 0 }
+  }));
+  assert.equal(actualProblem.revision, '5');
+  assert.deepEqual(actualProblem.extra, { revision: 0 });
 });
