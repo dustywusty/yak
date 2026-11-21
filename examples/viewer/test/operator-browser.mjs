@@ -639,6 +639,44 @@ async function boardSwitchCase() {
  assert('required variants executed nonzero assertions',assertions>=40);
  console.log(`OP17-005 executed ${assertions} assertions across four fresh board transitions and six fresh pending-recovery fixtures`);
 }
+// Hold the automatic post-write refresh while manual refreshes supersede it.
+async function refreshSelectionCase() {
+ await freshIdentityFixture();
+ try {
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-refresh-selection';document.querySelector('#login-form').requestSubmit()");
+  await until("!!document.body && document.body.dataset.operator==='true'");await open();
+  await ev(`{
+   const base=window.fetch;
+   window.__op.refreshReads=[];
+   window.fetch=async(url,opts={})=>{
+    if((opts.method||'GET')==='GET' && new URL(url,location.href).pathname==='/v1/boards/brd_test/permissions') {
+     const read={};window.__op.refreshReads.push(read);
+     await new Promise(resolve=>read.resolve=resolve);
+     const response=await base(url,opts);read.done=true;return response;
+    }
+    return base(url,opts);
+   };
+   document.querySelector('textarea[aria-label="Gate note t"]').value='Please change this';
+  }`);
+  await click('Request changes');await confirm('Request changes');
+  await until('window.__op.refreshReads.length===1');
+  check('refresh selection: A12 saved before its automatic read completes',await ev("document.querySelector('.op-receipts').textContent.includes('Saved.') && window.__op.writes.length===2 && window.__op.task.state==='blocked'"));
+  await ev("{const b=[...document.querySelectorAll('.op-workspace button')].find(b=>b.textContent==='Refresh permissions and state');b.click();b.click();}");
+  await until('window.__op.refreshReads.length===3');
+  check('refresh selection: no write controls while reads are pending',await ev("!document.querySelector('.op-workspace [data-op-write]')"));
+  await ev('window.__op.refreshReads[2].resolve()');
+  await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");
+  const selected=()=>ev("document.querySelector('.op-workspace select[aria-label=Thread]')?.value==='th' && !!document.querySelector('.op-workspace [aria-label=\"Task actions\"]') && [...document.querySelectorAll('.op-workspace button')].some(b=>b.textContent==='Approve and unblock')");
+  check('refresh selection: latest refresh retains selected task and Approve',await selected());
+  await ev('window.__op.refreshReads[1].resolve();window.__op.refreshReads[0].resolve()');
+  await until('window.__op.refreshReads.every(r=>r.done)');
+  check('refresh selection: older reads cannot replace selected task',await selected());
+  check('refresh selection: rapid refresh adds no writes',await count()===2);
+ } finally {
+  await ev("window.__op.refreshReads?.forEach(r=>r.resolve());document.querySelector('#operator-logout')?.click()");
+ }
+ check('refresh selection: no browser exceptions',errors.length===0,errors.join(' | '));
+}
 async function refreshDiscoveryCase() {
  let assertions = 0;
  const assert = (name, ok) => { assertions++; check(`OP17-007: ${name}`, ok); };
@@ -1628,7 +1666,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");

@@ -231,7 +231,7 @@ export function createOperatorUI({ session, read, route }) {
   async function loadChannel(channel, threadId) {
     const version = ++sequence;
     dismissConfirmations(); panel.querySelector('.op-channel').replaceChildren();
-    const snapshot = current = Object.freeze({ ...current, channel, thread: null, task: null });
+    const snapshot = current = Object.freeze({ ...current, channel, threadId, thread: null, task: null });
     refresh.disabled = false;
     const B = snapshot.B; content.replaceChildren('Reading current permissions and state…');
     try {
@@ -278,7 +278,7 @@ export function createOperatorUI({ session, read, route }) {
     if (!session.active || session.ending) return;
     close(); opener = document.activeElement;
     status = h('p', { role: 'status' }); content = h('div', {});
-    refresh = button('Refresh permissions and state', () => current?.channel && loadChannel(current.channel, current.thread?.id));
+    refresh = button('Refresh permissions and state', () => current?.channel && loadChannel(current.channel, current.threadId));
     refresh.disabled = true;
     panel = h('dialog', { class: 'op-workspace', 'aria-label': 'Operator tools' }, h('h2', {}, 'Operator tools'), button('Close', close), status, h('div', { class: 'op-board' }), h('div', { class: 'op-channel' }), refresh, content, receipts);
     const openedPanel = panel, version = sequence;
