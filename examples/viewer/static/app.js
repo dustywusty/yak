@@ -85,7 +85,7 @@ function needToken(message) {
   operatorUI?.clear();
   document.body.removeAttribute('data-operator');
   feed.stop();
-  skins.unmount();
+  skins.endSession();
   term.unmount();
   S.abort.abort();
   S.abort = new AbortController();

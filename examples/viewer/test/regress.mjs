@@ -127,7 +127,9 @@ const FAKE = () => {
       const token = u.searchParams.get('page_token');
       if (token === 'opaque +/next') {
         count('messagePageTwo');
-        if (T.holdMessages) return new Promise(resolve => { T.finishMessages = () => resolve(json({}, 401)); });
+        if (T.holdMessages) return new Promise(resolve => {
+          T.finishMessages = (status = 401) => resolve(status === 200 ? json({ messages: rows.slice(1), next_page_token: null }) : json({}, status));
+        });
         return json({ messages: rows.slice(1), next_page_token: null });
       }
       return json({ messages: rows.slice(0, 1), next_page_token: rows.length > 1 ? 'opaque +/next' : null });
@@ -290,14 +292,49 @@ try {
   await go('#/forum?b=brd_planning&ch=missing&t=missing');
   check('Unavailable channel falls back to the same board index', await ev(`
     document.querySelector('${recoveryLink}')?.hash === '#/forum?b=brd_planning'`));
-  await ev('window.__fake.postsError=403');
+  await ev('window.__fake.holdMessages=true');
   await go('#/forum?b=brd_test&ch=ops&t=thr_ops');
-  await until("document.querySelector('.f-content [role=status]')?.textContent.includes('Thread unavailable.')");
+  await until("!!window.__fake.finishMessages");
+  await go('#/forum?b=brd_test');
+  await ev('window.__fake.holdMessages=false; window.__fake.postsError=403');
+  await go('#/forum?b=brd_test&ch=ops&t=thr_ops');
+  await until("document.querySelector('.f-content h2')?.textContent === 'Thread unavailable.'");
   check('Denied post read offers the channel index beside Retry', await ev(`
     document.querySelector('.f-content [role=status] a')?.hash === '#/forum?b=brd_test&ch=ops' &&
     document.querySelector('.f-content [role=status] button')?.textContent === 'Retry'`));
-  await ev('window.__fake.postsError=false');
+  check('Unavailable Forum thread renders only recovery controls', await ev(`
+    document.querySelector('.f-content').children.length === 2 &&
+    !document.querySelector('.f-content article, .f-content .f-meta, #forum-task-heading')`));
+  await ev("document.querySelector('.f-content [role=status] a').click()");
+  await until("document.querySelector('.f-content h2')?.textContent.startsWith('#ops')");
+  await ev("window.__fake.finishMessages(200); delete window.__fake.finishMessages; 1");
+  await sleep(100);
+  check('Late success from a canceled read leaves the unavailable thread out of the index', await ev("!document.querySelector('.f-summary')"));
+  await go('#/boards');
   await go('#/forum?b=brd_test');
+  await until("!!document.querySelector('.f-content [data-thread=thr_deploy]')");
+  check('Remounted index retains the visibility decision', await ev(`
+    !document.querySelector('.f-content [data-thread=thr_ops]')`));
+  await ev("window.__fake.postsError=404; window.__fake.disconnected=true; 1");
+  await go('#/forum?b=brd_test&ch=review&t=thr_review');
+  await until("!!document.querySelector('.f-content [role=status] button')");
+  check('Unavailable task during a poll outage keeps only the recovery view', await ev(`
+    document.querySelector('.f-content h2').textContent === 'Thread unavailable.' &&
+    !document.querySelector('.f-content article, .f-content .f-meta, #forum-task-heading')`));
+  await ev("document.querySelector('.f-content [role=status] a').click()");
+  await until("document.querySelector('.f-content h2')?.textContent.startsWith('#review')");
+  check('Disconnected channel index omits the unavailable task', await ev("!document.querySelector('.f-content [data-thread]')"));
+  await go('#/forum?b=brd_test&ch=review&t=thr_review');
+  await until("!!document.querySelector('.f-content [role=status] button')");
+  await ev("window.__fake.postsError=false; document.querySelector('.f-content [role=status] button').click()");
+  await until("!!document.querySelector('.f-opening')");
+  check('Successful retry restores a readable thread', await ev("document.querySelector('.f-content h2').textContent === 'Review thread'"));
+  await ev('window.__fake.disconnected=false');
+  await go('#/forum?b=brd_test&ch=ops&t=thr_ops');
+  await until("!!document.querySelector('.f-opening')");
+  await go('#/forum?b=brd_test');
+  check('Revalidated threads return to the index', await ev(`
+    !!document.querySelector('.f-content [data-thread=thr_review]') && !!document.querySelector('.f-content [data-thread=thr_ops]')`));
   await ev("document.querySelector('[data-thread=thr_deploy] .f-task').click()");
   await until("!!document.querySelector('.f-opening')");
   check('Forum task link targets the approval ask inside the Deploy thread', await ev(`(() => {

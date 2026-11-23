@@ -381,7 +381,10 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
     async loadMessages(id, signal) {
       const combined = AbortSignal.any([signal, refresh.abort.signal, abort.signal]);
       const rows = await all(`${B}/threads/${enc(id)}/messages`, 'messages', combined);
-      if (combined.aborted) return;
+      // A denied thread can be absent from the replacement snapshot on retry.
+      const metadata = !S.threads.has(id) && await get(`${B}/threads/${enc(id)}`, {}, combined);
+      combined.throwIfAborted();
+      if (metadata && !S.threads.has(id)) S.threads.set(id, metadata.thread);
       for (const m of rows) putMessage(m);
     },
     stop: stopStore,

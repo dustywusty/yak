@@ -6,7 +6,7 @@ const unavailableThread = 'Thread unavailable.';
 const date = (ts) => h('time', { datetime: ts }, new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }));
 const count = (n, noun) => n + ' ' + noun + (n === 1 ? '' : 's');
 
-export function forum(root, { boardId, route }) {
+export function forum(root, { boardId, route, deniedThreads }) {
   const targetsTask = () => new URLSearchParams(location.hash.split('?')[1]).get('section') === 'task';
   let taskTarget = targetsTask(), focusHeading = taskTarget;
   let request, loaded = false, error = '', ready = false;
@@ -23,11 +23,17 @@ export function forum(root, { boardId, route }) {
     loaded = false;
     error = '';
   }
-  function load(st, thread) {
+  function load(st, id) {
     const controller = new AbortController();
     request = controller;
-    st.loadMessages(thread.id, controller.signal).then(() => { if (!controller.signal.aborted) loaded = true; }).catch(e => {
-      if (!controller.signal.aborted) error = e.status === 404 || e.status === 403 ? unavailableThread : 'Could not load posts.';
+    st.loadMessages(id, controller.signal).then(() => {
+      if (controller.signal.aborted) return;
+      deniedThreads.delete(id);
+      loaded = true;
+    }).catch(e => {
+      if (controller.signal.aborted) return;
+      if (e.status === 403 || e.status === 404) deniedThreads.add(id);
+      error = 'Could not load posts.';
     }).finally(() => {
       if (!controller.signal.aborted) render(st);
     });
@@ -61,6 +67,10 @@ export function forum(root, { boardId, route }) {
     if (task.state === 'blocked' || task.state === 'waiting') {
       for (const reason of waitingReasons(st, task)) {
         const dep = reason.task;
+        if (dep && deniedThreads.has(dep.thread_id)) {
+          panel.append(h('div', { class: 'f-meta' }, 'Prerequisite pending (details not visible)'));
+          continue;
+        }
         const target = dep && dep.id !== task.id && st.thread(dep.thread_id);
         panel.append(h('div', { class: 'f-meta' }, reason.text,
           target && h('a', { href: href(target.channel_path, target.id, true) }, reason.number + ' ' + dep.title)));
@@ -82,11 +92,12 @@ export function forum(root, { boardId, route }) {
     const focusRegion = ['.f-head', '.f-directory', '.f-content'].find(selector => focused?.closest(selector));
     const channels = st.S.channels;
     const thread = st.thread(route.t);
-    const ch = route.ch || thread?.channel_path;
+    const denied = deniedThreads.has(route.t);
+    const ch = route.ch || (!denied && thread?.channel_path);
     const validChannel = !ch || channels.some(c => c.path === ch);
     const returnToIndex = () => h('a', { href: href(validChannel ? ch : null) },
       validChannel && ch ? `Return to #${ch} index` : 'Return to thread index');
-    const threads = route.t ? [] : [...st.S.threads.values()].filter(t => !ch || t.channel_path === ch)
+    const threads = route.t ? [] : [...st.S.threads.values()].filter(t => !deniedThreads.has(t.id) && (!ch || t.channel_path === ch))
       .sort((a,b) => b.updated_at.localeCompare(a.updated_at) || a.id.localeCompare(b.id));
     const directory = h('nav', { class: 'f-directory', 'aria-label': 'Channel directory' },
       h('h2', {}, 'Channels'), h('ul', {}, channels.map(c => h('li', {},
@@ -97,7 +108,13 @@ export function forum(root, { boardId, route }) {
       return task && h('a', { class: 'f-task', 'data-control': 'task', href: href(t.channel_path, t.id, true) }, 'Task ' + st.num(task.id) + ' · ' + task.state);
     };
     const section = h('section', { class: 'f-content' });
-    if (!validChannel || (route.t && (!thread || thread.channel_path !== ch))) {
+    const canReadRoute = validChannel && (thread ? !ch || thread.channel_path === ch : denied);
+    if (route.t && canReadRoute && !request) load(st, route.t);
+    const retry = () => h('button', { onclick: () => { reset(); render(st); } }, 'Retry');
+    if (denied) {
+      section.append(h('h2', {}, unavailableThread), h('p', { role: 'status' }, returnToIndex(),
+        canReadRoute && error && [' · ', retry()]));
+    } else if (!validChannel || (route.t && (!thread || thread.channel_path !== ch))) {
       section.append(h('h2', {}, route.t ? unavailableThread : 'Channel unavailable.'), h('p', {}, returnToIndex()));
     } else if (route.t) {
       section.append(h('h2', {}, thread.title), h('div', { class: 'f-meta' },
@@ -106,9 +123,7 @@ export function forum(root, { boardId, route }) {
           window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: boardId, ch, t: thread.id } })) }, 'Reply / task actions')));
       const details = taskDetails(st, thread);
       if (details) section.append(details);
-      if (!request) load(st, thread);
-      if (error) section.append(h('p', { role: 'status' }, error, ' ',
-        error === unavailableThread && [returnToIndex(), ' · '], h('button', { onclick: () => { reset(); render(st); } }, 'Retry')));
+      if (error) section.append(h('p', { role: 'status' }, error, ' ', retry()));
       else if (!loaded) section.append(h('p', { role: 'status' }, 'Loading posts…'));
       else {
         const posts = st.messages(thread.id);
@@ -132,7 +147,7 @@ export function forum(root, { boardId, route }) {
     root.replaceChildren(h('div', { class: 'f-page' },
       h('header', { class: 'f-head' }, h('h1', {}, st.S.board.name, h('span', {}, ' / Forum')),
         h('nav', { 'aria-label': 'Forum navigation' }, h('a', { href: href() }, 'Thread index'),
-          ch && [' / ', h('a', { href: href(ch) }, '#' + ch)]),
+          validChannel && ch && [' / ', h('a', { href: href(ch) }, '#' + ch)]),
         h('small', {}, document.body.dataset.operator ? 'Read-only view · Operator tools available' : 'Read-only view')),
       h('div', { class: 'f-columns' }, directory, section)));
     const taskHeading = section.querySelector('#forum-task-heading');

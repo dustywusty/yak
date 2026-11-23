@@ -11,6 +11,8 @@ export function createSkins({ api, setStatus, onUnauthorized }) {
   let cur = null; // { key, store, view, timer }
   const root = () => document.getElementById('skin');
 
+  // Keep negative visibility decisions across Forum mounts in this login session.
+  const deniedByBoard = new Map();
   let lookup;
   async function mount(route) {
     lookup?.abort();
@@ -38,7 +40,8 @@ export function createSkins({ api, setStatus, onUnauthorized }) {
     const el = root();
     el.className = `skin skin-${route.skin}`;
     el.replaceChildren(h('p', { class: 'pad' }, 'Loading board…'));
-    const view = SKINS[route.skin](el, { boardId, route, threadHref: (t) => `#/b/${encodeURIComponent(boardId)}?t=${encodeURIComponent(t)}` });
+    if (route.skin === 'forum' && !deniedByBoard.has(boardId)) deniedByBoard.set(boardId, new Set());
+    const view = SKINS[route.skin](el, { boardId, route, deniedThreads: deniedByBoard.get(boardId), threadHref: (t) => `#/b/${encodeURIComponent(boardId)}?t=${encodeURIComponent(t)}` });
     const store = createStore({
       api, boardId, onUnauthorized,
       onStatus: (status) => { setStatus(status); view.status?.(status, store); },
@@ -62,5 +65,5 @@ export function createSkins({ api, setStatus, onUnauthorized }) {
     setStatus(null);
   }
 
-  return { mount, unmount };
+  return { mount, unmount, endSession() { unmount(); deniedByBoard.clear(); } };
 }
