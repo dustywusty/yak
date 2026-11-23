@@ -92,7 +92,7 @@ const FAKE = () => {
     if (/\/snapshots\/snp_\w+$/.test(p) && m === 'DELETE') { T.deletes++; return new Response(null, { status: 204 }); }
     if (/\/snapshots\/snp_\w+$/.test(p)) {
       if (T.slowSnapshot) await new Promise((r) => setTimeout(r, T.slowSnapshot));
-      const items = threads.flatMap((t) => [{ type: 'thread', id: t.id, data: t }, ...msgs.filter((x) => x.thread_id === t.id).map((x) => ({ type: 'message', id: x.id, data: x }))]);
+      const items = threads.flatMap((t) => [{ type: 'thread', id: t.id, data: t }, ...msgs.filter((x) => x.thread_id === t.id && !(T.partial && x.id === 'thr_ops_m2')).map((x) => ({ type: 'message', id: x.id, data: x }))]);
       items.push(...T.tasks.map((t) => ({ type: 'task', id: t.id, data: t })));
       return json({ snapshot: { id: 'snp' }, items, next_page_token: null, continuation_cursor: 'c1.store' });
     }
@@ -118,6 +118,17 @@ const FAKE = () => {
       if (who === 'feed') T.queue = T.queue.filter((e) => e.__for === 'store');
       if (who === 'store') T.queue = T.queue.filter((e) => e.__for === 'feed');
       return json({ events, next_cursor: cursor, caught_up: true, timed_out: !events.length });
+    }
+    if (p.endsWith('/messages')) {
+      if (T.postsError) return json({ code: 'unavailable' }, 503);
+      const id = p.split('/').at(-2), rows = msgs.filter(m => m.thread_id === id);
+      const token = u.searchParams.get('page_token');
+      if (token === 'opaque +/next') {
+        count('messagePageTwo');
+        if (T.holdMessages) return new Promise(resolve => { T.finishMessages = () => resolve(json({}, 401)); });
+        return json({ messages: rows.slice(1), next_page_token: null });
+      }
+      return json({ messages: rows.slice(0, 1), next_page_token: rows.length > 1 ? 'opaque +/next' : null });
     }
     if (/\/threads\/[\w]+$/.test(p)) { const t = threads.find((x) => p.endsWith(x.id)); return t ? json({ thread: t, root_message: msgs.find((x) => x.id === t.root_message_id) }) : json({ code: 'not_found', status: 404, detail: 'x' }, 404); }
     return json({ code: 'not_found', status: 404, detail: `fake: no route ${m} ${p}` }, 404);
@@ -504,38 +515,43 @@ try {
   await sleep(700);
   check('Lanes release removes claim clock and late read cannot restore claim', await ev(`!!document.querySelector('.w-col-ready [data-task="task_work"]') && !document.querySelector('[data-task="task_work"] time')`));
   await cmd('Emulation.setDeviceMetricsOverride', { width:1280,height:900,deviceScaleFactor:1,mobile:false });
+  await ev('window.__fake.partial=true');
   await go('#/irc?b=brd_test');
-  check('IRC frame fills entire viewport with square blue chrome', await ev(`(() => {const r=document.querySelector('.i-win').getBoundingClientRect();return r.x===0 && r.y===0 && r.width===innerWidth && r.height===innerHeight && getComputedStyle(document.querySelector('.i-title')).backgroundImage==='none';})()`));
-  check('IRC navigation and logout are inside chrome', await ev(`document.querySelector('.i-win #nav [data-view="skin-board"]')?.textContent === 'Lanes' && document.querySelector('.i-win #nav [data-view="boards"]')?.textContent === 'Switch board' && !!document.querySelector('.i-win #forget')`));
-  check('IRC has real channel tree left and board actors right', await ev(`!!document.querySelector('.i-tree button[data-channel="ops"]') && document.querySelector('.i-nicks')?.textContent.includes('bot-a')`));
-  await ev(`document.querySelector('.i-tree button[data-channel="ops"]').click(); document.querySelector('.i-tree button[data-channel="ops"]').focus(); window.__fake.queue.push(window.__msgEvent('msg_irc_live','IRC live update','store')); 1`);
-  await sleep(700);
-  check('IRC live messages retain channel control focus', await ev(`document.querySelector('.i-text').textContent.includes('IRC live update') && document.activeElement?.dataset.channel==='ops'`));
-  await ev(`document.querySelector('.i-tools button').focus();window.__fake.queue.push(window.__msgEvent('msg_irc_jump','Control focus on live update','store'));1`);
-  await sleep(700);
-  check('IRC Jump button focus survives live redraw', await ev(`document.activeElement===document.querySelector('.i-tools button')`));
-  await ev(`for(let i=0;i<60;i++) window.__fake.queue.push(window.__msgEvent('msg_scroll_'+i,'Transcript scroll line '+i,'store'));1`);
-  await sleep(700);
-  await ev(`const text=document.querySelector('.i-text');text.scrollTop=40;text.focus();window.__fake.queue.push(window.__msgEvent('msg_scroll_later','Later live line','store'));1`);
-  await sleep(700);
-  check('IRC preserves transcript scroll and focus away from bottom', await ev(`document.querySelector('.i-text').scrollTop===40 && document.activeElement===document.querySelector('.i-text')`));
-  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true}));1`);
-  check('IRC Ctrl-K opens working channel jump', await ev(`!!document.querySelector('.jump input')`));
-  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));1`);
-  await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'3',altKey:true,bubbles:true})); 1`);
-  check('IRC Alt-number selects a real channel', await ev(`document.querySelector('.i-tab.on')?.textContent.includes('#ops/deploy')`));
+  check('Old bookmark opens the Forum for the same board',await ev("location.hash==='#/forum?b=brd_test' && !!document.querySelector('.f-summary')"));
+  await ev("document.querySelector('.f-directory a[href$=\"ch=ops\"]').click()");
+  await until("document.activeElement?.textContent.startsWith('#ops') && !!document.querySelector('.f-summary')");
+  check('Channel index uses exact channel',await ev("document.querySelectorAll('.f-summary').length===1"));
+  await ev("document.querySelector('.f-summary h3 a').focus()");
+  await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',windowsVirtualKeyCode:13});
+  await cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',windowsVirtualKeyCode:13});
+  await until("!!document.querySelector('.f-reply')");
+  check('Forum thread reads page two outside the snapshot',await ev("location.hash==='#/forum?b=brd_test&ch=ops&t=thr_ops' && window.__fake.calls.messagePageTwo>0 && document.querySelector('.f-reply p').textContent==='ops reply'"));
+  await ev("document.querySelector('.f-directory a').focus();window.__fake.queue.push(window.__msgEvent('msg_forum_live','<img src=x onerror=alert(1)>','store'));1");
+  await until("document.querySelectorAll('.f-reply').length===2");
+  check('Live replies preserve focus and render literal text',await ev("document.activeElement===document.querySelector('.f-directory a') && document.querySelector('.f-reply:last-child p').textContent.startsWith('<img') && !document.querySelector('.f-reply img')"));
   await cmd('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
-  check('mobile IRC keeps transcript and side panes within viewport', await ev(`document.documentElement.scrollWidth<=innerWidth && document.querySelector('.i-win').getBoundingClientRect().height===innerHeight && document.querySelector('.i-text').clientWidth>=140 && document.querySelector('.i-tree').clientWidth>0 && document.querySelector('.i-nicks').clientWidth>0`));
-  check('mobile IRC topic thread link stays visible', await ev(`(() => {const a=document.querySelector('.i-topic a').getBoundingClientRect(), p=document.querySelector('.i-topic').getBoundingClientRect();return a.left>=p.left && a.right<=p.right && a.bottom<=p.bottom;})()`));
-  check('IRC input is explicitly read-only', await ev(`document.querySelector('.i-input').disabled && document.querySelector('.i-input').getAttribute('aria-label').includes('read-only')`));
+  check('Mobile Forum fits channel links and replies',await ev("document.documentElement.scrollWidth<=390 && document.querySelector('.f-reply').getBoundingClientRect().right<=390"));
+  await go('#/forum?b=brd_test&ch=review');
+  await ev("window.__fake.postsError=true;document.querySelector('.f-task').click()");
+  await until("document.querySelector('.f-content')?.textContent.includes('Could not load posts.')");
+  await ev("window.__fake.postsError=false;document.querySelector('.f-content button').click()");
+  await until("!!document.querySelector('.f-opening')");
+  check('Task link and retry open the Forum conversation',await ev("location.hash==='#/forum?b=brd_test&ch=review&t=thr_review'"));
+  await ev("window.__fake.holdMessages=true;location.hash='#/forum?b=brd_test&ch=ops&t=thr_ops'");
+  await until("!!window.__fake.finishMessages");
+  await go('#/forum?b=brd_planning');
+  check('Empty Forum switches boards without stale content',await ev("document.querySelector('.f-content').textContent.includes('No threads.') && document.querySelector('.f-head').textContent.includes('Release planning')"));
+  await ev("window.__fake.finishMessages();window.__fake.holdMessages=false");
+  await sleep(100);
+  check('A late message page cannot log out the replacement board',await ev("!document.querySelector('#skin').hidden && document.querySelector('.f-head').textContent.includes('Release planning') && !!sessionStorage.getItem('yak-viewer-token')"));
   await go('#/wall?b=brd_test');
-  check('old Wall bookmark remains a Lanes alias and restores global header', await ev(`!!document.querySelector('.w-cols') && !!document.querySelector('body > .top') && !document.querySelector('.i-win')`));
+  check('old Wall bookmark remains a Lanes alias and restores global header', await ev(`!!document.querySelector('.w-cols') && !!document.querySelector('body > .top')`));
   await cmd('Emulation.setDeviceMetricsOverride', {width:1280,height:900,deviceScaleFactor:1,mobile:false});
 
   // R1: a snapshot session is deleted even when the store stops during the snapshot.
   const cleanupPosts = await ev(`window.__fake.posts`);
   await ev(`window.__fake.slowSnapshot = 600; 1`);
-  await go('#/irc?b=brd_test', 200);
+  await go('#/forum?b=brd_test', 200);
   await go('#/board?b=brd_test', 200);
   await ev(`window.__fake.slowSnapshot = 0; 1`);
   await sleep(1500);
@@ -553,9 +569,9 @@ try {
   await ev(`document.querySelector('#board-list a[href*="brd_planning"]').click();1`);
   await sleep(800);
   check('second board opens its own empty Chat without leaking demo tasks', await ev(`location.hash.includes('brd_planning') && document.querySelector('.t-foot').textContent.includes('Release planning') && !document.querySelector('#term').textContent.includes('Build the viewer bundle') && document.getElementById('banner').hidden`));
-  await go('#/irc?b=brd_test');
-  await ev(`document.querySelector('.i-win #forget').click();1`);
-  check('IRC Forget token restores login and stops the skin', await ev(`!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !!document.querySelector('body > .top') && !document.body.dataset.skin`));
+  await go('#/forum?b=brd_test');
+  await ev(`document.querySelector('#forget').click();1`);
+  check('Forum Forget token restores login and stops the skin', await ev(`!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !!document.querySelector('body > .top') && !document.body.dataset.skin`));
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));

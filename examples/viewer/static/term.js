@@ -269,7 +269,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       item('#', 'all channels', 0, {}, !route.v && !activeCh),
       S.channels.map((c) => item(c.access_mode === 'private' ? '◆' : '#', c.path, unread(c.path), { ch: c.path }, !route.v && activeCh === c.path)),
       h('div', { class: 't-sidefoot' },
-        h('div', {}, h('a', { href: `#/board?b=${encodeURIComponent(cur.boardId)}` }, 'Lanes'), ' · ', h('a', { href: `#/irc?b=${encodeURIComponent(cur.boardId)}` }, 'IRC'), ' · ', h('a', { href: '#/boards' }, 'Switch board')),
+        h('div', {}, h('a', { href: `#/board?b=${encodeURIComponent(cur.boardId)}` }, 'Lanes'), ' · ', h('a', { href: `#/forum?b=${encodeURIComponent(cur.boardId)}` }, 'Forum'), ' · ', h('a', { href: '#/boards' }, 'Switch board')),
         h('div', {}, h('button', { type: 'button', onclick: () => { theme = theme === 'dark' ? 'light' : 'dark'; store_.set(THEME_KEY, theme); render(); } }, theme === 'dark' ? '◐ light' : '◑ dark'),
           ' ', h('button', { type: 'button', onclick: onForget }, document.body.dataset.operator ? 'Logout (revokes token everywhere)' : 'Forget token'))));
     const scroll = h('div', { class: `t-scroll${view.activity ? ' t-activity' : ''}`, role: 'log' }, view.body);

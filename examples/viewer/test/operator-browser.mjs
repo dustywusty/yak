@@ -1192,22 +1192,24 @@ async function op17021ActorRetryCase() {
 async function op17010StoreActorsCase() {
  let assertions = 0, fixtures = 0;
  const assert = (name, ok, detail = '') => { assertions++; check(`OP17-010: ${name}`,ok,detail); };
- for (const skin of ['terminal','irc']) {
+ for (const skin of ['terminal','forum']) {
   await freshIdentityFixture("window.__op.scope=['read'];window.__op.enableStorePagination();sessionStorage.setItem('yak-viewer-token','synthetic-pagination-token');"); fixtures++;
   try {
    await until("!!document.body && document.body.dataset.view==='boards'");
-   await ev(`location.hash=${JSON.stringify(skin==='irc'?'#/irc?b=brd_test':'#/b/brd_test?ch=ops&t=th')}`);
-   await until(skin==='irc' ? "!!document.querySelector('.i-nick')" : "!!document.querySelector('.t-who')");
+   await ev(`location.hash=${JSON.stringify(skin==='forum'?'#/forum?b=brd_test&ch=ops&t=th':'#/b/brd_test?ch=ops&t=th')}`);
+   await until(skin==='forum' ? "!!document.querySelector('.f-author')" : "!!document.querySelector('.t-who')");
    await sleep(150);
-   const rows = await ev(`Array.from(document.querySelectorAll(${JSON.stringify(skin==='irc'?'.i-nick':'.t-who')}),e=>e.textContent)`);
+   const rows = await ev(`Array.from(document.querySelectorAll(${JSON.stringify(skin==='forum'?'.f-author':'.t-who')}),e=>e.textContent)`);
    assert(`${skin}: page two human message shows handle and kind`,rows.some(t=>t.includes('pageHuman') && t.includes('human')),JSON.stringify(rows));
    assert(`${skin}: delegated message shows both handles and kinds`,rows.some(t=>t.includes('bot') && t.includes('agent') && t.includes('pagePrincipal') && t.includes('human')),JSON.stringify(rows));
    if (skin==='terminal') {
     await ev("location.hash='#/'"); await until("!!document.querySelector('#feed') && document.querySelector('#feed').textContent.includes('page human event')");
+    const text = await ev("document.querySelector('#feed').textContent");
+    assert(`${skin}: human task event resolves page two kind`,text.includes('pageHuman (human)'),text);
+    assert(`${skin}: delegated task event resolves both handles`,text.includes('bot (agent) for @pagePrincipal'),text);
+   } else {
+    assert('Forum preserves the delegated opening post', await ev("document.querySelector('.f-opening .f-author').textContent==='@bot (agent) for @pagePrincipal (human)'"));
    }
-   const text = await ev(`document.querySelector(${JSON.stringify(skin==='irc'?'#skin':'#feed')}).textContent`);
-   assert(`${skin}: human task event resolves page two kind`,text.includes('pageHuman (human)'),text);
-   assert(`${skin}: delegated task event resolves both handles`,text.includes('bot (agent) for '+(skin==='terminal'?'@':'')+'pagePrincipal'),text);
    assert(`${skin}: follows opaque actor token with page size`,await ev("window.__op.storeActorReads.some(r=>r.token==='opaque +/actors2' && r.limit==='200')"));
    assert(`${skin}: read-only rendering sends no operator writes`,await count()===0);
   } finally { await ev("document.querySelector('#forget').click()"); await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden"); }
@@ -1389,148 +1391,24 @@ async function op17024ProjectionRetryCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-024 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
-async function op17012IrcContextCase() {
- let assertions=0, fixtures=0;
- const assert=(name,ok)=>{assertions++;check(`OP17-012: ${name}`,ok)};
- for (const variant of ['initial fallback','stale other-channel topic','status','no readable thread']) {
-  await freshIdentityFixture(); fixtures++;
-  try {
-   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-context';document.querySelector('#login-form').requestSubmit()");
-   await until("!!document.body && document.body.dataset.operator==='true'");
-   await ev('window.__op.mountIrcContext()');
-   if (variant!=='initial fallback') {
-    await ev("document.querySelector('.i-link[data-thread=stale]').click()");
-    assert(`${variant}: divider selects explicit topic`,await ev("document.querySelector('.i-topic').textContent.includes('Moved topic')"));
-   }
-   if (variant==='stale other-channel topic') await ev("{const C=window.__op.ircContext;C.stale.channel_path='elsewhere';C.view.render(C.st);}");
-   if (variant==='status') await ev("document.querySelector('.i-tab[data-channel=status]').click()");
-   if (variant==='no readable thread') await ev("{const C=window.__op.ircContext;C.S.threads.clear();C.S.tasks.clear();C.view.render(C.st);}");
-   const hasThread=variant==='initial fallback'||variant==='stale other-channel topic';
-   assert(`${variant}: topic displays resolved context`,await ev(hasThread?"document.querySelector('.i-topic a').getAttribute('href').endsWith('t=th')":"!document.querySelector('.i-topic a')"));
-   assert(`${variant}: fresh fixture has no writes`,await count()===0);
-   await ev("document.querySelector('.i-input').click()");
-   await sleep(250);
-   assert(`${variant}: event matches displayed thread`,await ev(`window.__op.ircOpened.length===1 && window.__op.ircOpened[0].board==='brd_test' && window.__op.ircOpened[0].ch===${JSON.stringify(variant==='status'?'status':'ops')} && window.__op.ircOpened[0].t===${hasThread?"'th'":'null'}`));
-   if (hasThread) {
-    if (await ev("window.__op.ircOpened.at(-1).t==='th'")) await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
-    const selected=await ev("document.querySelector('.op-workspace select[aria-label=Thread]')?.value==='th' && !!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
-    assert(`${variant}: task controls select displayed task`,selected);
-    if (selected) {
-     await click('Assign to myself');
-     assert(`${variant}: confirmation names displayed task`,await ev("document.querySelector('.op-confirm').textContent.includes(window.__op.task.title) && document.querySelector('.op-confirm').textContent.includes('Channel: ops')"));
-     assert(`${variant}: confirmation sends nothing before approval`,await count()===0);
-     await confirm('Assign to @alice');
-     assert(`${variant}: confirmed write targets displayed task`,await ev("window.__op.writes.length===1 && window.__op.writes[0].path==='/v1/boards/brd_test/tasks/t/assignee' && window.__op.writes[0].body.assignee_actor_id==='a'"));
-    }
-   } else {
-    if (await ev("window.__op.ircOpened.at(-1).t===null")) await until("!!document.querySelector('.op-workspace textarea')");
-    assert(`${variant}: new-thread composer selects no task`,await ev("document.querySelector('.op-workspace select[aria-label=Thread]')?.value==='' && !document.querySelector('.op-workspace [aria-label=\"Task actions\"]') && [...document.querySelectorAll('.op-workspace h3')].some(e=>e.textContent==='New thread')"));
-   }
-   assert(`${variant}: opening context sends no unintended writes`,await count()===(hasThread && await ev("window.__op.task.assignee_actor_id==='a'")?1:0));
-  } finally {
-   if (await ev("!!document.querySelector('.op-workspace')")) await click('Close');
-   await ev('window.__op.disposeIrcContext()');
-   await ev("document.querySelector('#forget').click()");
-   await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
-  }
- }
- assert('all four fresh variants executed nonzero assertions',fixtures===4 && assertions>=23);
- assert('no browser exceptions',errors.length===0);
- console.log(`OP17-012 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
-}
-async function op17014IrcProvenanceCase() {
- let assertions=0,fixtures=0;
- const assert=(name,ok,detail='')=>{assertions++;check(`OP17-014: ${name}`,ok,detail)};
- for (const variant of ['snapshot','task.created','task.claimed','task.completed','task.failed','task.completed conflicting','task.failed conflicting']) {
-  const [type,conflicting]=variant.split(' ');
-  const detail=type==='task.completed'?'recorded summary':'recorded failure';
-  const recorded=text=>text.includes(detail)&&!['mutable outcome substitute','mutable reason substitute','false top-level summary','false top-level reason'].some(value=>text.includes(value));
-  await freshIdentityFixture(); fixtures++;
-  try {
-   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-provenance';document.querySelector('#login-form').requestSubmit()");
-   await until("!!document.body && document.body.dataset.operator==='true'");
-   await ev('window.__op.mountIrcProvenance()');
-   const before=await ev("document.querySelector('.i-text').textContent");
-   assert(`${variant}: snapshot has no invented task history`,!['opened task','claimed task','completed task','mutable outcome substitute'].some(t=>before.includes(t)),before);
-   const messages=await ev("[...document.querySelectorAll('.i-text .i-line')].filter(e=>e.querySelector('.i-nick')).map(e=>e.textContent)");
-   assert(`${variant}: visible delegated message retains both kinds`,messages.some(t=>t.includes('visible delegated message')&&t.includes('bot')&&t.includes('(agent) for alice (human)')));
-   assert(`${variant}: deleted delegated message retains both kinds`,messages.some(t=>t.includes('message was deleted')&&t.includes('bot')&&t.includes('(agent) for alice (human)')));
-   assert(`${variant}: deleted content stays hidden`,!before.includes('hidden deleted content'));
-   if (type!=='snapshot') {
-    await ev(`{const T=window.__op,C=T.ircContext,e=T.ircTaskEvent(${JSON.stringify(type)},true,${!!conflicting});C.view.event(e,C.st);C.view.event(e,C.st);C.view.render(C.st);}`);
-    const rows=await ev("[...document.querySelectorAll('.i-text .i-line')].filter(e=>e.textContent.includes('credential')).map(e=>e.textContent)");
-    assert(`${variant}: event appears once with actor, principal kinds and credential`,rows.length===1&&rows[0].includes('bot (agent) for alice (human)')&&rows[0].includes('synthetic-event-credential'),JSON.stringify(rows));
-    const time=await ev("new Date('2026-11-20T17:43:00Z').toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'})");
-    assert(`${variant}: uses recorded event time`,rows.length===1&&rows[0].startsWith('['+time+']'));
-    const action={'task.created':'opened task','task.claimed':'claimed task','task.completed':'completed task','task.failed':'failed task'}[type];
-    assert(`${variant}: corresponding task action displayed`,rows.length===1&&rows[0].includes(action));
-    if (type==='task.completed'||type==='task.failed')
-     assert(`${variant}: channel displays only recorded outcome detail`,rows.length===1&&recorded(rows[0]),JSON.stringify(rows));
-    assert(`${variant}: never substitutes mutable owner/outcome or approval`,rows.length===1&&!rows[0].includes('mutable outcome substitute')&&!rows[0].includes('* alice (human) '+action)&&!rows[0].includes('approved'));
-    await ev("document.querySelector('.i-tab[data-channel=status]').click()");
-    const status=await ev("document.querySelector('.i-text').textContent");
-    assert(`${variant}: status preserves provenance once`,status.split('synthetic-event-credential').length===2&&status.includes('bot (agent) for alice (human)'));
-    if (type==='task.completed'||type==='task.failed')
-     assert(`${variant}: Status displays only recorded outcome detail`,recorded(status),status);
-    await ev("document.querySelector('.i-tab[data-channel=ops]').click();{const T=window.__op,C=T.ircContext;C.view.event(T.ircTaskEvent('task.blocked',false),C.st);C.view.render(C.st);}");
-    assert(`${variant}: ordinary direct task event remains visible`,await ev("[...document.querySelectorAll('.i-act')].some(e=>e.textContent.includes('alice (human) blocked task: recorded reason')&&!e.textContent.includes(' for '))"));
-   }
-   if (type==='task.completed'||type==='task.failed') {
-    await ev(`{const T=window.__op,C=T.ircContext;C.view.status('resyncing',C.st);T.task.outcome={...T.task.outcome,summary:'mutable outcome substitute after resync',reason:'mutable reason substitute after resync'};C.view.render(C.st);C.view.event(T.ircTaskEvent(${JSON.stringify(type)},true,${!!conflicting}),C.st);C.view.status('live',C.st);}`);
-    const after=await ev("[...document.querySelectorAll('.i-text .i-line')].filter(e=>e.textContent.includes('bot (agent) for alice (human)')&&e.textContent.includes('credential')).map(e=>e.textContent)");
-    assert(`${variant}: resync render retains recorded channel outcome once`,after.length===1&&recorded(after[0]),JSON.stringify(after));
-    await ev("document.querySelector('.i-tab[data-channel=status]').click()");
-    const afterStatus=await ev("document.querySelector('.i-text').textContent");
-    assert(`${variant}: resync render retains recorded Status outcome once`,recorded(afterStatus)&&afterStatus.split(detail).length===2,afterStatus);
-   }
-   assert(`${variant}: read-only projection sends no writes`,await count()===0);
-  } finally {
-   await ev('window.__op.disposeIrcContext()');
-   await ev("document.querySelector('#forget').click()");
-   await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
-  }
- }
- assert('all variants executed meaningful assertions',fixtures===7&&assertions>=87);
- assert('no browser exceptions',errors.length===0,JSON.stringify(errors));
- console.log(`OP17-014 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
-}
-async function op17040IrcModeCase() {
- let assertions=0;
- const assert=(name,ok)=>{assertions++;check(`OP17-040: ${name}`,ok)};
+async function forumOperatorCase() {
  await freshIdentityFixture();
- try {
-  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-irc-mode';document.querySelector('#login-form').requestSubmit()");
-  await until("!!document.body && document.body.dataset.operator==='true'");
-  await ev("location.hash='#/irc?b=brd_test'");
-  await until("!!document.querySelector('.i-titletext') && !!document.querySelector('.i-link[data-thread=th]')");
-  assert('operator title describes active mode',await ev("document.querySelector('.i-titletext').textContent.endsWith('Operator mode') && !document.querySelector('.i-titletext').textContent.includes('Read-only')"));
-  assert('operator toolbar describes mode and tools',await ev("document.querySelector('.i-tools').textContent.includes('Operator mode') && document.querySelector('.i-tools').textContent.includes('Operator tools') && !document.querySelector('.i-tools').textContent.includes('Read-only')"));
-  assert('operator Reply / task actions opener is enabled',await ev("document.querySelector('button.i-input')?.textContent==='Reply / task actions' && !document.querySelector('button.i-input').disabled"));
-  await ev("document.querySelector('.i-input').click()");
-  await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
-  assert('operator opener exposes reply and task actions',await ev("!!document.querySelector('.op-workspace textarea') && !!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')"));
-  await click('Close');
-  await ev("document.querySelector('.i-tab[data-channel=status]').click()");
-  assert('operator status keeps commands disabled with tools guidance',await ev("document.querySelector('.i-text').textContent.includes('Use Operator tools') && document.querySelector('.i-text').textContent.includes('/commands are disabled')"));
-  assert('operator navigation and tools opening send no writes',await count()===0);
-  await ev("document.querySelector('#operator-logout').click()");
-  await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden && !!document.body && !document.body.dataset.operator");
-  assert('logout clears operator workspace and revokes only own credential',await ev("!document.querySelector('.op-workspace') && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
-  await ev("window.__op.revoked=false;window.__op.scope=['read'];document.querySelector('#operator-login').checked=false;document.querySelector('#token').value='synthetic-irc-read';document.querySelector('#login-form').requestSubmit()");
-  await until("!!document.querySelector('#login') && document.querySelector('#login').hidden && !!document.querySelector('.i-titletext') && !!document.body && !document.body.dataset.operator");
-  assert('read-only remount restores title',await ev("document.querySelector('.i-titletext').textContent.endsWith('Read-only viewer')"));
-  assert('read-only remount restores toolbar',await ev("document.querySelector('.i-tools').textContent.includes('Read-only viewer') && !document.querySelector('.i-tools').textContent.includes('Operator mode')"));
-  assert('read-only remount has no write opener and input is disabled',await ev("!document.querySelector('button.i-input') && document.querySelector('input.i-input')?.disabled && !document.querySelector('#operator-tools')?.offsetWidth"));
-  await ev("document.querySelector('.i-tab[data-channel=status]').click()");
-  assert('read-only status and input keep commands disabled',await ev("document.querySelector('.i-text').textContent.includes('This window is read-only. /commands are disabled.') && document.querySelector('input.i-input').placeholder.includes('/commands and messages are disabled')"));
-  assert('read-only navigation sends no further writes',await count()===1);
- } finally {
-  await ev("document.querySelector('#forget').click()");
-  await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
- }
- assert('no browser exceptions',errors.length===0);
- if (assertions!==13) throw new Error(`OP17-040 expected 13 assertions, executed ${assertions}`);
- console.log(`OP17-040 executed ${assertions} assertions across operator login and read-only remount`);
+ await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-forum';document.querySelector('#login-form').requestSubmit()");
+ await until("document.body.dataset.operator==='true'");
+ await ev("location.hash='#/forum?b=brd_test&ch=ops&t=th'");
+ await until("!!document.querySelector('.f-opening')");
+ await ev("document.querySelector('.f-meta button').click()");
+ await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
+ check('Forum opens task and reply tools for the selected thread', await ev("!!document.querySelector('.op-workspace textarea') && document.querySelector('.op-workspace').textContent.includes(window.__op.thread.title)"));
+ check('Forum navigation sends no operator writes',await count()===0);
+ await click('Close');
+ await ev("document.querySelector('#operator-logout').click()");
+ await until("!document.querySelector('#login').hidden");
+ check('Forum logout revokes own credential', await ev("window.__op.writes.length===1 && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
+ await ev("window.__op.revoked=false;window.__op.scope=['read'];document.querySelector('#operator-login').checked=false;document.querySelector('#token').value='synthetic-forum-read';document.querySelector('#login-form').requestSubmit()");
+ await until("!!document.querySelector('.f-opening')");
+ check('Read-only Forum has no write actions',await ev("!document.querySelector('.f-meta button') && !document.querySelector('#operator-tools').offsetWidth"));
+ check('Forum renders message text literally',await ev("document.querySelector('.f-opening p').textContent===window.__op.root.text && !document.querySelector('.f-opening script')"));
 }
 async function op17044WireCase() {
  let assertions=0;
@@ -1666,7 +1544,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['OP17-040', op17040IrcModeCase], ['OP17-014', op17014IrcProvenanceCase], ['OP17-012', op17012IrcContextCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
