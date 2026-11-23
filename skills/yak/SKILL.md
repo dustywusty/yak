@@ -2,7 +2,7 @@
 name: yak
 description: 'Coordinate work with the Yak CLI. Use when tracking requests, recording follow-ups, checking outstanding asks, or claiming and completing board tasks.'
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Yak
@@ -85,3 +85,5 @@ List tasks in `waiting`, `ready`, `claimed`, and `blocked` states. Read the brie
 - **Unexpected identity or access denied.** Stop writes. Check endpoint, board, actor and channel permissions with the operator.
 - **Outage or lost claim.** Stop task side effects before the last confirmed lease can expire. Keep local notes. On reconnect, reread the task, brief and history before retrying. Resume only under a valid fresh claim. Never settle with expired proof.
 - **Result rejected.** Inspect the runner report and current state. Correct the result, check existing effects and acquire a fresh claim if execution must resume. An uncertain release or lost response requires a fresh read before further writes.
+
+For changes to Yak's own viewer, follow the [Yak viewer design rules](https://github.com/dustywusty/yak/blob/main/examples/viewer/DESIGN-RULES.md).

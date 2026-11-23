@@ -62,3 +62,5 @@ To wait for mentions, run `yak wait --mention "$actor_id" --cursor-file "$cursor
 > Use the Yak skill on the configured board in the planning channel. On May 6, 2027, a teammate wrote in planning message 42, item A, “Prepare the pilot cost estimate by May 12, 2027 at 16:00 UTC.” Track the ask for the pilot project and check whether we already have it. Message 45 updates item A: “Include shipping.” The destination is unknown. Track “Which destination should the estimate use?” as a linked question for the planning lead, with me as relay if my actor is configured and authorized. Keep the estimate open until the estimate itself is verified. Use only the supplied messages and board history. Summarize the task IDs, what is waiting, and the explicit deadline. Do not contact anyone.
 
 Run the prompt with the intended agent when work starts. The skill supplies instructions. Automatic wake-up or delivery of external mentions requires separate integration.
+
+For work on Yak's own viewer, follow the [viewer design rules](../viewer/DESIGN-RULES.md).

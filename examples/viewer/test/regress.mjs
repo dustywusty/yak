@@ -8,6 +8,7 @@
 //
 // The token is a fake ("yak.test.token"); nothing leaves 127.0.0.1.
 
+import { checkDesignRules } from './design-rules.mjs';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -17,6 +18,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const STATIC = process.env.VIEWER_STATIC || join(dirname(fileURLToPath(import.meta.url)), '..', 'static');
+await checkDesignRules(STATIC);
 const CHROME = process.env.CHROME || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync);
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
@@ -277,15 +279,16 @@ try {
 
   check('prominent ownership and waiting summary', (await activity()).includes('Claimed tasks') && (await activity()).includes('Waiting'), await activity());
   const windowOwnership = await activity();
-  check('ownership does not imply worker activity', ['Task ownership', 'Worker activity unavailable. A claim does not confirm worker activity.'].every((t) => (windowOwnership || '').includes(t)) && !/Working now|Working for|working actors?/i.test(windowOwnership), windowOwnership);
+  check('ownership does not imply worker activity', ['Board-wide task ownership', 'Worker activity unavailable. A claim does not confirm worker activity.'].every((t) => (windowOwnership || '').includes(t)) && !/Working now|Working for|working actors?/i.test(windowOwnership), windowOwnership);
   check('counts actors separately from multiple claims', (await activity()).includes('1 claiming actor') && (await activity()).includes('2 claimed tasks'), await activity());
   check('unclaimed agents are named without a process-status guess', (await activity()).includes('No active claimed task: bot-b'), await activity());
   check('longest waits stand out', await ev(`getComputedStyle(document.querySelector('[data-activity-task="task_owner"] time')).color !== getComputedStyle(document.querySelector('[data-activity-task="task_wait"] time')).color`));
   check('claim clock uses acquired_at', (await activity()).includes('Claim held for 8m'), await activity());
   const windowActivity = await activity();
   check('waits show assignee, reason, dependency and time in state', ['bot-a', 'review', 'waiting on @alice', '20m in waiting'].every((t) => (windowActivity || '').includes(t)), '');
-  await ev(`window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() + 300000).toISOString() }, updated_at: new Date().toISOString() }, 'task.claim_renewed'); 1`);
+  await ev(`document.querySelector('.t-jump').focus(); window.__taskEvent('task_work', { current_claim: { ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() + 300000).toISOString() }, updated_at: new Date().toISOString() }, 'task.claim_renewed'); 1`);
   await sleep(700);
+  check('Chat keeps keyboard focus on Jump after a claim renewal', await ev(`document.activeElement === document.querySelector('.t-jump')`));
   check('renewal does not reset claim clock', (await activity()).includes('Claim held for 8m'), await activity());
   await ev(`window.__taskEvent('task_owner', { updated_at: new Date().toISOString(), block: { reason: 'Changed reason' } }); 1`);
   await sleep(700);
@@ -489,12 +492,39 @@ try {
   await ev(`const list=document.querySelector('.w-col-ready .w-list');list.scrollTop=180;list.focus();window.__taskEvent('task_owner',{updated_at:new Date().toISOString()});1`);
   await sleep(700);
   check('Lanes lists scroll independently and retain scroll and focus', await ev(`document.querySelector('.w-col-ready .w-list').scrollTop===180 && document.activeElement===document.querySelector('.w-col-ready .w-list') && document.querySelector('.w-col-claimed .w-list').scrollTop===0`));
+  await ev(`document.querySelector('[data-task="task_list_3"] .w-title').click(); 1`);
+  await until(`location.hash.includes('thr_task_list_3') && !!document.querySelector('.t-close')`);
+  await ev(`history.back(); 1`);
+  await until(`!!document.querySelector('[data-task="task_list_3"]')`);
+  check('Back restores the vertical position inside a long lane', await ev(`
+    document.querySelector('.w-col-ready .w-list').scrollTop === 180 &&
+    document.activeElement === document.querySelector('[data-task="task_list_3"] .w-title')`));
   await ev(`document.querySelector('[data-task="task_work"] .w-title').focus(); window.__taskEvent('task_second',{updated_at:new Date().toISOString()}); 1`);
   await sleep(700);
   check('Lanes card focus survives live redraw', await ev(`document.activeElement?.closest('[data-task]')?.dataset.task === 'task_work'`));
   await ev(`document.querySelector('.w-filters input').focus(); document.querySelector('.w-filters input').value='needs'; document.querySelector('.w-filters input').dispatchEvent(new Event('input')); window.__taskEvent('task_owner',{updated_at:new Date().toISOString()}); 1`);
   await sleep(700);
   check('Lanes label filter keeps focus and filters real labels', await ev(`document.activeElement === document.querySelector('.w-filters input') && document.querySelectorAll('.w-card').length === 1 && !!document.querySelector('[data-task="task_owner"]')`));
+  await ev(`for (const [i, value] of ['ops', 'act_alice'].entries()) {
+    const select = document.querySelectorAll('.w-filters select')[i];
+    select.value = value;
+    select.dispatchEvent(new Event('change'));
+  }
+  window.returnFilters = Object.fromEntries(new URLSearchParams(location.hash.split('?')[1]));
+  document.querySelector('.w-cols').scrollLeft = 380;
+  window.returnLeft = document.querySelector('.w-cols').scrollLeft;
+  document.querySelector('[data-task="task_owner"] .w-title').click(); 1`);
+  await until(`location.hash.includes('thr_deploy') && !!document.querySelector('.t-close')`);
+  await ev(`history.back(); 1`);
+  await until(`!!document.querySelector('.w-card')`);
+  check('Back restores channel, actor and label filters with the original card and scroll',
+    await ev(`window.returnFilters.ch === 'ops' && window.returnFilters.agent === 'act_alice' && window.returnFilters.label === 'needs' &&
+      document.querySelectorAll('.w-filters select')[0].value === 'ops' &&
+      document.querySelectorAll('.w-filters select')[1].value === 'act_alice' &&
+      document.querySelector('.w-filters input').value === 'needs' && document.querySelectorAll('.w-card').length === 1 &&
+      document.activeElement === document.querySelector('[data-task="task_owner"] .w-title') &&
+      window.returnLeft > 0 && document.querySelector('.w-cols').scrollLeft === window.returnLeft`));
+  await go('#/board?b=brd_test');
   await ev(`document.querySelector('.w-filters input').value=''; document.querySelector('.w-filters input').dispatchEvent(new Event('input')); window.__fake.disconnected=true; 1`);
   await sleep(1300);
   check('Lanes disconnect marks last known data', await ev(`document.querySelector('.w-wrap').textContent.includes('Last known')`));
@@ -573,7 +603,13 @@ try {
   await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await sleep(300);
   const mobile = await ev(`({ overflow: document.documentElement.scrollWidth > innerWidth, activity: document.querySelector('#term .t-agent-activity').getBoundingClientRect().height, chat: document.querySelector('.t-scroll').getBoundingClientRect().height })`);
-  check('390px layout keeps activity and chat usable without horizontal overflow', !mobile.overflow && mobile.activity >= 100 && mobile.chat >= 150, JSON.stringify(mobile));
+  check('390px layout keeps activity and chat usable without horizontal overflow', !mobile.overflow && mobile.activity > 0 && mobile.activity <= 130 && mobile.chat > mobile.activity * 3, JSON.stringify(mobile));
+
+  await ev(`document.querySelector('.a-toggle').click(); 1`);
+  check('phone ownership disclosure reveals claim explanations and waits',
+    await ev(`document.querySelector('.a-toggle').getAttribute('aria-expanded') === 'true' &&
+      document.querySelector('.a-freshness').getBoundingClientRect().height > 0 &&
+      document.querySelector('#chat-ownership-details').textContent.includes('Worker activity unavailable')`));
 
   await go('#/boards');
   check('picker lists both synthetic boards', await ev(`document.querySelectorAll('#board-list a').length === 2 && document.getElementById('board-list').textContent.includes('Release planning')`));

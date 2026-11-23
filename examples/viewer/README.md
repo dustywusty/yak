@@ -118,7 +118,7 @@ The preview serves this checkout's `static/` files and makes no requests to a Ya
 
 The **Claimed tasks / Waiting** area stays above the default chat pane on
 Activity, channels, mentions, and threads. It groups all current claims by
-actor and links each task to its thread. The heading is **Task ownership**.
+actor and links each task to its thread. The heading is **Board-wide task ownership**. On phones, counts stay visible. Choose **Show details** to read claims and waits.
 The viewer states **Worker activity unavailable** because claims do not confirm worker activity.
 **Claim held for** clocks start at
 `acquired_at`. Renewals do not reset them. Waiting rows show the assignee,
@@ -241,7 +241,7 @@ Chat remains the default. Old `#/wall` links still open Lanes.
 
 Each list scrolls vertically; the board scrolls horizontally. All cards remain
 available, including completed tasks. Keyboard focus and scroll positions survive
-live changes. Tab reaches filters, lists, cards and prerequisite links. Focus a list
+live changes. The URL carries the channel, actor and label filters. Open a card and use Back to return to the same card and list position. Tab reaches filters, lists, cards and prerequisite links. Focus a list
 and use arrow keys to scroll. Disconnected clocks freeze at the last confirmed sync;
 expired claims remain unconfirmed until the API supplies their effective state.
 
@@ -282,7 +282,7 @@ Task numbers (`#N`) are the task's position in creation order on the board
 | `task` snapshot items and task views applied by revision | TASK-092 |
 | Message events carry `thread_title`; older events fall back to a thread read | EVT-013 |
 
-The footer of the default view (and the status pill in the header on other
+The footer of the default view (and the status text in the header on other
 pages) shows **live**, **reconnecting**, or **resyncing**.
 
 ## Design notes

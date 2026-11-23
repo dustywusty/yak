@@ -29,6 +29,7 @@ function dayLabel(ts) {
 export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liveEl }) {
   const root = () => document.getElementById('term');
   let cur = null, route = {}, boards = [], status = 'connecting', activityNew = 0, sel = -1, help = false, sideOpen = false;
+  let ownershipOpen = false;
   let theme = store_.get(THEME_KEY) || 'dark';
   const seen = store_.get(SEEN_KEY) || {};
   let mark = {};        // "New" divider positions, fixed when a view opens
@@ -84,6 +85,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     palette?.dispose();
     cur = null;
     activity = null;
+    ownershipOpen = false;
     mark = {};
   }
 
@@ -153,10 +155,10 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     const people = [...new Set(replies.map((m) => st().handle(m.author_actor_id)))].slice(0, 3);
     return h('article', { class: 't-item', 'data-thread': t.id, onclick: (e) => { if (!e.target.closest('a')) go({ ch: t.channel_path, t: t.id }); } },
       root ? who(root.author_actor_id, root.created_at, root.on_behalf_of_actor_id) : null,
-      h('a', { class: 't-title', href: href({ board: cur.boardId, ch: t.channel_path, t: t.id }) }, t.title),
+      h('a', { class: 't-title', 'data-control': `thread:${t.id}`, href: href({ board: cur.boardId, ch: t.channel_path, t: t.id }) }, t.title),
       labels(t.labels), root ? text({ ...root, text: snip(root.text, 400) }) : null, taskChip(taskOf(t.id)),
       replies.length ? h('div', { class: 't-replies' }, people.join(', '), ' ',
-        h('a', { href: href({ board: cur.boardId, ch: t.channel_path, t: t.id }) }, `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'}`),
+        h('a', { 'data-control': `replies:${t.id}`, href: href({ board: cur.boardId, ch: t.channel_path, t: t.id }) }, `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'}`),
         h('span', { class: 't-mute' }, ` Last reply ${ago(replies.at(-1).created_at)} ago`)) : null);
   }
 
@@ -187,7 +189,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   function channelView() {
     const ts = [...st().S.threads.values()].filter(inView).sort((a, b) => a.updated_at.localeCompare(b.updated_at));
     const filter = route.label ? h('span', { class: 't-filter' }, `label: ${route.label} `,
-      h('a', { href: href({ board: cur.boardId, ch: route.ch, sub: route.sub }), title: 'Clear the label filter' }, '×')) : null;
+      h('a', { href: href({ board: cur.boardId, ch: route.ch, sub: route.sub }), 'data-control': 'clear-filter', 'aria-label': 'Clear the label filter', title: 'Clear the label filter' }, '×')) : null;
     return {
       head: [h('b', {}, route.ch ? `# ${route.ch}` : '# all channels'), filter, h('span', { class: 't-mute' }, `${ts.length} threads`)],
       body: ts.length ? [h('div', { class: 't-intro' }, h('b', {}, route.ch ? `# ${route.ch}` : '# all channels'), h('p', { class: 't-mute' }, 'Threads by last activity, oldest first.')),
@@ -203,7 +205,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     const root = msgs.find((m) => m.is_root), replies = msgs.filter((m) => !m.is_root);
     return {
       head: [h('b', {}, 'Thread'), h('span', { class: 't-mute' }, ` # ${t.channel_path}`), h('span', { class: 't-spacer' }),
-        h('a', { class: 't-close', href: href({ board: cur.boardId, ch: t.channel_path }), title: 'Close (Esc)' }, '×')],
+        h('a', { class: 't-close', 'data-control': 'close', href: href({ board: cur.boardId, ch: t.channel_path }), title: 'Close (Esc)', 'aria-label': 'Close thread' }, '×')],
       body: [h('h1', { class: 't-h1' }, t.title), labels(t.labels), root ? message(root, byId) : null, taskChip(taskOf(t.id)),
         h('div', { class: 't-count' }, h('span', {}, `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'}`)),
         dividers(replies, (m) => m.created_at, (m) => message(m, byId))],
@@ -244,42 +246,46 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     if (!S.board) { root().replaceChildren(h('p', { class: 'pad' }, 'Loading board…')); return; }
     open();
     const view = route.v === 'activity' ? activityView() : route.v === 'mentions' ? mentionsView() : route.t ? threadView() : channelView();
-    const focusRow = document.activeElement?.closest('[data-activity-task]');
-    const focusIndex = focusRow ? [...focusRow.querySelectorAll('a')].indexOf(document.activeElement) : -1;
+    const active = document.activeElement;
+    const sameView = route.key === render.lastKey && root().contains(active);
+    const control = sameView ? active.dataset.control : null;
+    const focusRow = active?.closest('[data-activity-task]');
+    const focusIndex = focusRow ? [...focusRow.querySelectorAll('a')].indexOf(active) : -1;
     const focusTask = focusRow?.dataset.activityTask;
     const activityTop = root().querySelector('.t-agent-activity')?.scrollTop || 0;
-    const activityFocused = document.activeElement?.classList.contains('t-agent-activity');
+    const activityFocused = active?.classList.contains('t-agent-activity');
+    const sideTop = root().querySelector('.t-side')?.scrollTop || 0;
     const old = root().querySelector('.t-scroll');
     const keep = old && route.key === render.lastKey ? { top: old.scrollTop, bottom: old.scrollTop + old.clientHeight >= old.scrollHeight - 8 } : null;
     render.lastKey = route.key;
     const activeCh = route.t ? st().thread(route.t)?.channel_path : route.ch;
     const unseenMentions = mentions().filter((m) => m.created_at > (seenOf('@') || '9')).length;
-    const item = (icon, label, count, r, active) => h('a', { class: `t-nav${active ? ' on' : ''}${count ? ' t-unread' : ''}`, href: href({ board: cur.boardId, ...r }), onclick: () => { sideOpen = false; } },
+    const item = (icon, label, count, r, active) => h('a', { class: `t-nav${active ? ' on' : ''}${count ? ' t-unread' : ''}`, 'data-control': href({ board: cur.boardId, ...r }), href: href({ board: cur.boardId, ...r }), onclick: () => { sideOpen = false; } },
       h('span', { class: 't-mute' }, icon), ' ', h('span', { class: 't-navlabel' }, label), count ? h('span', { class: 't-pill' }, String(count)) : null);
     const side = h('aside', { class: 't-side' },
       boards.length > 1
-        ? h('select', { class: 't-boardsel', 'aria-label': 'Board', onchange: (e) => { location.hash = href({ board: e.target.value, v: 'activity' }); } },
+        ? h('select', { class: 't-boardsel', 'aria-label': 'Board', 'data-control': 'board', onchange: (e) => { location.hash = href({ board: e.target.value, v: 'activity' }); } },
           boards.map((b) => h('option', { value: b.id, selected: b.id === cur.boardId }, b.name)))
         : h('b', { class: 't-boardname' }, S.board.name),
-      h('div', { class: 't-me' }, h('span', { class: `t-dot t-${status}` }), ' ', S.me?.handle),
-      h('button', { type: 'button', class: 't-jump', onclick: () => palette.open() }, 'Jump to…', h('kbd', {}, '^K')),
+      h('div', { class: 't-me' }, S.me?.handle),
+      h('button', { type: 'button', class: 't-jump', 'data-control': 'jump', onclick: () => palette.open() }, 'Jump to…', h('kbd', {}, '^K')),
       item('@', 'Mentions', unseenMentions, { v: 'mentions' }, route.v === 'mentions'),
       item('~', 'Activity', activityNew, { v: 'activity' }, route.v === 'activity'),
       h('div', { class: 't-sec' }, 'Channels'),
       item('#', 'all channels', 0, {}, !route.v && !activeCh),
       S.channels.map((c) => item(c.access_mode === 'private' ? '◆' : '#', c.path, unread(c.path), { ch: c.path }, !route.v && activeCh === c.path)),
       h('div', { class: 't-sidefoot' },
-        h('div', {}, h('a', { href: `#/board?b=${encodeURIComponent(cur.boardId)}` }, 'Lanes'), ' · ', h('a', { href: `#/forum?b=${encodeURIComponent(cur.boardId)}` }, 'Forum'), ' · ', h('a', { href: '#/boards' }, 'Switch board')),
-        h('div', {}, h('button', { type: 'button', onclick: () => { theme = theme === 'dark' ? 'light' : 'dark'; store_.set(THEME_KEY, theme); render(); } }, theme === 'dark' ? '◐ light' : '◑ dark'),
-          ' ', h('button', { type: 'button', onclick: onForget }, document.body.dataset.operator ? 'Logout (revokes token everywhere)' : 'Forget token'))));
+        h('div', {}, h('a', { 'data-control': 'lanes', href: `#/board?b=${encodeURIComponent(cur.boardId)}` }, 'Lanes'), ' · ', h('a', { 'data-control': 'forum', href: `#/forum?b=${encodeURIComponent(cur.boardId)}` }, 'Forum'), ' · ', h('a', { 'data-control': 'switch-board', href: '#/boards' }, 'Switch board')),
+        h('div', {}, h('button', { type: 'button', 'data-control': 'theme', onclick: () => { theme = theme === 'dark' ? 'light' : 'dark'; store_.set(THEME_KEY, theme); render(); } }, theme === 'dark' ? '◐ light' : '◑ dark'),
+          ' ', h('button', { type: 'button', 'data-control': 'forget', onclick: onForget }, document.body.dataset.operator ? 'Logout (revokes token everywhere)' : 'Forget token'))));
     const scroll = h('div', { class: `t-scroll${view.activity ? ' t-activity' : ''}`, role: 'log' }, view.body);
-    activity = createAgentActivity(st(), href, status);
+    activity = createAgentActivity(st(), href, status, { open: ownershipOpen, toggle: () => { ownershipOpen = !ownershipOpen; render(); } });
     const main = h('section', { class: 't-main' },
-      h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', onclick: () => { sideOpen = !sideOpen; render(); } }, '☰'), view.head),
+      h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', 'data-control': 'channels', onclick: () => { sideOpen = !sideOpen; render(); } }, '☰'), view.head),
       activity.root, scroll,
-      view.composer ? h('div', { class: 't-composer' }, document.body.dataset.operator ? h('button', { type: 'button', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: cur.boardId, ch: activeCh, t: route.t } })) }, route.t ? 'Reply / task actions' : 'New thread / task') : h('input', { type: 'text', disabled: true, 'aria-label': `${view.composer} (read-only)`, placeholder: `${view.composer} (read-only viewer)` })) : null);
+      view.composer ? h('div', { class: 't-composer' }, document.body.dataset.operator ? h('button', { type: 'button', 'data-control': 'compose', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: cur.boardId, ch: activeCh, t: route.t } })) }, route.t ? 'Reply / task actions' : 'New thread / task') : h('input', { type: 'text', disabled: true, 'aria-label': `${view.composer} (read-only)`, placeholder: `${view.composer} (read-only viewer)` })) : null);
     const hints = route.t ? [['↑↓', 'move'], ['esc', 'close'], ['^K', 'jump'], ['?', 'help']] : [['↑↓', 'move'], ['⏎', 'open'], ['^K', 'jump'], ['?', 'help']];
-    const foot = h('footer', { class: 't-foot' }, h('span', { class: `t-dot t-${status}` }), ` ${status} `,
+    const foot = h('footer', { class: 't-foot' }, h('span', { class: `t-${status}` }, status),
       h('span', { class: 't-mute' }, `${S.me?.handle} on ${S.board.name}`), h('span', { class: 't-spacer' }),
       hints.map(([k, v]) => h('span', { class: 't-hint' }, h('kbd', {}, k), ` ${v}`)));
     const helpBox = help ? h('div', { class: 't-help', role: 'dialog' }, h('b', {}, 'Keys'),
@@ -289,6 +295,9 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     root().replaceChildren(h('div', { class: `t-app${sideOpen ? ' t-sideopen' : ''}`, 'data-theme': theme }, side, main, foot, helpBox));
     if (view.activity && liveEl) { liveEl.hidden = false; scroll.prepend(liveEl); }
     activity.root.scrollTop = activityTop;
+    side.scrollTop = sideTop;
+    if (sameView && liveEl?.contains(active) && active.isConnected) active.focus({ preventScroll: true });
+    else if (control) root().querySelector(`[data-control="${CSS.escape(control)}"]`)?.focus({ preventScroll: true });
     if (activityFocused) activity.root.focus({ preventScroll: true });
     if (focusTask && focusIndex >= 0) {
       const row = [...activity.root.querySelectorAll('[data-activity-task]')].find((e) => e.dataset.activityTask === focusTask);
