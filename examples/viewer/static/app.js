@@ -6,7 +6,7 @@
 //
 // Views: #/ and #/b/<board>?ch=&t=&m=&v= (term.js, the default chat view,
 // with Activity = feed.js), #/boards, and the skins #/board (also #/wall),
-// #/irc (skins.js). Board data is kept live by the store in skin-kit.js.
+// #/forum (skins.js). Board data is kept live by the store in skin-kit.js.
 
 import { parseWireJSON, stringifyWireJSON } from './wire-json.js';
 
@@ -85,7 +85,7 @@ function needToken(message) {
   operatorUI?.clear();
   document.body.removeAttribute('data-operator');
   feed.stop();
-  skins.unmount();
+  skins.endSession();
   term.unmount();
   S.abort.abort();
   S.abort = new AbortController();
@@ -113,8 +113,12 @@ function parseRoute() {
     history.replaceState(null, '', q.get('b') ? `#/b/${encodeURIComponent(q.get('b'))}` : '#/');
     return parseRoute();
   }
-  const skin = /^\/(board|wall|irc)$/.exec(path);
-  if (skin) return { view: 'skin', skin: skin[1] === 'wall' ? 'board' : skin[1], board: q.get('b') || '' };
+  if (path === '/irc') {
+    history.replaceState(null, '', '#/forum' + (query ? '?' + query : ''));
+    return parseRoute();
+  }
+  const skin = /^\/(board|wall|forum)$/.exec(path);
+  if (skin) return { view: 'skin', skin: skin[1] === 'wall' ? 'board' : skin[1], board: q.get('b') || '', ch: q.get('ch') || '', agent: q.get('agent') || '', label: q.get('label') || '', t: q.get('t') || '' };
   const m = /^\/b\/([^/]+)$/.exec(path);
   if (!m) return { view: 'term', board: '', v: 'activity', key: 'activity' };
   // sub= and label= keep the meaning they had in the first board view:
@@ -264,7 +268,7 @@ session = new OperatorSession({ send: write, changed: () => {
   const el = $('operator-session'); el.hidden = !session.active;
   if (session.active) {
     const c = session.me.credential;
-    $('operator-identity').textContent = `@${session.me.actor.handle} (${session.me.actor.kind}) · boards ${c.board_ids.join(', ')} · scopes ${c.scopes.join(', ')} · expires in ${Math.max(0, Math.ceil(session.lifeLeft() / 60000))} min · idle ${Math.max(0, Math.ceil(session.idleLeft() / 1000))} s${session.idleLeft() <= 60000 ? ' — idle logout in less than 60 seconds' : ''}${session.notice ? ` · ${session.notice}` : ''}`;
+    $('operator-identity').textContent = `@${session.me.actor.handle} (${session.me.actor.kind}) · boards ${c.board_ids.join(', ')} · scopes ${c.scopes.join(', ')} · expires in ${Math.max(0, Math.ceil(session.lifeLeft() / 60000))} min · idle ${Math.max(0, Math.ceil(session.idleLeft() / 1000))} s${session.idleLeft() <= 60000 ? ' · idle logout in less than 60 seconds' : ''}${session.notice ? ` · ${session.notice}` : ''}`;
   } else if (S.me && document.body.dataset.operator) needToken(session.notice || 'Operator session ended.');
 } });
 operatorUI = createOperatorUI({ session, read: api, route: parseRoute });

@@ -132,7 +132,7 @@ export function createOperatorUI({ session, read, route }) {
   function action(name, kind, values) { const b = writeButton(name, () => { const v = typeof values === 'function' ? values() : values; confirmTask(kind, kind === 'claim' ? 'Claim' : kind === 'assign' ? `Assign to @${session.me.actor.handle}` : name, b, v); }); return b; }
   function taskControls(t) {
     const view = current;
-    const out = h('section', { 'aria-label': 'Task actions' }, h('h3', {}, `${t.title} — ${t.state}`));
+    const out = h('section', { 'aria-label': 'Task actions' }, h('h3', {}, `${t.title} · ${t.state}`));
     const path = `${view.B}/tasks/${enc(t.id)}`;
     const lease = session.claims.get(path);
     if (lease) out.append(h('p', { class: 'op-lease', 'data-task-path': path }, 'You hold this claim in this tab; renewing while the tab is open.'));

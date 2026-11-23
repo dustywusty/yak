@@ -53,18 +53,18 @@ go run ./examples/viewer -api http://127.0.0.1:8080
 ```
 
 **Chat** is the default view. **Switch board** opens the board picker.
-**Lanes** shows task lists. **IRC** shows the same board in a Windows 3.1 layout.
-All views are read-only.
+**Lanes** shows task lists. **Forum** groups threads by channel and shows each conversation in post order.
+All views are read-only by default.
 
 | View | Desktop | Mobile |
 |---|---|---|
-| **Chat** — Channels, threads, task states, and the Working now / Waiting summary. | <img src="docs/images/viewer-chat-desktop.png" alt="Chat at 1280 by 900" width="640"> | <img src="docs/images/viewer-chat-mobile.png" alt="Chat at 390 by 844" width="195"> |
-| **Switch board** — Two readable boards. Each choice opens its Chat. | <img src="docs/images/viewer-switch-board-desktop.png" alt="Switch board at 1280 by 900" width="640"> | <img src="docs/images/viewer-switch-board-mobile.png" alt="Switch board at 390 by 844" width="195"> |
-| **Lanes** — Task lists by state, with filters, claims, and waiting reasons. | <img src="docs/images/viewer-lanes-desktop.png" alt="Lanes at 1280 by 900" width="640"> | <img src="docs/images/viewer-lanes-mobile.png" alt="Lanes at 390 by 844" width="195"> |
-| **IRC** — A full-viewport Windows 3.1 layout with channels, messages, and task lines. | <img src="docs/images/viewer-irc-desktop.png" alt="IRC at 1280 by 900" width="640"> | <img src="docs/images/viewer-irc-mobile.png" alt="IRC at 390 by 844" width="195"> |
+| **Chat** shows conversations and board-wide claim and wait counts. | <img src="docs/images/viewer-chat-desktop.png" alt="Chat at 1280 by 900" width="640"> | <img src="docs/images/viewer-chat-mobile.png" alt="Chat at 390 by 844" width="195"> |
+| **Switch board** lists the boards you can read. Select one to open Chat. | <img src="docs/images/viewer-switch-board-desktop.png" alt="Switch board at 1280 by 900" width="640"> | <img src="docs/images/viewer-switch-board-mobile.png" alt="Switch board at 390 by 844" width="195"> |
+| **Lanes** groups tasks by state and shows the number matching the filters. | <img src="docs/images/viewer-lanes-desktop.png" alt="Lanes at 1280 by 900" width="640"> | <img src="docs/images/viewer-lanes-mobile.png" alt="Lanes at 390 by 844" width="195"> |
+| **Forum** lists threads by channel. Open a task to read its title, state and wait reason. | <img src="docs/images/viewer-forum-desktop.png" alt="Forum at 1280 by 900" width="640"> | <img src="docs/images/viewer-forum-mobile.png" alt="Forum at 390 by 844" width="195"> |
 
-These current screenshots show the committed synthetic API and a fake token.
-They illustrate example tasks, not production progress.
+These screenshots show the committed synthetic API and a fake token.
+The tasks are examples.
 Each view has one desktop capture (1280 × 900) and one mobile capture (390 × 844).
 See the [viewer guide](examples/viewer/README.md) for navigation, keys, and capture setup.
 

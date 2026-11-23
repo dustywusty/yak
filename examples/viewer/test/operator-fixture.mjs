@@ -251,61 +251,6 @@ export function operatorFixture() {
     return new Response(status === 204 ? null : fault.startsWith('truncated') ? '{"claim":' : '{broken', { status });
   };
 
-  // OP17-012: controlled IRC projection, separate from the operator API reads.
-  T.mountIrcContext = async () => {
-    const {irc} = await import('/irc.js');
-    const stale = {...thread,id:'stale',title:'Moved topic',channel_path:'ops'};
-    const S = {board:{id:B,name:'test'},me:actors[0],channels:[{path:'ops'}],
-      threads:new Map([[stale.id,stale],[thread.id,thread]]),
-      tasks:new Map([[task.id,task]]),actors:new Map(actors.map(a=>[a.id,a]))};
-    const st = {S,thread:id=>S.threads.get(id),tasks:()=>[...S.tasks.values()],
-      messages:id=>id==='stale'?[{...root,thread_id:id,created_at:'2020-01-01T00:00:00Z'}]:id===thread.id?[root]:[],
-      actor:id=>S.actors.get(id),handle:id=>S.actors.get(id)?.handle || id || '?',
-      via:()=>'',num:id=>id,labels:()=>thread.labels};
-    document.querySelector('#skin').hidden = false;
-    const view = irc(document.querySelector('#skin'),{threadHref:id=>`#/b/${B}?t=${id}`});
-    T.ircContext = {S,st,view,stale};
-    T.ircOpened = [];
-    T.captureIrcOpen = e => T.ircOpened.push({...e.detail});
-    window.addEventListener('yak-operator-open',T.captureIrcOpen);
-    view.render(st);
-  };
-  // OP17-014: event attribution deliberately differs from mutable task state.
-  T.mountIrcProvenance = async () => {
-    await T.mountIrcContext();
-    const C=T.ircContext;
-    C.S.threads.delete('stale');
-    Object.assign(task,{created_by_actor_id:'a',created_at:'2001-01-01T01:01:00Z',
-      current_claim:{actor_id:'a',acquired_at:'2001-01-01T02:02:00Z',lease_seconds:300,expires_at:'2099-01-01T00:00:00Z'},
-      outcome:{by_actor_id:'a',kind:'completed',at:'2001-01-01T03:03:00Z',summary:'mutable outcome substitute',reason:'mutable reason substitute'}});
-    C.st.messages=()=>[{...root,author_actor_id:'bot',on_behalf_of_actor_id:'a',text:'visible delegated message'},
-      {...root,id:'deleted',author_actor_id:'bot',on_behalf_of_actor_id:'a',deleted:true,text:'hidden deleted content'}];
-    T.ircTaskEvent=(type,delegated=true,conflicting=false)=>{
-      const settled=type==='task.completed'||type==='task.failed';
-      const claim={id:'synthetic-claim',task_id:task.id,actor_id:'bot',execution_id:'synthetic-exec',
-        run_id:null,epoch:1,brief_revision:1,status:type.slice(5),revision:2,lease_seconds:120,
-        acquired_at:'2026-11-20T17:42:00Z',expires_at:'2026-11-20T17:44:00Z',
-        ended_at:'2026-11-20T17:43:00Z',end_recorded_at:'2026-11-20T17:43:00Z'};
-      // TaskSettledPayload carries the recorded outcome separately from the task view.
-      const outcome={kind:type.slice(5),summary:type==='task.completed'?'recorded summary':null,
-        reason:type==='task.failed'?'recorded failure':null,evidence:null,data:null,
-        by_actor_id:'bot',claim_id:claim.id,execution_id:claim.execution_id,at:claim.ended_at};
-      return {id:`OP17-014-${type}-${delegated}`,type,thread_id:'th',
-        actor_id:delegated?'bot':'a',on_behalf_of_actor_id:delegated?'a':null,
-        recorded_at:'2026-11-20T17:43:00Z',credential_id:'synthetic-event-credential',
-        payload:{task:{...task},...(settled?{claim,outcome,
-          ...(conflicting?{summary:'false top-level summary',reason:'false top-level reason'}:{})}:
-          type==='task.blocked'?{reason:'recorded reason'}:type==='task.claimed'?{claim}:{origin:'manual',batch_id:null})}};
-    };
-    C.view.render(C.st);
-  };
-  T.disposeIrcContext = () => {
-    T.ircContext?.view.dispose();
-    window.removeEventListener('yak-operator-open',T.captureIrcOpen);
-    document.querySelector('#skin').replaceChildren();
-    document.querySelector('#skin').hidden = true;
-  };
-
   // OP17-010: complete actor provenance and independently controlled store pages.
   T.enableStorePagination = () => {
     const base = window.fetch;

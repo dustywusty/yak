@@ -40,7 +40,7 @@ export function activityClock(store, status, at = now()) {
   return { at, stale, confirmedAt: stale ? Math.min(at, store.S.lastSync || at) : at };
 }
 
-export function createAgentActivity(store, href, status) {
+export function createAgentActivity(store, href, status, disclosure) {
   const tasks = store.tasks();
   const claimed = tasks.filter((t) => t.state === 'claimed' && t.current_claim?.status === 'active');
   const groups = new Map();
@@ -70,14 +70,18 @@ export function createAgentActivity(store, href, status) {
       duration(t.state_changed_at, '', ` in ${t.state} state`), h('div', { class: 'a-reasons' }, reasons));
   });
   const root = h('section', { class: 't-agent-activity', 'aria-label': 'Task ownership', tabindex: '0' },
-    h('header', { class: 'a-heading' }, h('b', {}, `${store.S.board.name} · Task ownership`), counts), freshness,
-    h('p', { class: 't-mute' }, 'Worker activity unavailable. A claim does not confirm worker activity.'),
-    h('div', { class: 'a-columns' },
-      h('section', {}, h('h2', {}, 'Claimed tasks'), workingRows,
-        !groups.size ? h('p', { class: 't-mute' }, 'No active claimed tasks.') : null,
-        noClaim.length ? h('p', { class: 'a-unclaimed t-mute' }, `No active claimed task: ${noClaim.map((a) => a.handle).join(', ')}`) : null),
-      h('section', {}, h('h2', {}, 'Waiting'), h('ul', {}, waitingRows),
-        !waiting.length ? h('p', { class: 't-mute' }, 'No waiting or blocked tasks.') : null)));
+    h('header', { class: 'a-heading' }, h('b', {}, 'Board-wide task ownership'), counts,
+      disclosure ? h('button', { class: 'a-toggle', 'data-control': 'ownership', type: 'button',
+        'aria-controls': 'chat-ownership-details', 'aria-expanded': String(disclosure.open), onclick: disclosure.toggle },
+        disclosure.open ? 'Hide details' : 'Show details') : null),
+    h('div', { id: disclosure ? 'chat-ownership-details' : null }, freshness,
+      h('p', { class: 't-mute' }, 'Worker activity unavailable. A claim does not confirm worker activity.'),
+      h('div', { class: 'a-columns' },
+        h('section', {}, h('h2', {}, 'Claimed tasks'), workingRows,
+          !groups.size ? h('p', { class: 't-mute' }, 'No active claimed tasks.') : null,
+          noClaim.length ? h('p', { class: 'a-unclaimed t-mute' }, `No active claimed task: ${noClaim.map((a) => a.handle).join(', ')}`) : null),
+        h('section', {}, h('h2', {}, 'Waiting'), h('ul', {}, waitingRows),
+          !waiting.length ? h('p', { class: 't-mute' }, 'No waiting or blocked tasks.') : null))));
 
   function update() {
     const { at, stale, confirmedAt } = activityClock(store, status);

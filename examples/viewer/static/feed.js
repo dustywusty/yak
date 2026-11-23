@@ -178,7 +178,7 @@ export function createFeed({ api, h, time, href, onTask, onUnauthorized, onError
       case 'task.created': return `origin ${p.origin}`;
       case 'task.claimed': return `${who(rec, c?.actor_id)} holds it until ${at(c?.expires_at)} · epoch ${c?.epoch}`;
       case 'task.claim_renewed': return `lease until ${at(c?.expires_at)}`;
-      case 'task.released': return `reason: ${p.reason ?? '—'}`;
+      case 'task.released': return `reason: ${p.reason ?? 'none'}`;
       case 'task.claim_expired': return `claim of ${who(rec, c?.actor_id)} expired`;
       case 'task.completed': return snip(p.outcome?.summary) || 'completed';
       case 'task.failed': return snip(p.outcome?.reason || p.outcome?.summary) || 'failed';

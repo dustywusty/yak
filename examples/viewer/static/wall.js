@@ -8,26 +8,47 @@ const COLUMNS = [
 ];
 const TOASTS = { 'task.claimed': 'claimed', 'task.completed': 'completed', 'task.failed': 'failed', 'task.blocked': 'blocked', 'task.released': 'released' };
 
-export function wall(root, { threadHref }) {
-  const f = { channel: '', agent: '', label: '' };
+export function wall(root, { boardId, route, threadHref }) {
+  const filters = r => ({ ch: r.ch, agent: r.agent, label: r.label });
+  let f = filters(route), restore = history.state?.lanes;
+  function setFilter(key, value, st) {
+    f[key] = value;
+    const [path, search] = location.hash.split('?');
+    const query = new URLSearchParams(search);
+    query.set('b', boardId);
+    if (value) query.set(key, value);
+    else query.delete(key);
+    history.replaceState({ ...history.state, lanes: null }, '', path + '?' + query);
+    render(st);
+  }
+
+  function rememberCard(event) {
+    const link = event.target.closest('a');
+    const card = link?.closest('[data-task]');
+    if (!card || event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const list = card.closest('.w-list');
+    history.replaceState({ ...history.state, lanes: { task: card.dataset.task, link: [...card.querySelectorAll('a')].indexOf(link),
+      left: frame.cols.scrollLeft, top: list.scrollTop } }, '');
+  }
+
   let frame = null, filterKey = '', status = 'resyncing', activity = null, clocks = [];
 
   function controls(st) {
     const sel = (key, first, options) => {
-      const s = h('select', { 'aria-label': first, onchange: (e) => { f[key] = e.target.value; render(st); } },
+      const s = h('select', { 'aria-label': first, onchange: e => setFilter(key, e.target.value, st) },
         h('option', { value: '' }, first), options.map(([v, l]) => h('option', { value: v }, l)));
       s.value = f[key];
       return s;
     };
     return h('div', { class: 'w-filters' },
-      sel('channel', 'All channels', st.S.channels.map((c) => [c.path, `${c.path}/`])),
+      sel('ch', 'All channels', st.S.channels.map((c) => [c.path, `${c.path}/`])),
       sel('agent', 'All agents', [...st.S.actors.values()].map((a) => [a.id, a.handle])),
-      h('input', { type: 'search', placeholder: 'Label (key or key:value)', 'aria-label': 'Label filter', value: f.label,
-        oninput: (e) => { f.label = e.target.value.trim(); render(st); } }));
+      h('input', { type: 'search', placeholder: 'Label filter', title: 'Filter by label key or key:value', 'aria-label': 'Label filter', value: f.label,
+        oninput: e => setFilter('label', e.target.value.trim(), st) }));
   }
 
   function keep(st, t) {
-    if (f.channel && !(t.channel_path === f.channel || t.channel_path.startsWith(`${f.channel}/`))) return false;
+    if (f.ch && !(t.channel_path === f.ch || t.channel_path.startsWith(`${f.ch}/`))) return false;
     if (f.agent && ![t.current_claim?.actor_id, t.assignee_actor_id, t.outcome?.by_actor_id, t.last_claim?.actor_id].includes(f.agent)) return false;
     if (f.label) {
       const [k, ...v] = f.label.toLowerCase().split(':');
@@ -50,11 +71,7 @@ export function wall(root, { threadHref }) {
       ? h('a', { href: threadHref(r.task.thread_id) }, r.text, r.number ? ` · ${r.number} ${r.task.title}` : '')
       : h('span', {}, r.text, r.number ? ` · ${r.number}` : '')) : [];
     const labels = Object.entries(st.labels(t)).filter(([k]) => !k.startsWith('yak.') && !k.startsWith('plan.'));
-    const label = ([k, v]) => {
-      let hue = 0;
-      for (const ch of k) hue = (hue * 31 + ch.charCodeAt(0)) % 360;
-      return h('span', { class: 'w-label', '--label-hue': hue }, `${k}: ${v}`);
-    };
+    const label = ([k, v]) => h('span', { class: 'w-label' }, `${k}: ${v}`);
     return h('article', { class: `w-card w-card-${t.state}`, 'data-task': t.id },
       labels.length ? h('div', { class: 'w-labels' }, labels.map(label)) : null,
       h('a', { class: 'w-title', href: threadHref(t.thread_id) }, t.title),
@@ -86,7 +103,7 @@ export function wall(root, { threadHref }) {
   function render(st) {
     if (!st.S.board) return;
     if (!frame) {
-      frame = { head: h('header', { class: 'w-head' }), summary: h('div', { class: 'w-summary' }), bar: h('div'), cols: h('div', { class: 'w-cols', tabindex: '0', 'aria-label': 'Task lists; scroll horizontally for more states' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
+      frame = { head: h('header', { class: 'w-head' }), summary: h('div', { class: 'w-summary' }), bar: h('div', { class: 'w-bar' }), count: h('span', { class: 'w-count' }), cols: h('div', { class: 'w-cols', onclick: rememberCard, tabindex: '0', 'aria-label': 'Task lists; scroll horizontally for more states' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
       root.replaceChildren(h('div', { class: 'w-wrap' }, frame.head, frame.summary, frame.bar, frame.cols), frame.toasts);
     }
     const active = document.activeElement;
@@ -102,9 +119,10 @@ export function wall(root, { threadHref }) {
     const scrolls = [...frame.cols.children].map((col) => col.querySelector('.w-list').scrollTop);
     // Rebuild controls only when their option lists change; typing keeps focus.
     const key = `${st.S.channels.map((c) => c.path).join(',')}|${[...st.S.actors.keys()].join(',')}`;
-    if (key !== filterKey) { filterKey = key; frame.bar.replaceChildren(controls(st)); }
+    if (key !== filterKey) { filterKey = key; frame.bar.replaceChildren(controls(st), frame.count); }
     const all = st.tasks(), shown = all.filter((t) => keep(st, t));
-    frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Lanes`), h('span', {}, `${shown.length} of ${all.length} tasks · Read-only`));
+    frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Lanes`), h('span', {}, 'Read-only'));
+    frame.count.textContent = `Showing ${shown.length} of ${all.length} tasks`;
     activity = createAgentActivity(st, ({ t }) => threadHref(t), status);
     frame.summary.replaceChildren(activity.root);
     activity.root.scrollTop = summaryTop;
@@ -129,6 +147,15 @@ export function wall(root, { threadHref }) {
       (row?.querySelectorAll('a')[linkIndex] || (inSummary ? activity.root : frame.cols)).focus({ preventScroll: true });
     } else if (summaryFocus) activity.root.focus({ preventScroll: true });
     else if (listFocus >= 0) frame.cols.children[listFocus]?.querySelector('.w-list')?.focus({ preventScroll: true });
+    if (restore && st.S.cursor) {
+      const row = frame.cols.querySelector(`[data-task="${CSS.escape(restore.task)}"]`);
+      frame.cols.scrollLeft = restore.left;
+      if (row) {
+        row.closest('.w-list').scrollTop = restore.top;
+        row.querySelectorAll('a')[restore.link]?.focus({ preventScroll: true });
+      }
+      restore = null;
+    }
     tick(st);
   }
 
@@ -141,5 +168,11 @@ export function wall(root, { threadHref }) {
     timers.add(timer);
   }
   const timers = new Set();
-  return { render, event, tick, status: (value, st) => { if (status !== value) { status = value; render(st); } }, dispose: () => timers.forEach(clearTimeout) };
+  function navigate(route, st) {
+    f = filters(route);
+    filterKey = '';
+    restore = history.state?.lanes;
+    render(st);
+  }
+  return { navigate, render, event, tick, status: (value, st) => { if (status !== value) { status = value; render(st); } }, dispose: () => timers.forEach(clearTimeout) };
 }

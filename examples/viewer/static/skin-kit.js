@@ -1,5 +1,5 @@
 // Shared pieces for the viewer skins (and the default view): a live board
-// store, server-relative time, lease math, avatars, and a jump palette.
+// store, server-relative time, avatars, and a jump palette.
 // All content is inserted as text, never as HTML.
 
 import { parseWireJSON, compareRevision } from './wire-json.js';
@@ -39,16 +39,6 @@ export function ago(ts) {
 export const snip = (t, n = 200) => (t == null ? '' : t.length > n ? `${t.slice(0, n)}…` : t);
 export const isToday = (ts) => ts && new Date(ts).toDateString() === new Date(now()).toDateString();
 
-// Lease state of a claim: time left and the fraction of lease_seconds left.
-export function lease(claim) {
-  if (!claim) return null;
-  const left = Date.parse(claim.expires_at) - now();
-  const frac = Math.max(0, Math.min(1, left / (claim.lease_seconds * 1000)));
-  const s = Math.max(0, Math.ceil(left / 1000));
-  const text = left <= 0 ? 'lapsing' : `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  return { left, frac, text };
-}
-
 // ---------- DOM ----------
 export function h(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -73,10 +63,6 @@ export function avatar(actor, id) {
   const initials = (parts.length > 1 ? parts[0][0] + parts.at(-1)[0] : name.slice(0, 2)).toUpperCase();
   return h('span', { class: `av av-${actor?.kind || 'unknown'}`, '--hue': hash % 360, title: name, 'aria-hidden': 'true' }, initials);
 }
-
-// An action the viewer cannot perform: shown, but disabled.
-export const readOnly = (label, cls = '') =>
-  h('button', { type: 'button', class: `ro ${cls}`, disabled: true, title: 'read-only viewer' }, label);
 
 // Ctrl-K / Cmd-K jump palette over a list of { label, hint, go }.
 export function jumpPalette(getItems, placeholder = 'Jump to…') {
@@ -142,23 +128,29 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const unauthorized = () => { if (!abort.signal.aborted) { stopStore(); onUnauthorized?.(); } };
   const projectionStatus = () => onStatus([...refresh.dirty.values()].some(e => e.attempts > 0) ? 'reconnecting' : 'live');
   const B = `/v1/boards/${enc(boardId)}`;
-  const get = async (path, params) => {
-    const result = await api('GET', path, params, abort.signal);
-    if (abort.signal.aborted) throw new DOMException('Store stopped', 'AbortError');
+  const get = async (path, params, signal = abort.signal) => {
+    const result = await api('GET', path, params, signal);
+    if (signal.aborted) throw new DOMException('Store stopped', 'AbortError');
     return result;
   };
   // PAGE-001: follow next_page_token until it is null.
-  const all = async (path, key) => {
+  const all = async (path, key, signal) => {
     const out = [];
     let token = null;
     do {
-      const page = await get(path, { limit: clock.limits.max_page_size, page_token: token });
+      const page = await get(path, { limit: clock.limits.max_page_size, page_token: token }, signal);
       out.push(...page[key]);
       token = page.next_page_token;
     } while (token);
     return out;
   };
   const bucket = (id) => S.msgs.get(id) || S.msgs.set(id, new Map()).get(id);
+  // A paged read can already contain a newer revision than the polling cursor.
+  const putMessage = (m) => {
+    const messages = bucket(m.thread_id);
+    const current = messages.get(m.id);
+    if (!current || compareRevision(m.revision, current.revision) >= 0) messages.set(m.id, m);
+  };
   const putTask = (t) => {
     const cur = S.tasks.get(t.id);
     if (!cur) S.order.push(t.id);
@@ -288,7 +280,7 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
       readThread(m.thread_id);
     }
     if (p.message) {
-      bucket(p.message.thread_id).set(p.message.id, p.message);
+      putMessage(p.message);
       const t = S.threads.get(p.message.thread_id);
       if (t && ev.type === 'message.created') {
         S.threads.set(t.id, { ...t, message_count: Math.max(t.message_count, p.message.seq), last_message_id: p.message.id, updated_at: p.message.created_at });
@@ -327,6 +319,14 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
       } catch (e) {
         if (abort.signal.aborted || e.name === 'AbortError') return;
         if (e.status === 401) return unauthorized();
+        if (e.status === 403 || e.status === 404) {
+          invalidateRefresh();
+          S.cursor = null;
+          onStatus('unavailable');
+          await sleep(backoff);
+          backoff = Math.min(backoff * 2, 30000);
+          continue;
+        }
         const code = e.problem?.code;
         if (code === 'resync_required' || code === 'cursor_expired' || code === 'snapshot_expired' || e.status === 400) {
           invalidateRefresh();
@@ -378,6 +378,15 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
   const clockTimer = setInterval(syncClock, 60000);
   return {
     S, actor, handle, via, num, tasks, thread, messages, latest, labels, gated, blockers, settled,
+    async loadMessages(id, signal) {
+      const combined = AbortSignal.any([signal, refresh.abort.signal, abort.signal]);
+      const rows = await all(`${B}/threads/${enc(id)}/messages`, 'messages', combined);
+      // A denied thread can be absent from the replacement snapshot on retry.
+      const metadata = !S.threads.has(id) && await get(`${B}/threads/${enc(id)}`, {}, combined);
+      combined.throwIfAborted();
+      if (metadata && !S.threads.has(id)) S.threads.set(id, metadata.thread);
+      for (const m of rows) putMessage(m);
+    },
     stop: stopStore,
   };
 }
