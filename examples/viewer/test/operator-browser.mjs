@@ -1397,6 +1397,7 @@ async function forumOperatorCase() {
  await until("document.body.dataset.operator==='true'");
  await ev("location.hash='#/forum?b=brd_test&ch=ops&t=th'");
  await until("!!document.querySelector('.f-opening')");
+ check('Forum header identifies the separate operator tools',await ev("document.querySelector('.f-head').textContent.includes('Read-only view · Operator tools available')"));
  await ev("document.querySelector('.f-meta button').click()");
  await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
  check('Forum opens task and reply tools for the selected thread', await ev("!!document.querySelector('.op-workspace textarea') && document.querySelector('.op-workspace').textContent.includes(window.__op.thread.title)"));
@@ -1407,6 +1408,7 @@ async function forumOperatorCase() {
  check('Forum logout revokes own credential', await ev("window.__op.writes.length===1 && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
  await ev("window.__op.revoked=false;window.__op.scope=['read'];document.querySelector('#operator-login').checked=false;document.querySelector('#token').value='synthetic-forum-read';document.querySelector('#login-form').requestSubmit()");
  await until("!!document.querySelector('.f-opening')");
+ check('Forum header identifies a read-only session',await ev("document.querySelector('.f-head').textContent.includes('Read-only view') && !document.querySelector('.f-head').textContent.includes('Operator tools')"));
  check('Read-only Forum has no write actions',await ev("!document.querySelector('.f-meta button') && !document.querySelector('#operator-tools').offsetWidth"));
  check('Forum renders message text literally',await ev("document.querySelector('.f-opening p').textContent===window.__op.root.text && !document.querySelector('.f-opening script')"));
 }

@@ -122,7 +122,7 @@ const FAKE = () => {
       return json({ events, next_cursor: cursor, caught_up: true, timed_out: !events.length });
     }
     if (p.endsWith('/messages')) {
-      if (T.postsError) return json({ code: 'unavailable' }, 503);
+      if (T.postsError) return json({ code: 'unavailable' }, T.postsError);
       const id = p.split('/').at(-2), rows = msgs.filter(m => m.thread_id === id);
       const token = u.searchParams.get('page_token');
       if (token === 'opaque +/next') {
@@ -277,6 +277,58 @@ try {
     throw new Error(`condition not reached: ${expr}`);
   };
 
+  await go('#/forum?b=brd_test&ch=ops%2Fdeploy&t=missing');
+  const recoveryLink = '.f-content h2 + p a';
+  check('Unavailable thread offers its channel index beside the error', await ev(`
+    document.querySelector('.f-content h2').textContent === 'Thread unavailable.' &&
+    document.querySelector('${recoveryLink}')?.hash === '#/forum?b=brd_test&ch=ops%2Fdeploy'`));
+  await ev(`document.querySelector('${recoveryLink}').click()`);
+  await until("!!document.querySelector('[data-thread=thr_deploy]')");
+  check('Returning to the channel index focuses the filtered list heading', await ev(`
+    document.activeElement === document.querySelector('.f-content h2') &&
+    document.activeElement.textContent.includes('#ops/deploy') && !!document.querySelector('[data-thread=thr_deploy]')`));
+  await go('#/forum?b=brd_planning&ch=missing&t=missing');
+  check('Unavailable channel falls back to the same board index', await ev(`
+    document.querySelector('${recoveryLink}')?.hash === '#/forum?b=brd_planning'`));
+  await ev('window.__fake.postsError=403');
+  await go('#/forum?b=brd_test&ch=ops&t=thr_ops');
+  await until("document.querySelector('.f-content [role=status]')?.textContent.includes('Thread unavailable.')");
+  check('Denied post read offers the channel index beside Retry', await ev(`
+    document.querySelector('.f-content [role=status] a')?.hash === '#/forum?b=brd_test&ch=ops' &&
+    document.querySelector('.f-content [role=status] button')?.textContent === 'Retry'`));
+  await ev('window.__fake.postsError=false');
+  await go('#/forum?b=brd_test');
+  await ev("document.querySelector('[data-thread=thr_deploy] .f-task').click()");
+  await until("!!document.querySelector('.f-opening')");
+  check('Forum task link targets the approval ask inside the Deploy thread', await ev(`(() => {
+    const details = document.querySelector('[aria-labelledby="forum-task-heading"]');
+    return document.querySelector('.f-content h2').textContent === 'Deploy thread' &&
+      document.activeElement.id === 'forum-task-heading' && details?.textContent.includes('Approve production rollout') &&
+      ['blocked', 'Assigned to @alice', 'waiting on @alice'].every(s => details.textContent.includes(s)) &&
+      !details.querySelector('a') && !document.querySelector('.f-content .f-task');
+  })()`));
+  await go('#/forum?b=brd_test&ch=activity&t=thr_wait');
+  const dependency = '[aria-labelledby="forum-task-heading"] a[href*="thr_deploy"]';
+  check('Forum wait reason links to the readable prerequisite in its channel',
+    await ev(`document.querySelector('${dependency}')?.textContent.includes('Approve production rollout') && document.querySelector('${dependency}').hash.includes('ch=ops%2Fdeploy')`));
+  await go('#/forum?b=brd_test&ch=activity&t=thr_hidden');
+  check('Forum hides private prerequisite details', await ev(`(() => {
+    const d = document.querySelector('[aria-labelledby="forum-task-heading"]');
+    return d?.textContent.includes('Prerequisite pending (details not visible)') && !d.querySelector('a');
+  })()`));
+  await go('#/forum?b=brd_test&ch=activity&t=thr_work');
+  check('Forum claim identifies the holder and dates the claim age', await ev(`(() => {
+    const d = document.querySelector('[aria-labelledby="forum-task-heading"]');
+    return d?.textContent.includes('Claim held by @bot-a') && d.textContent.includes('8m') && !!d.querySelector('time');
+  })()`));
+  await go('#/forum?b=brd_planning');
+  await ev("window.__missingTask = window.__fake.tasks.pop(); 1");
+  await go('#/forum?b=brd_test&ch=activity&t=thr_hidden&section=task');
+  check('Missing task leaves the readable conversation available', await ev(`
+    document.activeElement.id === 'forum-task-heading' && document.activeElement.textContent === 'Task details unavailable.' &&
+    !!document.querySelector('.f-opening') && !document.querySelector('.f-content .f-task')`));
+  await ev("window.__fake.tasks.push(window.__missingTask); delete window.__missingTask");
+  await go('#/');
   check('prominent ownership and waiting summary', (await activity()).includes('Claimed tasks') && (await activity()).includes('Waiting'), await activity());
   const windowOwnership = await activity();
   check('ownership does not imply worker activity', ['Board-wide task ownership', 'Worker activity unavailable. A claim does not confirm worker activity.'].every((t) => (windowOwnership || '').includes(t)) && !/Working now|Working for|working actors?/i.test(windowOwnership), windowOwnership);
@@ -562,11 +614,11 @@ try {
   await cmd('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
   check('Mobile Forum fits channel links and replies',await ev("document.documentElement.scrollWidth<=390 && document.querySelector('.f-reply').getBoundingClientRect().right<=390"));
   await go('#/forum?b=brd_test&ch=review');
-  await ev("window.__fake.postsError=true;document.querySelector('.f-task').click()");
+  await ev("window.__fake.postsError=503;document.querySelector('.f-task').click()");
   await until("document.querySelector('.f-content')?.textContent.includes('Could not load posts.')");
   await ev("window.__fake.postsError=false;document.querySelector('.f-content button').click()");
   await until("!!document.querySelector('.f-opening')");
-  check('Task link and retry open the Forum conversation',await ev("location.hash==='#/forum?b=brd_test&ch=review&t=thr_review'"));
+  check('Task link and retry open the Forum conversation',await ev("location.hash==='#/forum?b=brd_test&ch=review&t=thr_review&section=task'"));
   await ev("window.__fake.holdMessages=true;location.hash='#/forum?b=brd_test&ch=ops&t=thr_ops'");
   await until("!!window.__fake.finishMessages");
   await go('#/forum?b=brd_planning');
