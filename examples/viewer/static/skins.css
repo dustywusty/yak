@@ -97,6 +97,7 @@ body[data-skin=forum] .top button, .skin-forum button { background: #eef1fa; col
 .f-head h1 { font-size: 23px; line-height: 1.2; margin: 0 0 4px; }
 .f-head h1 span { color: #495578; font-weight: normal; }
 .f-head nav { font-size: 13px; }
+.f-head small { font-size: 12px; }
 .f-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, 24%); grid-template-areas: "posts directory"; align-items: start; gap: 12px; margin-top: 12px; }
 .f-directory, .f-content { border: 1px solid #b4bcd4; background: #e6eaf7; min-width: 0; }
 .f-directory { grid-area: directory; }

@@ -83,25 +83,24 @@ removes the token and asks for a new one.
 
 Chat is the default view (`#/` and `#/b/<board>`).
 The screenshots use the committed synthetic API and a fake token.
-The Chat and Lanes captures predate the ownership copy correction and still show the old working labels.
-The tasks are examples, not production progress.
+The tasks are examples.
 Desktop captures are 1280 × 900. Mobile captures are 390 × 844.
 
 | View | Desktop | Mobile |
 |---|---|---|
-| **Chat** — Channels, threads, task states, and the Claimed tasks / Waiting summary. | <img src="../../docs/images/viewer-chat-desktop.png" alt="Chat at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-chat-mobile.png" alt="Chat at 390 by 844" width="195"> |
-| **Switch board** — Two readable boards. Each choice opens its Chat. | <img src="../../docs/images/viewer-switch-board-desktop.png" alt="Switch board at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-switch-board-mobile.png" alt="Switch board at 390 by 844" width="195"> |
-| **Lanes** — Task lists by state, with filters, claims, and waiting reasons. | <img src="../../docs/images/viewer-lanes-desktop.png" alt="Lanes at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-lanes-mobile.png" alt="Lanes at 390 by 844" width="195"> |
-| **Forum** — A channel directory, thread index, and conversations with attributed replies. | <img src="../../docs/images/viewer-forum-desktop.png" alt="Forum at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-forum-mobile.png" alt="Forum at 390 by 844" width="195"> |
+| **Chat** shows conversations and board-wide claim and wait counts. | <img src="../../docs/images/viewer-chat-desktop.png" alt="Chat at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-chat-mobile.png" alt="Chat at 390 by 844" width="195"> |
+| **Switch board** lists the boards you can read. Select one to open Chat. | <img src="../../docs/images/viewer-switch-board-desktop.png" alt="Switch board at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-switch-board-mobile.png" alt="Switch board at 390 by 844" width="195"> |
+| **Lanes** groups tasks by state and shows the number matching the filters. | <img src="../../docs/images/viewer-lanes-desktop.png" alt="Lanes at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-lanes-mobile.png" alt="Lanes at 390 by 844" width="195"> |
+| **Forum** lists threads by channel. Open a task to read its title, state and wait reason. | <img src="../../docs/images/viewer-forum-desktop.png" alt="Forum at 1280 by 900" width="640"> | <img src="../../docs/images/viewer-forum-mobile.png" alt="Forum at 390 by 844" width="195"> |
 
 The Chat pair shows the `activity` channel on the `demo` board.
 The Switch board pair shows `demo` and the empty `Release planning` board.
-Lanes shows the task lists; on mobile, scroll horizontally to reach the other lists.
-Forum shows the thread index on desktop and the ops thread on mobile.
+Lanes shows the task lists. On mobile, scroll horizontally to reach the other lists.
+Forum shows the thread index on desktop. The mobile capture shows the blocked rollout task in **Deploy thread**.
 
 To reproduce these views, run the synthetic preview command above and open its local URL.
 Use `#/b/brd_test?ch=activity`, `#/boards`, `#/board?b=brd_test`, and `#/forum?b=brd_test`.
-For the mobile Forum capture, open **Ops thread**. Set the browser viewport to the dimensions above before each capture.
+For the mobile Forum capture, open **Deploy thread**. Set the browser viewport to the dimensions above before each capture.
 The captures use Orca browser viewport screenshots at scale 1, without image edits.
 The preview serves this checkout's `static/` files and makes no requests to a Yak server.
 
