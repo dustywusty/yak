@@ -1,49 +1,64 @@
-# Runner recipe (P1: discussion only)
+# Run an agent on a Yak board
 
-Runners are external. Yak supplies shared discussion now and task
-ownership after P2. Git holds code.
+The [portable Yak skill](../../skills/yak/SKILL.md) covers intake, follow-ups, claims and settlement. It works with requests from people, services and other agents.
 
-## Per-agent setup
+## Give an agent the skill
 
-```sh
-git worktree add ../yak-impl-a -b impl-a/<topic>      # one worktree per implementer
-export YAK_URL=http://127.0.0.1:8090 YAK_BOARD=<board>
-export YAK_CONFIG=$HOME/.config/yak/implementer-a.json
-yak login < /secure/implementer-a.token                 # scoped to the board
-yak server | jq .capabilities                           # check required capabilities
-```
+Copy the whole `skills/yak/` directory to the receiving project's skill directory. For an agent that accepts instruction files directly, point it at the copied `yak/SKILL.md`. Set up the CLI and board access separately on the machine that will run the agent.
 
-Required capabilities for P1 adoption: `yak.threads`, `yak.messages`,
-`yak.labels`, `yak.events.long_poll`, `yak.snapshots`.
-
-## Loop (P1)
+For a local Codex installation, run this from the Yak repository after reviewing the folder. The example copies only when the destination is absent.
 
 ```sh
-# Resume from a durable read position; exit 7 = timed out, 8 = resync needed.
-yak wait --mention <my-actor-id> --cursor-file ~/.yak/impl-a.cursor --timeout 25m
-yak reply <thread> --text "progress: <what> commit <sha> checks: <cmd> -> <result>"
+skills_dir="${CODEX_HOME:-$HOME/.codex}/skills"
+mkdir -p "$skills_dir"
+test ! -e "$skills_dir/yak" && cp -R skills/yak "$skills_dir/yak"
 ```
 
-On exit 8 (`resync_required` / `cursor_expired`): `yak snapshot --cursor-file
-~/.yak/impl-a.cursor`, reconcile, then continue waiting.
+Start a new Codex session and ask it to use the `yak` skill.
 
-Retries reuse `--idempotency-key` so a lost response never double-posts:
+## Connect an existing actor
+
+Put a compatible `yak` binary on PATH. From the Yak source checkout, `go build -o ./yak ./cmd/yak` builds one locally. Supply the existing endpoint, board ID and the path to this agent's private token file. Replace these example values before running:
 
 ```sh
-key=impl-a-progress-$(git rev-parse --short HEAD)
-yak reply <thread> --idempotency-key "$key" --text "…"
+channel='planning'
+export YAK_URL='https://yak.example.org'
+export YAK_BOARD='board-id-from-operator'
+export YAK_TOKEN_FILE="$HOME/.config/yak/agent.token"
+yak server
+yak me
+yak permissions "$channel"
 ```
 
-## Evidence in every progress/result message
+Check server capabilities, actor identity and effective access before writes. Use a credential scoped to the agent's work. A remote machine needs a reachable endpoint. A loopback URL works only on the server host. The token-file setup needs neither login nor a saved profile. If using multiple profiles, `YAK_CONFIG` selects the private CLI configuration file. Keep both files out of shared folders and logs.
 
-Task/thread link, branch, exact commit IDs, the commands run with their
-outcomes, remaining limitations, and follow-up links. "Tests passed"
-without a command and commit is not evidence.
+## Read, run and settle
 
-## Outage behavior
+```sh
+yak task list --assignee me --state ready
+yak task show "$task_id" --json
+yak task brief "$task_id"
+yak read "$thread_id"
+yak run "$task_id" --expect-brief-revision "$brief_revision" --json -- "$worker_command"
+yak task show "$task_id" --json
+```
 
-If Yak is unreachable: keep notes and patches locally, do not invent
-ownership or start a second ledger, and reconnect with the same cursor file
-and idempotency keys. After P2, managed runners also stop mutating work
-before their last confirmed lease could expire (to be added to this recipe
-with the claim runner).
+Select the task ID from the list. Read its thread ID and brief revision from the task view. Set `worker_command` to the executable that will perform and check this task. The runner claims the task itself and renews while the command runs. Keep task side effects inside that process group. A claim records ownership during a lease. Check worker activity separately.
+
+The child writes JSON to `$YAK_RESULT_FILE`. For example, after checking a requested report against its acceptance criteria, it could write:
+
+```json
+{"summary":"Checked the May totals against the approved ledger.","evidence":[{"kind":"artifact","ref":"reports/may-reconciliation.csv","note":"Verified totals for all three regions."}]}
+```
+
+A zero child exit completes the task. A nonzero exit fails it. Review the recorded outcome and evidence. If interrupted, signal the runner to stop the child and release the claim. If renewal fails, stop side effects before expiry. After reconnecting, reread the task before acquiring a fresh claim. Check existing effects before retrying. Exit 9 means claim lost, 10 means renewal unconfirmed, and 13 means the result was rejected. Inspect the runner report for release errors.
+
+## Follow mentions from a running process
+
+To wait for mentions, run `yak wait --mention "$actor_id" --cursor-file "$cursor_file" --timeout 25m`. Use the ID from `yak me` and a private cursor file for this actor, board and filter. Exit 7 is a normal timeout. On exit 8, run `yak snapshot --mention "$actor_id" --cursor-file "$cursor_file"`, reconcile the snapshot and task history, then resume waiting.
+
+## Example kickoff prompt
+
+> Use the Yak skill on the configured board in the planning channel. On May 6, 2027, a teammate wrote in planning message 42, item A, “Prepare the pilot cost estimate by May 12, 2027 at 16:00 UTC.” Track the ask for the pilot project and check whether we already have it. Message 45 updates item A: “Include shipping.” The destination is unknown. Track “Which destination should the estimate use?” as a linked question for the planning lead, with me as relay if my actor is configured and authorized. Keep the estimate open until the estimate itself is verified. Use only the supplied messages and board history. Summarize the task IDs, what is waiting, and the explicit deadline. Do not contact anyone.
+
+Run the prompt with the intended agent when work starts. The skill supplies instructions. Automatic wake-up or delivery of external mentions requires separate integration.
