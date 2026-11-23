@@ -275,6 +275,38 @@ try {
     throw new Error(`condition not reached: ${expr}`);
   };
 
+  await go('#/forum?b=brd_test');
+  await ev("document.querySelector('[data-thread=thr_deploy] .f-task').click()");
+  await until("!!document.querySelector('.f-opening')");
+  check('Forum task link targets the approval ask inside the Deploy thread', await ev(`(() => {
+    const details = document.querySelector('[aria-labelledby="forum-task-heading"]');
+    return document.querySelector('.f-content h2').textContent === 'Deploy thread' &&
+      document.activeElement.id === 'forum-task-heading' && details?.textContent.includes('Approve production rollout') &&
+      ['blocked', 'Assigned to @alice', 'waiting on @alice'].every(s => details.textContent.includes(s)) &&
+      !details.querySelector('a') && !document.querySelector('.f-content .f-task');
+  })()`));
+  await go('#/forum?b=brd_test&ch=activity&t=thr_wait');
+  const dependency = '[aria-labelledby="forum-task-heading"] a[href*="thr_deploy"]';
+  check('Forum wait reason links to the readable prerequisite in its channel',
+    await ev(`document.querySelector('${dependency}')?.textContent.includes('Approve production rollout') && document.querySelector('${dependency}').hash.includes('ch=ops%2Fdeploy')`));
+  await go('#/forum?b=brd_test&ch=activity&t=thr_hidden');
+  check('Forum hides private prerequisite details', await ev(`(() => {
+    const d = document.querySelector('[aria-labelledby="forum-task-heading"]');
+    return d?.textContent.includes('Prerequisite pending (details not visible)') && !d.querySelector('a');
+  })()`));
+  await go('#/forum?b=brd_test&ch=activity&t=thr_work');
+  check('Forum claim identifies the holder and dates the claim age', await ev(`(() => {
+    const d = document.querySelector('[aria-labelledby="forum-task-heading"]');
+    return d?.textContent.includes('Claim held by @bot-a') && d.textContent.includes('8m') && !!d.querySelector('time');
+  })()`));
+  await go('#/forum?b=brd_planning');
+  await ev("window.__missingTask = window.__fake.tasks.pop(); 1");
+  await go('#/forum?b=brd_test&ch=activity&t=thr_hidden&section=task');
+  check('Missing task leaves the readable conversation available', await ev(`
+    document.activeElement.id === 'forum-task-heading' && document.activeElement.textContent === 'Task details unavailable.' &&
+    !!document.querySelector('.f-opening') && !document.querySelector('.f-content .f-task')`));
+  await ev("window.__fake.tasks.push(window.__missingTask); delete window.__missingTask");
+  await go('#/');
   check('prominent ownership and waiting summary', (await activity()).includes('Claimed tasks') && (await activity()).includes('Waiting'), await activity());
   const windowOwnership = await activity();
   check('ownership does not imply worker activity', ['Task ownership', 'Worker activity unavailable. A claim does not confirm worker activity.'].every((t) => (windowOwnership || '').includes(t)) && !/Working now|Working for|working actors?/i.test(windowOwnership), windowOwnership);
@@ -536,7 +568,7 @@ try {
   await until("document.querySelector('.f-content')?.textContent.includes('Could not load posts.')");
   await ev("window.__fake.postsError=false;document.querySelector('.f-content button').click()");
   await until("!!document.querySelector('.f-opening')");
-  check('Task link and retry open the Forum conversation',await ev("location.hash==='#/forum?b=brd_test&ch=review&t=thr_review'"));
+  check('Task link and retry open the Forum conversation',await ev("location.hash==='#/forum?b=brd_test&ch=review&t=thr_review&section=task'"));
   await ev("window.__fake.holdMessages=true;location.hash='#/forum?b=brd_test&ch=ops&t=thr_ops'");
   await until("!!window.__fake.finishMessages");
   await go('#/forum?b=brd_planning');
