@@ -42,6 +42,7 @@ export function forum(root, { boardId, route }) {
   function render(st) {
     if (!ready || !st.S.cursor) return;
     const focused = root.contains(document.activeElement) ? document.activeElement : null;
+    const focusedCard = focused?.closest('.f-summary');
     const focusRegion = ['.f-head', '.f-directory', '.f-content'].find(selector => focused?.closest(selector));
     const channels = st.S.channels;
     const thread = st.thread(route.t);
@@ -55,7 +56,7 @@ export function forum(root, { boardId, route }) {
       channels.length ? null : h('p', {}, 'No readable channels.'));
     const taskLink = t => {
       const task = st.S.tasks.get(t.task_id);
-      return task && h('a', { class: 'f-task', href: href(t.channel_path, t.id) }, 'Task ' + st.num(task.id) + ' · ' + task.state);
+      return task && h('a', { class: 'f-task', 'data-control': 'task', href: href(t.channel_path, t.id) }, 'Task ' + st.num(task.id) + ' · ' + task.state);
     };
     const section = h('section', { class: 'f-content' });
     if (!validChannel || (route.t && (!thread || thread.channel_path !== ch))) {
@@ -77,9 +78,9 @@ export function forum(root, { boardId, route }) {
       section.append(h('h2', {}, ch ? '#' + ch : 'All threads', h('small', {}, count(threads.length, 'thread'))));
       for (const t of threads) {
         const opening = st.S.msgs.get(t.id)?.get(t.root_message_id);
-        section.append(h('article', { class: 'f-summary' },
-          h('h3', {}, h('a', { href: href(t.channel_path, t.id) }, t.title)),
-          h('div', { class: 'f-meta' }, h('a', { href: href(t.channel_path) }, '#' + t.channel_path),
+        section.append(h('article', { class: 'f-summary', 'data-thread': t.id },
+          h('h3', {}, h('a', { 'data-control': 'title', href: href(t.channel_path, t.id) }, t.title)),
+          h('div', { class: 'f-meta' }, h('a', { 'data-control': 'channel', href: href(t.channel_path) }, '#' + t.channel_path),
             h('span', {}, t.message_count === 2 ? '1 reply' : Math.max(0, t.message_count - 1) + ' replies'),
             date(t.updated_at), taskLink(t)),
           opening && !opening.deleted && h('p', {}, opening.text)));
@@ -93,7 +94,11 @@ export function forum(root, { boardId, route }) {
           ch && [' / ', h('a', { href: href(ch) }, '#' + ch)])),
       h('div', { class: 'f-columns' }, directory, section)));
     if (focusHeading) { section.firstChild.focus(); focusHeading = false; }
-    else if (focusRegion) {
+    else if (focusedCard) {
+      const card = section.querySelector(`.f-summary[data-thread="${CSS.escape(focusedCard.dataset.thread)}"]`);
+      const control = card?.querySelector(`[data-control="${focused.dataset.control}"]`);
+      (control || section.firstChild).focus({ preventScroll: true });
+    } else if (focusRegion) {
       const next = [...root.querySelector(focusRegion).querySelectorAll('a,button,h2')].find(el =>
         el.tagName === focused.tagName && el.textContent === focused.textContent && el.href === focused.href);
       next?.focus({ preventScroll: true });

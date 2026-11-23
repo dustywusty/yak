@@ -544,6 +544,17 @@ try {
   await ev("window.__fake.finishMessages();window.__fake.holdMessages=false");
   await sleep(100);
   check('A late message page cannot log out the replacement board',await ev("!document.querySelector('#skin').hidden && document.querySelector('.f-head').textContent.includes('Release planning') && !!sessionStorage.getItem('yak-viewer-token')"));
+  await go('#/forum?b=brd_test');
+  const workCard = `document.querySelector('.f-summary h3 a[href$="t=thr_work"]').closest('article')`;
+  await ev(`${workCard}.querySelector('.f-meta a').focus();
+    window.__fake.queue.push(window.__msgEvent('msg_focus_redraw','Unrelated ops reply','store')); 1`);
+  await until(`document.querySelector('.f-summary h3 a[href$="t=thr_ops"]').closest('article').textContent.includes('8 replies')`);
+  check('Live redraw keeps the channel link in its original thread card',
+    await ev(`document.activeElement === ${workCard}.querySelector('.f-meta a')`));
+  await cmd('Input.dispatchKeyEvent', {type:'keyDown',key:'Tab',windowsVirtualKeyCode:9});
+  await cmd('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',windowsVirtualKeyCode:9});
+  check('Next Tab reaches the task in the same thread card',
+    await ev(`document.activeElement === ${workCard}.querySelector('.f-task')`));
   await go('#/wall?b=brd_test');
   check('old Wall bookmark remains a Lanes alias and restores global header', await ev(`!!document.querySelector('.w-cols') && !!document.querySelector('body > .top')`));
   await cmd('Emulation.setDeviceMetricsOverride', {width:1280,height:900,deviceScaleFactor:1,mobile:false});
