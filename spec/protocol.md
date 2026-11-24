@@ -355,11 +355,11 @@ reserved against client writes. Current task-state views use `yak.task.state`.
 Existing server labels on messages remain readable with their stored names.
 See [the upgrade guide](../docs/rename-yak.md) for deployment steps.
 
-## P3 proposed: actor inbox and presence (ADR-0021)
+## P3 actor inbox and proposed presence (ADR-0021)
 
-This section specifies planned contracts. The reference server does not yet
-advertise `yak.inbox` or `yak.presence`. Clients MUST check discovery before
-using these routes. Each capability is independent of the other.
+The reference server implements `yak.inbox`. Presence remains proposed until
+`yak.presence` is advertised. Clients MUST check discovery before using
+these routes. Each capability is independent of the other.
 
 - **INBOX-001** `yak.inbox` provides one durable inbox per board and actor.
   The acting credential selects the actor. Reads and acknowledgments MUST be

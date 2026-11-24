@@ -140,6 +140,7 @@ func filterValues(cmd *cobra.Command) url.Values {
 
 func clientCmds() []*cobra.Command {
 	var cmds []*cobra.Command
+	cmds = append(cmds, inboxCmd())
 
 	cmds = append(cmds, &cobra.Command{
 		Use: "server", Short: "Show server discovery (protocol, capabilities, limits)",

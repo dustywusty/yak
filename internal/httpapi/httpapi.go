@@ -270,7 +270,7 @@ func (a *API) discovery(w http.ResponseWriter, r *http.Request) {
 	caps := []string{
 		"yak.boards", "yak.channels", "yak.channels.private", "yak.grants", "yak.actors", "yak.credentials", "yak.credentials.restrictions",
 		"yak.threads", "yak.messages", "yak.messages.guarded_reply", "yak.messages.tombstones",
-		"yak.labels", "yak.labels.conditional", "yak.mentions",
+		"yak.labels", "yak.labels.conditional", "yak.mentions", "yak.inbox",
 		"yak.events.catchup", "yak.events.long_poll", "yak.snapshots", "yak.idempotency", "yak.audit",
 		"yak.tasks", "yak.tasks.claims", "yak.tasks.claim_next", "yak.tasks.batches", "yak.tasks.dependencies", "yak.tasks.briefs",
 	}
@@ -492,6 +492,7 @@ func (a *API) routes() {
 
 	a.boardRoutes()
 	a.taskRoutes()
+	a.inboxRoutes()
 }
 
 func (a *API) boardRoutes() {

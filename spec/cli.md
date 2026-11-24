@@ -326,10 +326,11 @@ the flag preserves its value. Batch and plan JSON accept the same boolean
 on each task item. Task text and JSON views show the flag. Flagged reopen
 creates a fresh block and preserves the flag (DLG-099).
 
-## P3 proposed: inbox and presence (ADR-0021)
+## P3 inbox and proposed presence (ADR-0021)
 
 These commands require discovery capabilities `yak.inbox` and
-`yak.presence` respectively. They are not implemented by the current CLI.
+`yak.presence` respectively. Inbox commands are implemented. Presence
+commands remain proposed.
 
 | Command | Contract |
 |---|---|
@@ -348,7 +349,7 @@ The acknowledgment command states that its prefix includes hidden items.
 
 The CLI keeps no implicit acknowledgment file. Consumers store returned
 cursors and deduplicate item IDs. On `409 resync_required`, it reports the
-reason and exits with the existing conflict code. The consumer restarts
+reason and exits with the existing resynchronization code (8). The consumer restarts
 without a cursor from its saved server acknowledgment. It never jumps to
 the latest item. Presence text uses `online`, `away`, or `offline` with
 last-seen and expiry timestamps. It does not infer worker activity.

@@ -14,9 +14,10 @@ info:
     the P2 operations only if it lists `yak.p2.tasks` in
     `protocol.profiles`.
 
-    P1 and P2 describe implemented behavior. ADR-0021 adds proposed P3 inbox
-    and presence operations, gated by `yak.inbox` and `yak.presence`. The
-    reference server does not yet advertise those capabilities.
+    P1 and P2 describe implemented behavior. ADR-0021 adds P3 inbox
+    and presence operations, gated independently by `yak.inbox` and
+    `yak.presence`. The reference server implements the inbox; presence
+    remains proposed until its capability is advertised.
 
     Object schemas live in
     `spec/schemas/*.schema.json` (JSON Schema 2020-12) and are the single
@@ -2486,7 +2487,7 @@ paths:
     get:
       operationId: readActorInbox
       tags: [identity]
-      summary: Proposed P3 durable self inbox (yak.inbox).
+      summary: P3 durable self inbox (yak.inbox).
       description: |
         INBOX-001..011. Without a cursor, start at the saved acknowledgment.
         A read never acknowledges. Both returned cursors cover examined hidden
@@ -2516,7 +2517,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
       x-yak:
         capability: yak.inbox
-        status: proposed
+        status: implemented
         authorization: Self only, board visible and read scope; current source read policy and ceiling apply per item and count.
         errors:
           "400 validation_failed": malformed cursor or wrong board or actor
@@ -2529,7 +2530,7 @@ paths:
     post:
       operationId: acknowledgeActorInbox
       tags: [identity]
-      summary: Proposed P3 acknowledgment through an issued boundary (yak.inbox).
+      summary: P3 acknowledgment through an issued boundary (yak.inbox).
       description: |
         INBOX-008. Acknowledges every item through the cursor, including hidden
         items. The saved position never moves backward. No If-Match is needed.
@@ -2557,7 +2558,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
       x-yak:
         capability: yak.inbox
-        status: proposed
+        status: implemented
         idempotency: required
         precondition: none
         authorization: Self only, board visible and read scope; cursor policy and epoch must remain current.

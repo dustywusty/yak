@@ -295,7 +295,7 @@ func (b *btx) insertMessage(m *MessageView, labels map[string]string) error {
 			return err
 		}
 	}
-	return nil
+	return b.enqueueInbox(m, "mention", m.ID, m.Mentions)
 }
 
 // ---- threads ----
@@ -689,6 +689,9 @@ func (s *Service) EditMessage(ctx context.Context, p *Principal, boardID, messag
 			if _, err := b.Exec(ctx, `INSERT INTO message_mentions(message_id, actor_id) VALUES ($1,$2)`, m.ID, a); err != nil {
 				return nil, err
 			}
+		}
+		if err := b.enqueueInbox(&m, "mention", m.ID, m.Mentions); err != nil {
+			return nil, err
 		}
 		if _, err := b.emit(PendingEvent{Type: "message.edited", ChannelID: m.ChannelID, ThreadID: m.ThreadID, ResourceType: "message", ResourceID: m.ID,
 			Revision: m.Revision, Payload: messageEventPayload(m, t, nil), Facets: []events.Facet{before.facet(t.Labels), m.facet(t.Labels)}}); err != nil {
