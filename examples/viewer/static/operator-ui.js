@@ -57,6 +57,7 @@ export function createOperatorUI({ session, read, route }) {
     if (!current?.task) return;
     const snapshot = current, version = sequence;
     const task = await read('GET', `${snapshot.B}/tasks/${enc(snapshot.task.id)}`);
+    if (!valid(snapshot, version)) return;
     const th = await read('GET', `${snapshot.B}/threads/${enc(task.thread_id)}`);
     if (!valid(snapshot, version)) throw new Error('View changed. Review the task again.');
     return { task, thread: th.thread };
@@ -160,8 +161,12 @@ export function createOperatorUI({ session, read, route }) {
       const refreshed = await refreshTask(); if (!refreshed || !valid(snapshot, version)) return;
       const { task: t, thread } = refreshed;
       // Recheck current eligibility, rather than using a stale enabled button.
+      if (['approve', 'changes'].includes(kind) && (t.state !== 'blocked' || t.direct_action_required !== true)) {
+        if (document.activeElement === source) status.focus();
+        await loadChannel(snapshot.channel, snapshot.threadId, 'This task is no longer a gate.');
+        return;
+      }
       if (['approve', 'flag', 'assign'].includes(kind) && !manager(t)) throw new Error('Manager permission is required.');
-      if (['approve', 'changes'].includes(kind) && (t.state !== 'blocked' || t.direct_action_required !== true)) throw new Error('This task is no longer a gate.');
       if (kind === 'changes' && !values.note?.trim()) throw new Error('Describe the requested changes.');
       if (kind === 'claim' && (t.state !== 'ready' || (t.assignee_actor_id && t.assignee_actor_id !== session.me.actor.id))) throw new Error('This task is not eligible to claim.');
       const next = ({ approve: 'ready or waiting (prerequisites decide)', claim: 'claimed', release: 'ready' })[kind] || t.state;
@@ -169,7 +174,7 @@ export function createOperatorUI({ session, read, route }) {
       const details = `Acting as ${actor(session.me.actor.id)}\nTask: ${t.title}\nChannel: ${t.channel_path}\nState: ${t.state} → ${next}\nAssignee: ${actor(t.assignee_actor_id)}\nClaim holder: ${actor(t.current_claim?.actor_id)}\nRevision: ${t.revision}; brief: ${t.brief_revision}${extra}`;
       const spec = taskIntent(kind, snapshot.B, t, { ...values, root: thread.root_message_id }); spec.labels = structuredClone(thread.labels || {});
       confirmation(name, details, spec, source);
-    } catch (e) { say(e.status === 404 ? 'Item gone or hidden.' : e.message); }
+    } catch (e) { if (valid(snapshot, version)) say(e.status === 404 ? 'Item gone or hidden.' : e.message); }
   }
   function action(name, kind, values) { const b = writeButton(name, () => { const v = typeof values === 'function' ? values() : values; confirmTask(kind, kind === 'claim' ? 'Claim' : kind === 'assign' ? `Assign to @${session.me.actor.handle}` : name, b, v); }); return b; }
   function taskControls(t, out) {
@@ -281,7 +286,8 @@ export function createOperatorUI({ session, read, route }) {
     selectors.querySelector('.op-channel').replaceChildren();
     selectors.querySelector('.op-thread').replaceChildren();
   }
-  async function loadChannel(channel, threadId) {
+  async function loadChannel(channel, threadId, notice = '') {
+    say(notice);
     const version = ++sequence;
     dismissConfirmations(); resetDestination();
     const snapshot = current = Object.freeze({ ...current, channel, threadId, thread: null, task: null });
@@ -330,9 +336,15 @@ export function createOperatorUI({ session, read, route }) {
         const canCreate = rights('task_manage') && session.server.capabilities?.includes('yak.tasks');
         content.append(rights('post') ? disclosure(canCreate ? 'Reply or create a task' : 'Reply', composer()) : composer());
       } else content.append(...entries, composer());
-    } catch (e) { if (version === sequence) say(e.status === 404 ? 'Item gone or hidden.' : `Read failed: ${e.message}`); }
+    } catch (e) {
+      if (version === sequence && session.active && !session.ending) {
+        const reason = e.status === 404 ? 'Item gone or hidden.' : `Read failed: ${e.message}`;
+        say([notice, reason].filter(Boolean).join(' '));
+      }
+    }
   }
   async function loadBoard(id, channel, thread) {
+    say('');
     const version = ++sequence;
     dismissConfirmations();
     refresh.disabled = true;
@@ -351,7 +363,7 @@ export function createOperatorUI({ session, read, route }) {
   async function open(context = route()) {
     if (!session.active || session.ending) return;
     close(); opener = document.activeElement;
-    status = h('p', { role: 'status' }); content = h('div', {});
+    status = h('p', { role: 'status', tabindex: '-1' }); content = h('div', {});
     refresh = button('Refresh permissions and state', () => current?.channel && loadChannel(current.channel, current.threadId));
     refresh.disabled = true;
     review = h('div', { class: 'op-review' });
