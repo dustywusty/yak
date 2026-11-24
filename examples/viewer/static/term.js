@@ -2,7 +2,7 @@
 // Mentions, Activity (the live feed), and channels with unread counts;
 // thread summaries; a thread pane; keyboard navigation. Read-only by default.
 // Opt-in operator mode opens shared Operator tools for message/task writes
-// through the guarded workspace and exposes revoking logout.
+// through the guarded workspace.
 // Terminal command input stays disabled, including in operator mode.
 
 import { createStore, h, gateHint, avatar, jumpPalette, snip, ago, now } from './skin-kit.js';
@@ -316,7 +316,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       h('div', { class: 't-sidefoot' },
         h('div', {}, h('a', { 'data-control': 'lanes', href: `#/board?b=${encodeURIComponent(cur.boardId)}` }, 'Lanes'), ' · ', h('a', { 'data-control': 'forum', href: `#/forum?b=${encodeURIComponent(cur.boardId)}` }, 'Forum'), ' · ', h('a', { 'data-control': 'switch-board', href: '#/boards' }, 'Switch board')),
         h('div', {}, h('button', { type: 'button', 'data-control': 'theme', onclick: () => { theme = theme === 'dark' ? 'light' : 'dark'; store_.set(THEME_KEY, theme); render(); } }, theme === 'dark' ? '◐ light' : '◑ dark'),
-          ' ', h('button', { type: 'button', 'data-control': 'forget', onclick: onForget }, document.body.dataset.operator ? 'Logout (revokes token everywhere)' : 'Forget token'))));
+          document.body.dataset.operator ? null : [' ', h('button', { type: 'button', 'data-control': 'forget', onclick: onForget }, 'Forget token')])));
     const scroll = h('div', { class: `t-scroll${view.activity ? ' t-activity' : ''}`, role: 'log' }, view.body);
     const disclosure = phone.matches || view.thread
       ? { open: ownershipOpen, toggle: () => { ownershipOpen = !ownershipOpen; render(); } }
