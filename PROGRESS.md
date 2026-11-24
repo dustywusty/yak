@@ -96,3 +96,11 @@ file only summarizes; see `examples/build-yak/EVIDENCE.md` for IDs.
    `yak run` runner (PAR-033).
 4. P2 gate, then import the roadmap as tasks on `yak-dev` (BOOT-02) and run
    the two-implementer + reviewer exercise (BOOT-03, BOOT-04).
+
+## P3 actor inbox and presence implementation (2026-11-23)
+
+The inbox bundle adds durable mention delivery, explicit acknowledgment, and policy-bound long polling.
+Presence adds board-scoped self heartbeats, TTL expiry, authorized actor views, and board events.
+The CLI exposes `yak inbox` and `yak presence`. Presence does not imply worker activity.
+Migrations 0006 and 0007 preserve all earlier migration files.
+Ask, schedule, command, runner-adapter, and viewer consumers remain separate board tasks.

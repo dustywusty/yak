@@ -270,7 +270,7 @@ func (a *API) discovery(w http.ResponseWriter, r *http.Request) {
 	caps := []string{
 		"yak.boards", "yak.channels", "yak.channels.private", "yak.grants", "yak.actors", "yak.credentials", "yak.credentials.restrictions",
 		"yak.threads", "yak.messages", "yak.messages.guarded_reply", "yak.messages.tombstones",
-		"yak.labels", "yak.labels.conditional", "yak.mentions", "yak.inbox",
+		"yak.labels", "yak.labels.conditional", "yak.mentions", "yak.inbox", "yak.presence",
 		"yak.events.catchup", "yak.events.long_poll", "yak.snapshots", "yak.idempotency", "yak.audit",
 		"yak.tasks", "yak.tasks.claims", "yak.tasks.claim_next", "yak.tasks.batches", "yak.tasks.dependencies", "yak.tasks.briefs",
 	}
@@ -288,25 +288,28 @@ func (a *API) discovery(w http.ResponseWriter, r *http.Request) {
 		"implementation": map[string]any{"name": "yak-reference", "version": c.Version, "schema_version": postgres.RequiredVersion()},
 		"capabilities":   caps,
 		"limits": map[string]any{
-			"max_request_bytes":           maxBody,
-			"max_text_bytes":              c.MaxTextBytes,
-			"max_title_bytes":             c.MaxTitleBytes,
-			"max_labels_per_message":      c.MaxLabelsPerMessage,
-			"max_label_key_bytes":         64,
-			"max_label_value_bytes":       c.MaxLabelValueBytes,
-			"max_channel_path_bytes":      255,
-			"max_page_size":               c.MaxPageSize,
-			"max_wait_ms":                 c.MaxWait.Milliseconds(),
-			"snapshot_max_items":          c.SnapshotMaxItems,
-			"credential_max_ttl_seconds":  int64(c.CredentialMaxTTL / time.Second),
-			"claim_lease_default_seconds": int64(c.ClaimLeaseDefault / time.Second),
-			"claim_lease_min_seconds":     int64(c.ClaimLeaseMin / time.Second),
-			"claim_lease_max_seconds":     int64(c.ClaimLeaseMax / time.Second),
-			"max_batch_tasks":             c.MaxBatchTasks,
-			"max_dependencies_per_task":   c.MaxDependenciesPerTask,
-			"max_task_result_bytes":       c.MaxTaskResultBytes,
-			"max_evidence_items":          c.MaxEvidenceItems,
-			"max_claim_wait_ms":           c.MaxClaimWait.Milliseconds(),
+			"presence_ttl_default_seconds": domain.PresenceTTLDefault,
+			"presence_ttl_min_seconds":     domain.PresenceTTLMin,
+			"presence_ttl_max_seconds":     domain.PresenceTTLMax,
+			"max_request_bytes":            maxBody,
+			"max_text_bytes":               c.MaxTextBytes,
+			"max_title_bytes":              c.MaxTitleBytes,
+			"max_labels_per_message":       c.MaxLabelsPerMessage,
+			"max_label_key_bytes":          64,
+			"max_label_value_bytes":        c.MaxLabelValueBytes,
+			"max_channel_path_bytes":       255,
+			"max_page_size":                c.MaxPageSize,
+			"max_wait_ms":                  c.MaxWait.Milliseconds(),
+			"snapshot_max_items":           c.SnapshotMaxItems,
+			"credential_max_ttl_seconds":   int64(c.CredentialMaxTTL / time.Second),
+			"claim_lease_default_seconds":  int64(c.ClaimLeaseDefault / time.Second),
+			"claim_lease_min_seconds":      int64(c.ClaimLeaseMin / time.Second),
+			"claim_lease_max_seconds":      int64(c.ClaimLeaseMax / time.Second),
+			"max_batch_tasks":              c.MaxBatchTasks,
+			"max_dependencies_per_task":    c.MaxDependenciesPerTask,
+			"max_task_result_bytes":        c.MaxTaskResultBytes,
+			"max_evidence_items":           c.MaxEvidenceItems,
+			"max_claim_wait_ms":            c.MaxClaimWait.Milliseconds(),
 		},
 		"retention": map[string]any{
 			"idempotency_seconds": int64(c.IdempotencyRetention / time.Second),
@@ -493,6 +496,7 @@ func (a *API) routes() {
 	a.boardRoutes()
 	a.taskRoutes()
 	a.inboxRoutes()
+	a.presenceRoutes()
 }
 
 func (a *API) boardRoutes() {

@@ -326,11 +326,10 @@ the flag preserves its value. Batch and plan JSON accept the same boolean
 on each task item. Task text and JSON views show the flag. Flagged reopen
 creates a fresh block and preserves the flag (DLG-099).
 
-## P3 inbox and proposed presence (ADR-0021)
+## P3 inbox and presence (ADR-0021)
 
 These commands require discovery capabilities `yak.inbox` and
-`yak.presence` respectively. Inbox commands are implemented. Presence
-commands remain proposed.
+`yak.presence` respectively. Both command groups are implemented.
 
 | Command | Contract |
 |---|---|
@@ -353,3 +352,9 @@ reason and exits with the existing resynchronization code (8). The consumer rest
 without a cursor from its saved server acknowledgment. It never jumps to
 the latest item. Presence text uses `online`, `away`, or `offline` with
 last-seen and expiry timestamps. It does not infer worker activity.
+
+Presence text output shows the actor, published state, last heartbeat, and expiry.
+An absent heartbeat shows offline with no timestamps. Global actor identity remains separate.
+`presence set` accepts `--idempotency-key` for explicit retries. A replay does not extend the TTL.
+An explicit `--ttl` must use whole seconds from 15s through 300s. Offline rejects `--ttl`.
+Presence does not prove that a worker runs or that the actor will answer.

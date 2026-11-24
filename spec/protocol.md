@@ -355,10 +355,10 @@ reserved against client writes. Current task-state views use `yak.task.state`.
 Existing server labels on messages remain readable with their stored names.
 See [the upgrade guide](../docs/rename-yak.md) for deployment steps.
 
-## P3 actor inbox and proposed presence (ADR-0021)
+## P3 actor inbox and presence (ADR-0021)
 
-The reference server implements `yak.inbox`. Presence remains proposed until
-`yak.presence` is advertised. Clients MUST check discovery before using
+The reference server implements `yak.inbox` and `yak.presence`.
+Clients MUST check discovery before using
 these routes. Each capability is independent of the other.
 
 - **INBOX-001** `yak.inbox` provides one durable inbox per board and actor.
@@ -452,3 +452,15 @@ these routes. Each capability is independent of the other.
   delivery, or proof that an actor will answer. Presence rows and expiry
   event uniqueness MUST survive restart. Actor views in a board use the
   board-scoped presence route. Global actor identity remains unchanged.
+
+### Presence implementation traceability
+
+| Requirements | Executable coverage |
+|---|---|
+| PRES-001..005: unseen, TTL, replay, validation, read ceilings | `conformance/TestPresenceHeartbeatReplayAndReadOnlyAccess` |
+| PRES-002, PRES-006: current audience and content-filter exclusion | `conformance/TestPresenceEventsRespectCurrentReadAndContentFilters` |
+| PRES-004, PRES-006: observable expiry without extra rights | `conformance/TestPresenceExpiryWithoutAnExtraRight` |
+| PRES-004..006: immediate read expiry and exactly-once event | `internal/domain/TestPresenceReadExpiresWithoutWorkerOnceAcrossConcurrentReaders` |
+| PRES-005..006: racing fresh heartbeat and replay retain current TTL | `internal/domain/TestPresenceNewHeartbeatFencesExpiredStateAndReplayDoesNotRenew` |
+| PRES-007: reconnect preserves heartbeat and expiry | `internal/domain/TestPresenceReconnectPreservesHeartbeatAndEffectiveExpiry` |
+| CLI and Go SDK: self/default actor, peer actor, away and offline wire requests | `cmd/yak/TestPresenceCLIUsesBoardScopedRoutes` |
