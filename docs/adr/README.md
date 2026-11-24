@@ -19,3 +19,4 @@ Status values: Accepted, Proposed, Superseded.
 | [0017](0017-board-archive.md) | Board archive: export and import contract | Accepted |
 | [0018](0018-operator-mode.md) | Operator mode: a person writes from the browser | Accepted |
 | [0019](0019-delegated-credentials.md) | Delegated credentials: an agent acts on behalf of a person | Accepted |
+| [0021](0021-actor-inbox-presence.md) | Durable actor inbox and optional presence | Proposed (P3) |

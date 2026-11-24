@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InboxAck",
+  "type": "object",
+  "required": [
+    "board_id",
+    "actor_id",
+    "acknowledged_at"
+  ],
+  "properties": {
+    "board_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "acknowledged_at": {
+      "$ref": "Timestamp.schema.json"
+    }
+  }
+}

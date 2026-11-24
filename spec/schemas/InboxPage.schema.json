@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InboxPage",
+  "type": "object",
+  "required": [
+    "items",
+    "next_cursor",
+    "ack_cursor",
+    "caught_up",
+    "timed_out",
+    "unread_count"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "InboxItem.schema.json"
+      }
+    },
+    "next_cursor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ack_cursor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "caught_up": {
+      "type": "boolean"
+    },
+    "timed_out": {
+      "type": "boolean"
+    },
+    "unread_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "timed_out": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "maxItems": 0
+          },
+          "caught_up": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
+}

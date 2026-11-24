@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PresenceHeartbeatRequest",
+  "type": "object",
+  "required": [
+    "state"
+  ],
+  "properties": {
+    "state": {
+      "enum": [
+        "online",
+        "away",
+        "offline"
+      ]
+    },
+    "ttl_seconds": {
+      "type": "integer",
+      "minimum": 15,
+      "maximum": 300
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "offline"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "ttl_seconds"
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}
