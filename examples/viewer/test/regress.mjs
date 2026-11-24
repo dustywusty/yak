@@ -335,6 +335,51 @@ async function checkChatJump(until) {
   await until("location.hash.endsWith('?v=activity') && !document.querySelector('.jump')");
 }
 
+async function checkThreadOwnership(until) {
+  const thread = '#/b/brd_test?ch=ops&t=thr_ops&m=thr_ops_m2';
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html' + thread });
+  await until("document.querySelector('#tm-thr_ops_m2.t-target')");
+  await ev(`window.toggle = () => document.querySelector('.a-toggle');
+    window.details = () => document.getElementById(toggle().getAttribute('aria-controls'));
+    window.inChat = el => {
+      const pane = document.querySelector('.t-scroll').getBoundingClientRect(), r = el.getBoundingClientRect();
+      return r.height > 0 && r.top >= pane.top && r.bottom <= Math.min(pane.bottom, innerHeight);
+    }`);
+  const compact = await ev(`toggle()?.checkVisibility() && toggle().textContent === 'Show details' &&
+    toggle().getAttribute('aria-expanded') === 'false' && !details().checkVisibility() &&
+    document.querySelector('.a-counts').innerText.includes('2 claimed tasks')`);
+  check('Desktop thread opens with ownership counts and a collapsed Show details button', compact);
+  check('The opening pane shows the thread title, root and highlighted reply', await ev(`
+    document.querySelector('.t-h1').getBoundingClientRect().top < 420 &&
+    ['.t-h1', '#tm-thr_ops_m1', '#tm-thr_ops_m2.t-target'].every(s => inChat(document.querySelector(s)))`));
+  if (!compact) return;
+  await ev('toggle().focus()');
+  for (const expanded of [true, false, true]) {
+    await chatKey('Enter', 13);
+    await ev(`window.oldToggle = toggle(); window.__taskEvent('task_second', { updated_at: new Date().toISOString() })`);
+    await until('!oldToggle.isConnected');
+    check(`Ownership stays ${expanded ? 'expanded' : 'collapsed'} and focused after redraw`, await ev(`
+      document.activeElement === toggle() && toggle().getAttribute('aria-expanded') === '${expanded}' &&
+      details().checkVisibility() === ${expanded} && location.hash === ${JSON.stringify(thread)} &&
+      inChat(document.querySelector('#tm-thr_ops_m2.t-target'))`));
+  }
+  check('Expanded ownership includes reasons, clocks, activity qualification and freshness', await ev(`
+    ['waiting on @alice', 'Claim held for', 'Worker activity unavailable', 'Current task claims and waits'].every(s => details().innerText.includes(s))`));
+  await ev(`window.__fake.holdTask = 'task_work'; window.__taskEvent('task_work', { current_claim: {
+    ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() - 1000).toISOString() } })`);
+  await until("details().innerText.includes('Status unconfirmed')");
+  await ev('window.__fake.disconnected = true');
+  await until("details().innerText.includes('Last known data')");
+  check('Expanded ownership identifies stale data and expired claims', await ev(`
+    details().innerText.includes('last reported claim') && document.querySelector('.a-counts').innerText.includes('1 to confirm')`));
+  for (const route of ['?v=activity', '?ch=ops']) {
+    await go('#/b/brd_test' + route);
+    check(`Desktop ${route} shows full ownership by default`, await ev(`
+      !toggle()?.checkVisibility() && document.querySelector('.a-freshness').checkVisibility()`));
+  }
+}
+
 async function checkChatHelp(until) {
   const thread = '#/b/brd_test?ch=ops&t=thr_ops&m=thr_ops_m2';
   for (const width of [390, 1280]) {
@@ -1052,6 +1097,7 @@ try {
   await checkChatJump(until);
   await checkChatChannels(until);
   await checkChatHelp(until);
+  await checkThreadOwnership(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));

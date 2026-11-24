@@ -41,7 +41,10 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   const go = (r) => { location.hash = href({ board: cur.boardId, ...r }); };
 
   async function mount(r) {
-    if (route.key !== r.key) sideOpen = false;
+    if (route.key !== r.key) {
+      sideOpen = false;
+      if (!phone.matches) ownershipOpen = false;
+    }
     route = r;
     let boardId = r.board;
     if (!boards.length || !boardId) boards = (await api('GET', '/v1/boards')).boards;
@@ -205,10 +208,11 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
 
   function threadView() {
     const t = st().thread(route.t);
-    if (!t) return { head: [h('b', {}, 'Thread')], body: [h('p', { class: 't-mute t-pad' }, 'Thread not found or not visible.')], composer: 'Reply…' };
+    if (!t) return { thread: true, head: [h('b', {}, 'Thread')], body: [h('p', { class: 't-mute t-pad' }, 'Thread not found or not visible.')], composer: 'Reply…' };
     const msgs = st().messages(t.id), byId = new Map(msgs.map((m) => [m.id, m]));
     const root = msgs.find((m) => m.is_root), replies = msgs.filter((m) => !m.is_root);
     return {
+      thread: true,
       head: [h('b', {}, 'Thread'), h('span', { class: 't-mute' }, ` # ${t.channel_path}`), h('span', { class: 't-spacer' }),
         h('a', { class: 't-close', 'data-control': 'close', href: href({ board: cur.boardId, ch: t.channel_path }), title: 'Close (Esc)', 'aria-label': 'Close thread' }, '×')],
       body: [h('h1', { class: 't-h1' }, t.title), labels(t.labels), root ? message(root, byId) : null, taskChip(taskOf(t.id)),
@@ -258,6 +262,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
   phone.addEventListener('change', () => {
     if (sideOpen) setSideOpen(false);
+    render();
   });
   // Capture stable identities before a render detaches the focused node.
   function rememberFocus(active) {
@@ -313,7 +318,10 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
         h('div', {}, h('button', { type: 'button', 'data-control': 'theme', onclick: () => { theme = theme === 'dark' ? 'light' : 'dark'; store_.set(THEME_KEY, theme); render(); } }, theme === 'dark' ? '◐ light' : '◑ dark'),
           ' ', h('button', { type: 'button', 'data-control': 'forget', onclick: onForget }, document.body.dataset.operator ? 'Logout (revokes token everywhere)' : 'Forget token'))));
     const scroll = h('div', { class: `t-scroll${view.activity ? ' t-activity' : ''}`, role: 'log' }, view.body);
-    activity = createAgentActivity(st(), href, status, { open: ownershipOpen, toggle: () => { ownershipOpen = !ownershipOpen; render(); } });
+    const disclosure = phone.matches || view.thread
+      ? { open: ownershipOpen, toggle: () => { ownershipOpen = !ownershipOpen; render(); } }
+      : null;
+    activity = createAgentActivity(st(), href, status, disclosure);
     const main = h('section', { class: 't-main', inert: sideOpen },
       h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', 'data-control': 'channels', 'aria-controls': side.id,
         'aria-expanded': String(sideOpen), onclick: () => setSideOpen(true) }, '☰'), view.head),
