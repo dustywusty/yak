@@ -56,9 +56,20 @@ export function operatorFixture() {
   const actors=[{id:'a',handle:'alice',kind:'human'},{id:'bot',handle:'bot',kind:'agent'}];
   const thread={id:'th',board_id:B,channel_path:'ops',title:'<img onerror=alert(1)> gate',root_message_id:'root',labels:{gate:'pending'},task_id:'t',revision:1,updated_at:iso(),created_at:iso()};
   const task={id:'t',board_id:B,thread_id:'th',channel_path:'ops',title:thread.title,owner_actor_id:'a',assignee_actor_id:null,current_claim:null,revision:3,brief_revision:1,state:'blocked',direct_action_required:true,block:{reason:'waiting for review'},dependencies:[],created_at:iso(),state_changed_at:iso()};
-  const root={id:'root',thread_id:'th',channel_path:'ops',seq:1,is_root:true,author_actor_id:'a',created_at:iso(),revision:1,text:'<script>window.pwned=1</script>',mentions:[],labels:thread.labels,attribution:{credential_id:'cred_test'}};
+  const root={id:'root',thread_id:'th',channel_path:'ops',seq:1,is_root:true,author_actor_id:'a',created_at:iso(),revision:1,text:'<script>window.pwned=1</script>',mentions:[],labels:{...thread.labels},attribution:{credential_id:'cred_test'}};
   const T=window.__op={writes:[],task,thread,root,events:[],expired:false,failLabel:0,conflict:false,dropUnblock:false,seenKeys:[],revoked:false,kind:'human',scope:null,flags:true,resync:false,snapshots:0,authFailures:0};
   const json=(b,status=200)=>new Response(status===204?null:JSON.stringify(b),{status,headers:{Date:T.renewDate || new Date(Date.now()+(T.clock?.now() || 0)).toUTCString(),'Content-Type':'application/json'}});
+  let eventNumber = 0;
+  const unblockReceipts = new Map();
+  function emit(type, resourceType, resource, payload) {
+    T.events.push({id:`gate-event-${++eventNumber}`,type,board_id:B,thread_id:thread.id,
+      channel_path:thread.channel_path,actor_id:'a',credential_id:'cred_test',recorded_at:iso(),
+      resource:{type:resourceType,id:resource.id,revision:resource.revision},payload:JSON.parse(JSON.stringify(payload))});
+  }
+  function invalidateThread(reason, before, after) {
+    thread.labels = {...after};
+    emit('thread.view_invalidated','thread',thread,{thread,reason,labels_before:before,labels_after:after});
+  }
   window.fetch=async(url,opts={})=>{
     const u=new URL(url,location.href),p=u.pathname,m=opts.method||'GET';
     if(p==='/viewer-config')return json({operator:true});
@@ -114,7 +125,13 @@ export function operatorFixture() {
     }
     if(p===`/v1/boards/${B}/tasks/t/unblock`) {
       if(m!=='POST')return json({},405);
-      T.seenKeys.push(opts.headers['Idempotency-Key']);
+      const key = opts.headers['Idempotency-Key'], guard = opts.headers['If-Match'];
+      T.seenKeys.push(key);
+      const receipt = unblockReceipts.get(key);
+      if (receipt) {
+        if (receipt.guard !== guard || receipt.reason !== body.reason) return json({code:'idempotency_conflict'},409);
+        return json(receipt.task);
+      }
       if(T.conflict){
         T.conflict=false;
         T.conflictCapture={intent:structuredClone(T.writes.at(-1)),writeCount:T.writes.length,before:structuredClone(task)};
@@ -122,7 +139,17 @@ export function operatorFixture() {
         T.conflictCapture.after=structuredClone(task);
         return json({code:'revision_conflict',revision:task.revision},412);
       }
-      if(task.state==='blocked'){task.state='ready';task.revision++;T.events.push({id:'approved',type:'task.unblocked',actor_id:'a',credential_id:'cred_test',recorded_at:iso(),payload:{task:{...task},reason:body.reason}});}
+      if (guard !== `"${task.revision}"`) return json({code:'revision_conflict',revision:task.revision},412);
+      if (task.state !== 'blocked') return json({code:'invalid_transition'},409);
+      const before = {...root.labels,'yak.task.state':task.state};
+      task.state = task.dependencies.every(d => d.state === 'completed') && !task.unreadable_dependencies_pending ? 'ready' : 'waiting';
+      task.block = null;
+      task.revision++;
+      task.updated_at = task.state_changed_at = iso();
+      root.labels = {...root.labels,'yak.task.state':task.state};
+      emit('task.unblocked','task',task,{task,reason:body.reason});
+      invalidateThread('task_state_changed',before,root.labels);
+      if (key) unblockReceipts.set(key,{guard,reason:body.reason,task:JSON.parse(JSON.stringify(task))});
       if(T.dropUnblock){T.dropUnblock=false;throw new TypeError('dropped response')}
       return json(task);
     }
@@ -149,7 +176,22 @@ export function operatorFixture() {
         return json({code:'revision_conflict',key:'gate',current:T.labelFault.current || 'changes_requested'},T.labelFault.status);
       }
       if(T.failLabel){T.failLabel--;return json({code:'revision_conflict',key:'gate',current:root.labels.gate ?? null},412)}
-      for(const op of body.operations) {const key=op.key.toLowerCase();if(op.op==='unset')delete root.labels[key];else root.labels[key]=op.value;}return json(root);
+      const before = root.labels, after = {...before};
+      for (const op of body.operations) {
+        const key = op.key.toLowerCase();
+        if (op.op === 'unset') delete after[key];
+        else after[key] = op.value;
+      }
+      if (Object.keys(before).length === Object.keys(after).length &&
+          Object.keys(before).every(key => before[key] === after[key])) return json(root);
+      root.labels = after;
+      root.revision++;
+      emit('message.labels_changed','message',root,{message:root,thread_title:thread.title,task_id:task.id,
+        labels_before:before,labels_after:after});
+      thread.revision++;
+      thread.updated_at = iso();
+      invalidateThread('root_labels_changed',before,after);
+      return json(root);
     }
     if(p===`/v1/boards/${B}/tasks/t/claims`){if(m!=='POST')return json({},405);if(!only(body,['lease_seconds','expect_brief_revision'])||!lease())return invalid();task.state='claimed';task.current_claim={id:T.claimId || 'q',actor_id:'a',lease_seconds:T.testLease || 300,acquired_at:iso(),expires_at:new Date(now+300000).toISOString()};return json({claim:task.current_claim,proof:T.claimProof || 'fake-secret-proof',task,brief:{revision:1}})}
     if(p===`/v1/boards/${B}/tasks/t/claims/${encodeURIComponent(T.claimId || 'q')}/renew`) {
