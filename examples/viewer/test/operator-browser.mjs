@@ -43,8 +43,8 @@ let id = 0; const pending = new Map(); const errors = [];
 browser.addEventListener('message', (m) => {
   const d = JSON.parse(m.data);
   if (d.id && pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); }
-  if (d.method === 'Runtime.exceptionThrown') errors.push(d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text);
-  if (d.method === 'Runtime.consoleAPICalled' && d.params.type === 'error') errors.push(`console.error: ${d.params.args.map((a) => a.description || a.value).join(' ')}`);
+  if (d.method === 'Runtime.exceptionThrown') errors.push('uncaught browser exception');
+  if (d.method === 'Runtime.consoleAPICalled' && d.params.type === 'error') errors.push('console.error');
 });
 let session, op17028FixtureInstallations=0;
 const cmd = (method, params = {}) => new Promise((r) => {
@@ -102,7 +102,7 @@ async function matrix(action,named=action,setup='',report=check,reject=false){
  const n=await count();
  await op17027TextFields('.op-workspace',action,check);check(`${action}: Enter in text fields sends nothing`,await count()===n);
  const details=await op17030ExpectedDetails(action);
- const inspect=async()=>{const actual=await ev("document.querySelector('.op-confirm pre').textContent");check(`${action}: exact confirmed read values`,actual===details,JSON.stringify({expected:details,actual}));};
+ const inspect=async()=>{const actual=await ev("document.querySelector('.op-confirm pre').textContent");check(`${action}: exact confirmed read values`,actual===details);};
  await click(action);await until("!!document.querySelector('.op-confirm[open]')");
  check(`${action}: no write on open`,await count()===n);
  await inspect();
@@ -193,7 +193,7 @@ async function op17033ConflictCase() {
    const drained=await ev('window.__op.drainConflictClock()');
    assert(`${phase}: controlled timers and refresh completions drained`,drained.fired>0 && drained.reads===0 && await ev('window.__op.clockProbe'));
    const writes=await actionWrites();
-   assert(`${phase}: zero further action writes`,writes.length===1,JSON.stringify(writes));
+   assert(`${phase}: zero further action writes`,writes.length===1,`writes=${writes.length}`);
    assert(`${phase}: rejected request headers and body remain unchanged`,JSON.stringify(writes[0])===JSON.stringify(capture.intent));
   };
   await noRepeat('after 412');
@@ -218,7 +218,7 @@ async function op17033ConflictCase() {
   await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
   await ev('window.__op.drainConflictClock()');
   const writes=await actionWrites(),unblocks=writes.filter(w=>w.path.endsWith('/unblock'));
-  assert('fresh confirmation adds exactly one new state-changing intent',writes.length===3 && unblocks.length===2 && writes[2].method==='PATCH' && writes[2].path==='/v1/boards/brd_test/messages/root/labels' && writes[2].body.operations[0].value==='approved',JSON.stringify(writes));
+  assert('fresh confirmation adds exactly one new state-changing intent',writes.length===3 && unblocks.length===2 && writes[2].method==='PATCH' && writes[2].path==='/v1/boards/brd_test/messages/root/labels' && writes[2].body.operations[0].value==='approved',`writes=${writes.length}`);
   assert('new explicit unblock uses latest exact revision and a new key',unblocks[1]?.headers['If-Match']==='"834"' && /^[a-f0-9]{32}$/.test(unblocks[1]?.headers['Idempotency-Key']) && unblocks[1]?.headers['Idempotency-Key']!==capture.intent.headers['Idempotency-Key']);
   assert('original rejected If-Match never changes',unblocks[0]?.headers['If-Match']==='"833"' && JSON.stringify(unblocks[0])===JSON.stringify(capture.intent));
   assert('new intent succeeds against changed task',await ev("window.__op.task.state==='ready' && window.__op.task.assignee_actor_id==='bot' && window.__op.task.revision===835"));
@@ -349,7 +349,7 @@ async function op17026Matches(before,expected) {
  const actual=writes.map(w=>({...w,headers:Object.fromEntries(Object.entries(w.headers || {}).filter(([k])=>/^if-/i.test(k) || k.toLowerCase()==='yak-claim-proof'))}));
  const canonical=value=>JSON.stringify(value,(_key,v)=>v && !Array.isArray(v) && typeof v==='object'?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
  const ok=canonical(actual)===canonical(expected) && keys.every(k=>typeof k==='string' && k.length>=22) && new Set(keys).size===expected.length;
- if(!ok)console.log('OP17-026 wire mismatch',JSON.stringify({actual,expected,keyCount:keys.length,uniqueKeys:new Set(keys).size}));
+ if(!ok)console.log('OP17-026 wire mismatch',JSON.stringify({writes:writes.length,expected:expected.map(({method,path})=>({method,path})),uniqueKeys:new Set(keys).size}));
  return ok;
 }
 async function op17026ConfirmationCase() {
@@ -538,7 +538,7 @@ async function identityNavigationCase() {
    const controls = await ev(`Array.from(document.querySelectorAll('button'))
     .filter(b => b.checkVisibility() && /logout|revoke.*token|forget token/i.test(b.textContent))
     .map(b => b.id || b.dataset.control)`);
-   assert(`${view} exposes one session exit`, JSON.stringify(controls)==='["operator-logout"]', JSON.stringify(controls));
+   assert(`${view} exposes one session exit`, JSON.stringify(controls)==='["operator-logout"]', `controls=${controls.length}`);
    await ev("document.querySelector('#operator-tools').focus()");
    await cmd('Input.dispatchKeyEvent', {type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
    await cmd('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
@@ -778,7 +778,7 @@ async function boardSwitchCase() {
     const n = await count(); await click(name); if(named) await confirm(named);
     await until(`window.__op.writes.length>${n}`);
     assert(`new B ${name} uses B destination`,await ev(`window.__op.writes.at(-1).path===${JSON.stringify('/v1/boards/brd_other'+suffix)}`));
-    if(name==='Create task') assert('new B task uses B channel',await ev("window.__op.writes.at(-1).body.thread.channel==='other'"),JSON.stringify(await ev('window.__op.writes.at(-1)')));
+    if(name==='Create task') assert('new B task uses B channel',await ev("window.__op.writes.at(-1).body.thread.channel==='other'"));
    }
    await discloseWorkspace();
    await ev("{const s=document.querySelector('.op-workspace select[aria-label=Thread]');s.value='';s.dispatchEvent(new Event('change'));}");
@@ -1349,7 +1349,6 @@ async function labelOpcodeCase() {
    assert(`${c.name}: original expectation`, JSON.stringify(op.expect)===JSON.stringify(c.old===undefined?{absent:true}:{value:c.old}));
    assert(`${c.name}: value only for set`, c.action==='Set label'?op.value==='low':!Object.hasOwn(op,'value'));
    assert(`${c.name}: fixture applies supported operation`, await ev(c.action==='Set label'?"window.__op.root.labels.priority==='low'":"!Object.hasOwn(window.__op.root.labels,'priority')"));
-   console.log(`OP17-035 WIRE ${JSON.stringify(writes[0].body)}`);
   } finally {
    await ev("document.querySelector('#operator-logout')?.click()");
    await until('!!document.body && !document.body.dataset.operator');
@@ -1379,12 +1378,12 @@ async function gateEvidenceCase() {
    await open();
    await until("!!document.querySelector('.op-workspace') && document.querySelector('.op-workspace').textContent.includes('Task event history')");
    const workspace = await ev("document.querySelector('.op-workspace').textContent");
-   assert(`${c.name}: workspace approval`, workspace.includes('Approved by ')===c.approved, workspace);
+   assert(`${c.name}: workspace approval`, workspace.includes('Approved by ')===c.approved);
    if (c.candidate.type==='task.unblocked') {
     const eventApproval = gate.name===c.name || c.name.startsWith('latest ') || c.name.startsWith('approval after ');
     const feed = await ev("[...document.querySelectorAll('#feed li')].find(li=>li.querySelector('.type')?.textContent==='task.unblocked')?.querySelector('.snippet')?.textContent");
-    assert(`${c.name}: feed gate evidence`, !!feed && feed.includes("not a person's approval")===!eventApproval, feed);
-    assert(`${c.name}: timeline gate evidence`, workspace.includes("not a person's approval")===!eventApproval, workspace);
+    assert(`${c.name}: feed gate evidence`, !!feed && feed.includes("not a person's approval")===!eventApproval);
+    assert(`${c.name}: timeline gate evidence`, workspace.includes("not a person's approval")===!eventApproval);
    } else {
     assert(`${c.name}: completion never shows approval in feed`, await ev("![...document.querySelectorAll('#feed .snippet')].some(el=>el.textContent.includes('Approved by '))"));
    }
@@ -1411,8 +1410,8 @@ async function briefGenerationCase() {
    await open();
    await until("!!document.querySelector('.op-workspace') && document.querySelector('.op-workspace').textContent.includes('Task event history')");
    const workspace = await ev("document.querySelector('.op-workspace').textContent");
-   assert(`${c.name}: current approval`, workspace.includes('Approved by ')===!!c.approval, workspace);
-   if (!c.approval) assert(`${c.name}: explicitly not approved`, workspace.includes('not approved'), workspace);
+   assert(`${c.name}: current approval`, workspace.includes('Approved by ')===!!c.approval);
+   if (!c.approval) assert(`${c.name}: explicitly not approved`, workspace.includes('not approved'));
    assert(`${c.name}: rendering sends no writes`, await count()===0);
   } finally {
    await ev("document.querySelector('#operator-logout')?.click()");
@@ -1458,12 +1457,12 @@ async function op17009ActorPaginationCase() {
     await sleep(100);
     const text=await ev("[...document.querySelectorAll('#feed li')].find(li=>li.querySelector('.actor')?.textContent.startsWith("+JSON.stringify(variant==='unknown'?'missing-hu':'@alice')+"))?.textContent || ''");
     if (variant==='page two human') {
-     assert('page two human: handle and kind',text.includes('@alice (human)'),text);
-     assert('page two human: direct gate approval',!!text && !text.includes("not a person's approval"),text);
-     assert('page two human: credential time and reason', ['synthetic-page-credential','2026-11-20T00:00:00Z','page two approval'].every(v=>text.includes(v)),text);
+     assert('page two human: handle and kind',text.includes('@alice (human)'));
+     assert('page two human: direct gate approval',!!text && !text.includes("not a person's approval"));
+     assert('page two human: credential time and reason', ['synthetic-page-credential','2026-11-20T00:00:00Z','page two approval'].every(v=>text.includes(v)));
     } else if (variant==='unknown') {
-     assert('unknown: short ID stays unknown',!!text && !text.includes('@alice') && !text.includes('(human)'),text);
-     assert('unknown: never inferred human approval',text.includes("not a person's approval"),text);
+     assert('unknown: short ID stays unknown',!!text && !text.includes('@alice') && !text.includes('(human)'));
+     assert('unknown: never inferred human approval',text.includes("not a person's approval"));
     } else assert('empty terminal: absent human remains unknown',await ev("[...document.querySelectorAll('#feed .actor')].some(el=>el.textContent==='a') && document.querySelector('#feed').textContent.includes(\"not a person's approval\")"));
     assert(`${variant}: all requests use same active signal and max page size`,await ev('window.__op.actorReads.length===2 && window.__op.actorReads.every(r=>r.signal===window.__op.feedReads[0].signal && !r.signal.aborted && r.params.limit===200)'));
     assert(`${variant}: terminal page stops pagination`,await ev('window.__op.actorReads.length===2'));
@@ -1547,13 +1546,13 @@ async function op17010StoreActorsCase() {
    await until(skin==='forum' ? "!!document.querySelector('.f-author')" : "!!document.querySelector('.t-who')");
    await sleep(150);
    const rows = await ev(`Array.from(document.querySelectorAll(${JSON.stringify(skin==='forum'?'.f-author':'.t-who')}),e=>e.textContent)`);
-   assert(`${skin}: page two human message shows handle and kind`,rows.some(t=>t.includes('pageHuman') && t.includes('human')),JSON.stringify(rows));
-   assert(`${skin}: delegated message shows both handles and kinds`,rows.some(t=>t.includes('bot') && t.includes('agent') && t.includes('pagePrincipal') && t.includes('human')),JSON.stringify(rows));
+   assert(`${skin}: page two human message shows handle and kind`,rows.some(t=>t.includes('pageHuman') && t.includes('human')),`rows=${rows.length}`);
+   assert(`${skin}: delegated message shows both handles and kinds`,rows.some(t=>t.includes('bot') && t.includes('agent') && t.includes('pagePrincipal') && t.includes('human')),`rows=${rows.length}`);
    if (skin==='terminal') {
     await ev("location.hash='#/'"); await until("!!document.querySelector('#feed') && document.querySelector('#feed').textContent.includes('page human event')");
     const text = await ev("document.querySelector('#feed').textContent");
-    assert(`${skin}: human task event resolves page two kind`,text.includes('pageHuman (human)'),text);
-    assert(`${skin}: delegated task event resolves both handles`,text.includes('bot (agent) for @pagePrincipal'),text);
+    assert(`${skin}: human task event resolves page two kind`,text.includes('pageHuman (human)'));
+    assert(`${skin}: delegated task event resolves both handles`,text.includes('bot (agent) for @pagePrincipal'));
    } else {
     assert('Forum preserves the delegated opening post', await ev("document.querySelector('.f-opening .f-author').textContent==='@bot (agent) for @pagePrincipal (human)'"));
    }
@@ -1886,11 +1885,11 @@ async function partialApprovalFocusCase() {
    })()`);
    check(name+' fresh selected task, current grants, visible explanation and receipt focus',
     state.selected==='th' && state.manager===(mode==='manager') && !state.obsolete && !state.oldReason &&
-    state.visible && state.focused && await count()===2, JSON.stringify(state));
+    state.visible && state.focused && await count()===2);
    check(name+' complete destination fits the receipt and workspace',
     state.destination==='Pending destination: PATCH /v1/boards/brd_test/messages/root/labels. Retry sends the original values.' &&
     state.documentWidth===width && state.workspaceWidth[0]===state.workspaceWidth[1] &&
-    state.receiptWidth[0]===state.receiptWidth[1] && state.textFits, JSON.stringify(state));
+    state.receiptWidth[0]===state.receiptWidth[1] && state.textFits, JSON.stringify({workspaceWidth:state.workspaceWidth,receiptWidth:state.receiptWidth,documentWidth:state.documentWidth}));
    for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent',{type,key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
    const canRetry=await ev("document.activeElement.matches('.op-pending button') && document.activeElement.textContent==='Retry label only'");
    check(name+' direct keyboard path to label recovery',canRetry);
@@ -2031,18 +2030,18 @@ async function op17028PreviewCase() {
  assert('fixture endpoint is 404 outside preview',(await fetch(ORIGIN+'/fixture.js')).status===404);
  const normalSession=session;
  const preview=spawn(process.execPath,[fileURLToPath(import.meta.url)],{
-  env:{...process.env,VIEWER_PREVIEW:'1'},stdio:['ignore','pipe','pipe'],
+  env:{...process.env,VIEWER_PREVIEW:'1'},stdio:['ignore','pipe','ignore'],
  });
  const exited=new Promise(resolve=>preview.once('exit',(code,signal)=>resolve({code,signal})));
- let stdout='',stderr='',timer,target;
- preview.stdout.on('data',d=>{stdout+=d});preview.stderr.on('data',d=>{stderr+=d});
+ let stdout='',timer,target;
+ preview.stdout.on('data',d=>{stdout+=d});
  // This is an external deadline; never await the preview module itself.
  const deadline=setTimeout(()=>preview.kill('SIGKILL'),15000);
  try {
   const origin=await new Promise((resolve,reject)=>{
    const poll=()=>{const match=/Synthetic viewer: (http:\/\/127\.0\.0\.1:\d+)/.exec(stdout);
     if(match){resolve(match[1]);return}
-    if(preview.exitCode!==null || preview.signalCode!==null){reject(new Error(`preview exited before startup: ${stderr}`));return}
+    if(preview.exitCode!==null || preview.signalCode!==null){reject(new Error('preview exited before startup'));return}
     timer=setTimeout(poll,25);
    };poll();
   });
@@ -2071,7 +2070,7 @@ async function op17028PreviewCase() {
   preview.kill('SIGTERM');
   const stopped=await exited;
   clearTimeout(deadline);
-  assert('external smoke process terminates and is reaped',stopped.signal==='SIGTERM' && preview.signalCode==='SIGTERM',JSON.stringify({stopped,stderr}));
+  assert('external smoke process terminates and is reaped',stopped.signal==='SIGTERM' && preview.signalCode==='SIGTERM',JSON.stringify(stopped));
  }
  assert('normal persistent CDP installation remains exactly once',op17028FixtureInstallations===1);
  assert('all preview and normal assertions execute',assertions===13);
@@ -2207,6 +2206,10 @@ try {
  check('no browser exceptions',errors.length===0,errors.join(' | '));
  }
  for (const [name, run] of operatorCases) if (!selectedCase || name===selectedCase) await run();
-} catch(e) {check('operator browser run',false,[e.message,...errors,await ev("document.querySelector('.op-workspace')?.textContent")].join(' | '));}
+} catch(e) {
+ // Report the harness location without dumping browser errors, DOM text or evaluated expressions.
+ const locations=Array.from((e.stack || '').matchAll(/^\s+at .*operator-browser\.mjs:(\d+:\d+)\)?$/gm),match=>match[1]);
+ check('operator browser run',false,`operator-browser.mjs:${locations.join(' <- ') || 'unknown'}, browser errors=${errors.length}`);
+}
 finally {browser.close();chrome.kill();server.close();await sleep(300);await rm(profile,{recursive:true,force:true}).catch(()=>{});}
 process.exit(failed?1:0);
