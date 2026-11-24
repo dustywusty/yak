@@ -261,7 +261,14 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
       }
       throw e;
     });
-    const [board, actors, channels, me] = await Promise.all([boardRead, all(`${B}/actors`, 'actors'), get(`${B}/channels`), get('/v1/me')]);
+    const [board, actors, channels, me] = await Promise.all([
+      boardRead, all(`${B}/actors`, 'actors'), get(`${B}/channels`), get('/v1/me'),
+    ]).catch(async e => {
+      // Before retrying a sibling failure, let the board read decide access
+      // while its generation is still current. Authentication failures exit immediately.
+      if (onBoardUnavailable && e.status !== 401) await boardRead;
+      throw e;
+    });
     if (abort.signal.aborted) throw new DOMException('Store stopped', 'AbortError');
     Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.map((a) => [a.id, a])),
       threads: new Map(), msgs: new Map(), tasks: new Map(), order: [] });

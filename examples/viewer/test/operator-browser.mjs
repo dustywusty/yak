@@ -568,6 +568,39 @@ async function sessionDirectoryCase() {
   check(`Chat retains both choices when switching to ${board} within a session`, await ev(broad));
  }
 }
+// Settle the initial snapshot requests one at a time, independently of fetch timing.
+async function boardResponseOrderCase() {
+ await freshIdentityFixture();
+ for (const [first, status] of [['board',404], ['actors',404], ['channels',404], ['me',503]]) {
+  const result = await ev(`(async () => {
+   const {createStore} = await import('/skin-kit.js');
+   const requests = {};
+   let recoveries = 0, boardReads = 0;
+   const store = createStore({
+    boardId:'selected',
+    api:(_method,path) => new Promise((_resolve,reject) => {
+     const name = path.split('/').pop();
+     if (name === 'selected') boardReads++;
+     requests[name === 'selected' ? 'board' : name] = code => reject(Object.assign(new Error('fixture'), {status:code}));
+    }),
+    onBoardUnavailable:() => { recoveries++; },
+   });
+   const tick = () => new Promise(resolve => setTimeout(resolve,0));
+   try {
+    for (let n=0; n<100 && Object.keys(requests).length<4; n++) await tick();
+    if (Object.keys(requests).length !== 4) throw new Error('Snapshot reads did not start');
+    requests[${JSON.stringify(first)}](${status});
+    await tick();
+    const firstRecoveries = recoveries;
+    for (const name of Object.keys(requests)) if (name !== ${JSON.stringify(first)}) requests[name](404);
+    await tick();
+    return {firstRecoveries,recoveries,boardReads};
+   } finally { store.stop(); }
+  })()`);
+  check(`${first} ${status} first: only the board denial recovers, exactly once`,
+   result.firstRecoveries === (first === 'board' ? 1 : 0) && result.recoveries === 1 && result.boardReads === 1);
+ }
+}
 async function boardAccessRecoveryCase() {
  const route = '#/b/brd_other?ch=other&t=th_other';
  const login = operator => ev(`document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-recovery';document.querySelector('#login-form').requestSubmit()`);
@@ -578,7 +611,7 @@ async function boardAccessRecoveryCase() {
   }
   return false;
  };
- for (const scenario of ['logout', '401', 'empty', 'later page', 'transient']) {
+ for (const scenario of ['logout', '401', 'empty', 'later page', 'transient', 'channel retry']) {
   await freshIdentityFixture("window.__firstBoard=window.fetch;window.__op.enableBoardSwitch()");
   await ev(`location.hash=${JSON.stringify(route)}`);
   await login(true);
@@ -586,9 +619,9 @@ async function boardAccessRecoveryCase() {
   if (scenario==='401') await ev('window.__op.expired=true');
   else await ev("document.querySelector('#operator-logout').click()");
   await until("document.body.dataset.view==='login'");
-  const readable = ['later page','transient'].includes(scenario);
+  const readable = ['later page','transient','channel retry'].includes(scenario);
   await ev(`{
-   window.__op.revoked=false;window.__op.expired=false;window.__boardReads=0;
+   window.__op.revoked=false;window.__op.expired=false;window.__boardReads=0;window.__channelReads=0;
    const scenario=${JSON.stringify(scenario)}, readable=${readable};
    if (!readable) window.__op.scope=['read'];
    const original=readable ? window.fetch : window.__firstBoard;
@@ -598,8 +631,13 @@ async function boardAccessRecoveryCase() {
     if (u.pathname==='/v1/boards' && scenario==='later page') return Response.json(u.searchParams.get('page_token')==='second'
      ? {boards:[{id:'brd_other',name:'other'}],next_page_token:null}
      : {boards:[{id:'brd_test',name:'test'}],next_page_token:'second'});
+    if (u.pathname==='/v1/boards/brd_other/channels') {
+     window.__channelReads++;
+     if (scenario==='channel retry' && window.__channelReads===1) return Response.json({code:'not_found'},{status:404});
+    }
     if (u.pathname==='/v1/boards/brd_other') {
      window.__boardReads++;
+     if (scenario==='logout') await new Promise(resolve=>{window.__denyCurrentBoard=resolve});
      if (scenario==='transient' && window.__boardReads===1) return Response.json({code:'unavailable'},{status:503});
     }
     if (!readable && u.pathname.startsWith('/v1/boards/brd_other')) return Response.json({code:'not_found'},{status:404});
@@ -608,9 +646,13 @@ async function boardAccessRecoveryCase() {
   }`);
   await login(readable);
   await until('window.__boardReads>0');
+  if (scenario==='logout') {
+   await until("typeof window.__denyCurrentBoard==='function' && window.__channelReads>0");
+   await ev("window.__denyCurrentBoard()");
+  }
   if (readable) {
    await until("!!document.querySelector('.t-task-blocked')");
-   check(`${scenario} keeps the readable selected board`, await ev('location.hash')===route && await ev('window.__boardReads') >= (scenario==='transient'?2:1));
+   check(`${scenario} keeps the readable selected board`, await ev('location.hash')===route && await ev('window.__boardReads') >= (scenario==='later page'?1:2));
    continue;
   }
   await until("document.querySelector('#boards').checkVisibility() && document.querySelector('#forget').checkVisibility()");
@@ -632,32 +674,40 @@ async function boardAccessRecoveryCase() {
   }
  }
 
- // Finish a prior session's direct board read after the same route is readable again.
- await freshIdentityFixture("window.__op.enableBoardSwitch()");
- await ev("location.hash='#/b/brd_test'");
- await login(true);
- await until("!!document.querySelector('#term .t-boardsel')");
- await ev(`{
-  const original=window.fetch;
-  window.fetch=async (url,opts)=>{
-   if (new URL(url,location.href).pathname==='/v1/boards/brd_other') {
-    window.fetch=original;
-    await new Promise(resolve=>{window.__releaseOldBoard=resolve});
-    return Response.json({code:'not_found'},{status:404});
-   }
-   return original(url,opts);
-  };
-  location.hash=${JSON.stringify(route)};
- }`);
- await until("typeof window.__releaseOldBoard==='function'");
- await ev("document.querySelector('#operator-logout').click()");
- await until("document.body.dataset.view==='login'");
- await ev("window.__op.revoked=false");
- await login(true);
- await until("!!document.querySelector('.t-task-blocked')");
- await ev("window.__releaseOldBoard();new Promise(resolve=>setTimeout(resolve,0))");
- check('late board denial leaves the new session on its readable board',
-  await ev('location.hash')===route && await ev("document.querySelector('.t-boardsel')?.value==='brd_other'"));
+ // The direct read may also finish after navigation within the same session.
+ for (const replacement of ['route','session']) {
+  await freshIdentityFixture("window.__op.enableBoardSwitch()");
+  await ev("location.hash='#/b/brd_test'");
+  await login(true);
+  await until("!!document.querySelector('#term .t-boardsel')");
+  await ev(`{
+   const original=window.fetch;
+   window.fetch=async (url,opts)=>{
+    if (new URL(url,location.href).pathname==='/v1/boards/brd_other') {
+     window.fetch=original;
+     await new Promise(resolve=>{window.__releaseOldBoard=resolve});
+     return Response.json({code:'not_found'},{status:404});
+    }
+    return original(url,opts);
+   };
+   location.hash=${JSON.stringify(route)};
+  }`);
+  await until("typeof window.__releaseOldBoard==='function'");
+  if (replacement==='session') {
+   await ev("document.querySelector('#operator-logout').click()");
+   await until("document.body.dataset.view==='login'");
+   await ev("window.__op.revoked=false");
+   await login(true);
+  } else {
+   await ev("location.hash='#/b/brd_test'");
+  }
+  await until("!!document.querySelector('.t-task-blocked')");
+  await ev("window.__releaseOldBoard();new Promise(resolve=>setTimeout(resolve,0))");
+  const selected = replacement==='session' ? 'brd_other' : 'brd_test';
+  check(`late board denial leaves the new ${replacement} on its readable board`,
+   await ev('location.hash')===(replacement==='session' ? route : '#/b/brd_test') &&
+   await ev("document.querySelector('.t-boardsel')?.value")===selected);
+ }
 }
 async function identityNavigationCase() {
  let assertions = 0;
@@ -2292,7 +2342,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['board-access-recovery', boardAccessRecoveryCase], ['session-directory', sessionDirectoryCase], ['recovery-races', recoveryRacesCase], ['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['board-response-order', boardResponseOrderCase], ['board-access-recovery', boardAccessRecoveryCase], ['session-directory', sessionDirectoryCase], ['recovery-races', recoveryRacesCase], ['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
