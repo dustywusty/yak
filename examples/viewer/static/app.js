@@ -189,6 +189,7 @@ async function onRoute() {
 // ---------- chrome ----------
 
 function show(id) {
+  if (bannerView && bannerView !== id) $('banner').hidden = true;
   for (const s of ['login', 'boards', 'skin', 'term']) $(s).hidden = s !== id;
   document.body.dataset.view = id;
   $('nav').hidden = id === 'login';
@@ -210,8 +211,9 @@ function setStatus(state) {
   el.textContent = state || '';
 }
 
-let bannerTimer;
-function banner(text) {
+let bannerTimer, bannerView;
+function banner(text, view) {
+  bannerView = view;
   $('banner').textContent = text;
   $('banner').hidden = false;
   clearTimeout(bannerTimer);
@@ -264,7 +266,16 @@ $('forget').addEventListener('click', forget);
 
 const feed = createFeed({ api, h, time, href, onTask: () => {}, onUnauthorized: () => needToken(UNAUTHORIZED), onError: banner });
 const skins = createSkins({ api, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED) });
-const term = createTerm({ api, href, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED), onForget: forget, liveEl: $('live') });
+const term = createTerm({
+  api, href, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED), onForget: forget, liveEl: $('live'),
+  onBoardUnavailable: (boardId) => {
+    const r = parseRoute();
+    if (r.view !== 'term' || (r.board && r.board !== boardId)) return;
+    setStatus(null);
+    banner('Board not found or not visible.', 'boards');
+    location.replace('#/boards');
+  },
+});
 
 window.addEventListener('hashchange', onRoute);
 // Raw operator transport is separate from the viewer's read transport.

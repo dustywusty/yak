@@ -568,6 +568,97 @@ async function sessionDirectoryCase() {
   check(`Chat retains both choices when switching to ${board} within a session`, await ev(broad));
  }
 }
+async function boardAccessRecoveryCase() {
+ const route = '#/b/brd_other?ch=other&t=th_other';
+ const login = operator => ev(`document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-recovery';document.querySelector('#login-form').requestSubmit()`);
+ const tabTo = async selector => {
+  for (let n=0; n<20; n++) {
+   if (await ev(`document.activeElement.matches(${JSON.stringify(selector)}) && document.activeElement.checkVisibility()`)) return true;
+   for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent', {type, key:'Tab', code:'Tab', windowsVirtualKeyCode:9});
+  }
+  return false;
+ };
+ for (const scenario of ['logout', '401', 'empty', 'later page', 'transient']) {
+  await freshIdentityFixture("window.__firstBoard=window.fetch;window.__op.enableBoardSwitch()");
+  await ev(`location.hash=${JSON.stringify(route)}`);
+  await login(true);
+  await until("document.querySelector('.t-boardsel')?.value==='brd_other' && !!document.querySelector('.t-task-blocked')");
+  if (scenario==='401') await ev('window.__op.expired=true');
+  else await ev("document.querySelector('#operator-logout').click()");
+  await until("document.body.dataset.view==='login'");
+  const readable = ['later page','transient'].includes(scenario);
+  await ev(`{
+   window.__op.revoked=false;window.__op.expired=false;window.__boardReads=0;
+   const scenario=${JSON.stringify(scenario)}, readable=${readable};
+   if (!readable) window.__op.scope=['read'];
+   const original=readable ? window.fetch : window.__firstBoard;
+   window.fetch=async (url,opts)=>{
+    const u=new URL(url,location.href);
+    if (u.pathname==='/v1/boards' && scenario==='empty') return Response.json({boards:[],next_page_token:null});
+    if (u.pathname==='/v1/boards' && scenario==='later page') return Response.json(u.searchParams.get('page_token')==='second'
+     ? {boards:[{id:'brd_other',name:'other'}],next_page_token:null}
+     : {boards:[{id:'brd_test',name:'test'}],next_page_token:'second'});
+    if (u.pathname==='/v1/boards/brd_other') {
+     window.__boardReads++;
+     if (scenario==='transient' && window.__boardReads===1) return Response.json({code:'unavailable'},{status:503});
+    }
+    if (!readable && u.pathname.startsWith('/v1/boards/brd_other')) return Response.json({code:'not_found'},{status:404});
+    return original(url,opts);
+   };
+  }`);
+  await login(readable);
+  await until('window.__boardReads>0');
+  if (readable) {
+   await until("!!document.querySelector('.t-task-blocked')");
+   check(`${scenario} keeps the readable selected board`, await ev('location.hash')===route && await ev('window.__boardReads') >= (scenario==='transient'?2:1));
+   continue;
+  }
+  await until("document.querySelector('#boards').checkVisibility() && document.querySelector('#forget').checkVisibility()");
+  check(`${scenario} explains the board change`, await ev("document.querySelector('#banner').innerText.includes('Board not found or not visible.')"));
+  check(`${scenario} hides previous Chat content`, await ev("!document.querySelector('#term .t-task-blocked')"));
+  if (scenario==='empty') {
+   await until("document.querySelector('#board-list').innerText.includes('No visible boards.')");
+   check('empty directory exposes no previous choices', await ev("!document.querySelector('#board-list a')"));
+   check('empty directory has keyboard session exit', await tabTo('#forget'));
+   await op17027Enter();
+   await until("document.body.dataset.view==='login'");
+  } else {
+   await until("document.querySelector('#board-list a')?.checkVisibility()");
+   check(`${scenario} offers only the readable board`, await ev("document.querySelectorAll('#board-list a').length===1 && document.querySelector('#board-list a').hash==='#/b/brd_test'"));
+   check(`${scenario} can choose the readable board with the keyboard`, await tabTo('#board-list a'));
+   await op17027Enter();
+   await until("document.querySelector('.t-boardname')?.textContent==='test'");
+   check(`${scenario} clears the unavailable notice on the readable board`, await ev("document.querySelector('#banner').hidden"));
+  }
+ }
+
+ // Finish a prior session's direct board read after the same route is readable again.
+ await freshIdentityFixture("window.__op.enableBoardSwitch()");
+ await ev("location.hash='#/b/brd_test'");
+ await login(true);
+ await until("!!document.querySelector('#term .t-boardsel')");
+ await ev(`{
+  const original=window.fetch;
+  window.fetch=async (url,opts)=>{
+   if (new URL(url,location.href).pathname==='/v1/boards/brd_other') {
+    window.fetch=original;
+    await new Promise(resolve=>{window.__releaseOldBoard=resolve});
+    return Response.json({code:'not_found'},{status:404});
+   }
+   return original(url,opts);
+  };
+  location.hash=${JSON.stringify(route)};
+ }`);
+ await until("typeof window.__releaseOldBoard==='function'");
+ await ev("document.querySelector('#operator-logout').click()");
+ await until("document.body.dataset.view==='login'");
+ await ev("window.__op.revoked=false");
+ await login(true);
+ await until("!!document.querySelector('.t-task-blocked')");
+ await ev("window.__releaseOldBoard();new Promise(resolve=>setTimeout(resolve,0))");
+ check('late board denial leaves the new session on its readable board',
+  await ev('location.hash')===route && await ev("document.querySelector('.t-boardsel')?.value==='brd_other'"));
+}
 async function identityNavigationCase() {
  let assertions = 0;
  const assert = (name, ok, detail = '') => { assertions++; check(`OP17-003: ${name}`, ok, detail); };
@@ -2201,7 +2292,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['session-directory', sessionDirectoryCase], ['recovery-races', recoveryRacesCase], ['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['board-access-recovery', boardAccessRecoveryCase], ['session-directory', sessionDirectoryCase], ['recovery-races', recoveryRacesCase], ['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");

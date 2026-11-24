@@ -138,7 +138,7 @@ export function jumpPalette(getItems, placeholder, rememberFocus) {
 // continuation cursor (EVT-008..011) with the viewer's recovery rules:
 // dedupe by id; 409 resync_required / 410 / 400 → new snapshot; 401 → stop;
 // network errors → backoff, keep the cursor.
-export function createStore({ api, boardId, onChange: change, onEvent: event, onStatus: status, onUnauthorized }) {
+export function createStore({ api, boardId, onChange: change, onEvent: event, onStatus: status, onUnauthorized, onBoardUnavailable }) {
   // View callbacks are guarded: a drawing error is reported once and never
   // reaches the poll loop, where it would look like a network error.
   let drawFailed = false;
@@ -251,7 +251,17 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
 
   async function snapshot() {
     invalidateRefresh();
-    const [board, actors, channels, me] = await Promise.all([get(B), all(`${B}/actors`, 'actors'), get(`${B}/channels`), get('/v1/me')]);
+    // Only the board read can establish that the selected destination is gone.
+    // A missing channel, snapshot, or page of directory entries cannot.
+    const generation = refresh;
+    const boardRead = get(B).catch(e => {
+      if (currentRefresh(generation) && onBoardUnavailable && (e.status === 403 || e.status === 404)) {
+        stopStore();
+        onBoardUnavailable();
+      }
+      throw e;
+    });
+    const [board, actors, channels, me] = await Promise.all([boardRead, all(`${B}/actors`, 'actors'), get(`${B}/channels`), get('/v1/me')]);
     if (abort.signal.aborted) throw new DOMException('Store stopped', 'AbortError');
     Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.map((a) => [a.id, a])),
       threads: new Map(), msgs: new Map(), tasks: new Map(), order: [] });
