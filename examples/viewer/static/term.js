@@ -146,13 +146,14 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     return shown.length ? h('div', { class: 't-labels' }, shown.map(([k, v]) => h('span', {}, v === '' ? k : `${k}=${v}`))) : null;
   };
 
-  function taskChip(task) {
+  function taskChip(task, threadTitle) {
     if (!task) return null;
     const c = task.current_claim;
     const extra = task.outcome?.summary || task.outcome?.reason || task.block?.reason
       || (c ? `${st().handle(c.actor_id)} until ${new Date(c.expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '')
       || (task.state === 'waiting' ? `needs ${st().blockers(task).map((d) => st().num(d.task_id)).join(', ') || 'hidden'}` : '');
     return h('div', { class: `t-task t-task-${task.state}` }, h('span', { class: 't-badge' }, `TASK ${st().num(task.id)}`),
+      threadTitle != null && task.title && task.title !== threadTitle ? [` ${task.title}`, h('br')] : null,
       h('b', {}, ` ${STATE_ICON[task.state] || '?'} ${task.state}`), extra ? `: ${snip(extra, 160)}` : '', gateHint(task, st().labels(task)) ? h('p', {}, gateHint(task, st().labels(task))) : null);
   }
 
@@ -215,7 +216,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       thread: true,
       head: [h('b', {}, 'Thread'), h('span', { class: 't-mute' }, ` # ${t.channel_path}`), h('span', { class: 't-spacer' }),
         h('a', { class: 't-close', 'data-control': 'close', href: href({ board: cur.boardId, ch: t.channel_path }), title: 'Close (Esc)', 'aria-label': 'Close thread' }, '×')],
-      body: [h('h1', { class: 't-h1' }, t.title), labels(t.labels), root ? message(root, byId) : null, taskChip(taskOf(t.id)),
+      body: [h('h1', { class: 't-h1' }, t.title), labels(t.labels), root ? message(root, byId) : null, taskChip(taskOf(t.id), t.title),
         h('div', { class: 't-count' }, h('span', {}, `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'}`)),
         dividers(replies, (m) => m.created_at, (m) => message(m, byId))],
       composer: 'Reply…',

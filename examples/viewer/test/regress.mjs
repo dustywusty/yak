@@ -272,6 +272,35 @@ async function chatKey(key, code, modifiers = 0) {
   await cmd('Input.dispatchKeyEvent', { ...event, type: 'keyUp' });
 }
 
+async function checkChatTaskIdentity(until) {
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?task-identity#/board?b=brd_test' });
+  const dependency = ".w-col-waiting [data-task=task_wait] a[href*='thr_deploy']";
+  await until(`document.querySelector("${dependency}")?.textContent.includes('#5 Approve production rollout')`);
+  const left = await ev(`document.querySelector("${dependency}").focus(); document.querySelector('.w-cols').scrollLeft`);
+  await chatKey('Enter', 13);
+  await until("document.querySelector('.t-task-blocked')");
+  check('Waiting prerequisite opens its numbered task beside the authored Chat heading and root', await ev(`
+    document.querySelector('.t-h1').innerText === 'Deploy thread' && document.querySelector('.t-text').innerText === 'deploy root' &&
+    document.querySelector('.t-task .t-badge').innerText === 'TASK #5' &&
+    document.querySelector('.t-task').innerText.includes('Approve production rollout')`));
+  await ev('history.back()');
+  await until(`document.querySelector("${dependency}")`);
+  check('Back restores the Waiting lane and its exact prerequisite link', left > 0 && await ev(`
+    document.activeElement === document.querySelector("${dependency}") && document.querySelector('.w-cols').scrollLeft === ${left}`));
+  await go('#/b/brd_test?ch=activity&t=thr_work');
+  check('Chat omits a duplicate task title when the thread heading matches', await ev(`
+    document.querySelector('.t-h1').innerText === 'Build the viewer bundle' &&
+    !document.querySelector('.t-task').innerText.includes('Build the viewer bundle')`));
+  await go('#/b/brd_test?ch=ops&t=thr_ops');
+  check('Chat keeps the conversation without inferring a task', await ev(`
+    document.querySelector('.t-h1').innerText === 'Ops thread' && !document.querySelector('.t-task')`));
+  await ev("window.__taskEvent('task_owner', { title: '<em>Rollout & review</em>' })");
+  await go('#/b/brd_test?ch=ops%2Fdeploy&t=thr_deploy');
+  check('Chat renders markup-like task titles literally', await ev(`
+    document.querySelector('.t-task').innerText.includes('<em>Rollout & review</em>') && !document.querySelector('.t-task em')`));
+}
+
 async function checkChatJump(until) {
   await cmd('Page.bringToFront');
   await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -1149,6 +1178,7 @@ try {
   await checkChatChannels(until);
   await checkChatHelp(until);
   await checkThreadOwnership(until);
+  await checkChatTaskIdentity(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));
