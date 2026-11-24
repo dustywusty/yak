@@ -147,7 +147,8 @@ export function wall(root, { boardId, route, threadHref }) {
       if (active === frame.jump || active === frame.clear) active.focus({ preventScroll: true });
     }
     const all = st.tasks(), shown = all.filter((t) => keep(st, t));
-    frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Lanes`), h('span', {}, 'Read-only'));
+    const mode = document.body.dataset.operator ? 'Read-only view · Operator tools available' : 'Read-only';
+    frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Lanes`), h('span', {}, mode));
     frame.count.textContent = `Showing ${shown.length} of ${all.length} tasks`;
     frame.clear.hidden = !(f.ch || f.agent || f.label);
     activity = createAgentActivity(st, ({ t }) => threadHref(t), status);
