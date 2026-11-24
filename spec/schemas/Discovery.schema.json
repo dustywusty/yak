@@ -171,6 +171,21 @@
           "type": "integer",
           "minimum": 0,
           "description": "P2: claim-next wait_ms ceiling (reference 30000)."
+        },
+        "presence_ttl_default_seconds": {
+          "type": "integer",
+          "const": 120,
+          "description": "P3 proposed yak.presence limit (PRES-004)."
+        },
+        "presence_ttl_min_seconds": {
+          "type": "integer",
+          "const": 15,
+          "description": "P3 proposed yak.presence limit (PRES-004)."
+        },
+        "presence_ttl_max_seconds": {
+          "type": "integer",
+          "const": 300,
+          "description": "P3 proposed yak.presence limit (PRES-004)."
         }
       }
     },
@@ -249,5 +264,29 @@
         ]
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "capabilities": {
+            "contains": {
+              "const": "yak.presence"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "limits": {
+            "required": [
+              "presence_ttl_default_seconds",
+              "presence_ttl_min_seconds",
+              "presence_ttl_max_seconds"
+            ]
+          }
+        }
+      }
+    }
+  ]
 }

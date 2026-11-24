@@ -553,8 +553,44 @@
               "task.assigned",
               "task.updated",
               "task.brief_updated",
-              "task.brief_redacted"
+              "task.brief_redacted",
+              "actor.presence_changed"
             ]
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "actor.presence_changed"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "actor_presence"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "channel_id": {
+          "type": "null"
+        },
+        "thread_id": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "presence"
+          ],
+          "properties": {
+            "presence": {
+              "$ref": "ActorPresence.schema.json"
+            }
           }
         }
       }

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ActorPresence",
+  "type": "object",
+  "required": [
+    "board_id",
+    "actor_id",
+    "state",
+    "last_seen_at",
+    "expires_at",
+    "revision"
+  ],
+  "properties": {
+    "board_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "enum": [
+        "online",
+        "away",
+        "offline"
+      ]
+    },
+    "last_seen_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "online",
+              "away"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "last_seen_at": {
+            "$ref": "Timestamp.schema.json"
+          },
+          "expires_at": {
+            "$ref": "Timestamp.schema.json"
+          }
+        }
+      }
+    }
+  ]
+}

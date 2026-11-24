@@ -146,6 +146,17 @@ func TestSpecExamplesValidate(t *testing.T) {
 // and that nullability and discriminators are enforced.
 func TestSpecSchemasRejectInvalid(t *testing.T) {
 	cases := []struct{ schema, doc string }{
+		// P3 proposed inbox/presence contracts: explicit ack, bounded heartbeat,
+		// and typed events. These are schema checks, not server capability claims.
+		{"InboxAckRequest", `{}`},
+		{"InboxAckRequest", `{"cursor":"i1.test","actor_id":"another"}`},
+		{"InboxAckRequest", `{"cursor":null}`},
+		{"PresenceHeartbeatRequest", `{"state":"busy"}`},
+		{"PresenceHeartbeatRequest", `{"state":"online","ttl_seconds":14}`},
+		{"PresenceHeartbeatRequest", `{"state":"away","ttl_seconds":301}`},
+		{"PresenceHeartbeatRequest", `{"state":"offline","ttl_seconds":120}`},
+		{"PresenceHeartbeatRequest", `{"state":"online","actor_id":"another"}`},
+		{"ActorPresence", `{"board_id":"b","actor_id":"a","state":"online","last_seen_at":null,"expires_at":null,"revision":1}`},
 		{"CreateBoardRequest", `{"name":"x","bogus":1}`},
 		{"CreateBoardRequest", `{"name":"   "}`},
 		{"CreateChannelRequest", `{"path":"Eng"}`},
