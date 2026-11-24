@@ -26,7 +26,7 @@ function dayLabel(ts) {
   return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
-export function createTerm({ api, href, setStatus, onUnauthorized, onBoardUnavailable, onForget, liveEl }) {
+export function createTerm({ api, readBoards, href, setStatus, onUnauthorized, onBoardUnavailable, onForget, liveEl }) {
   const root = () => document.getElementById('term');
   let cur = null, route = {}, boards = [], status = 'connecting', activityNew = 0, sel = -1, sideOpen = false;
   let ownershipOpen = false;
@@ -40,7 +40,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onBoardUnavai
   const setSeen = (k) => { (seen[cur.boardId] ||= {})[k] = new Date(now()).toISOString(); store_.set(SEEN_KEY, seen); };
   const go = (r) => { location.hash = href({ board: cur.boardId, ...r }); };
 
-  async function mount(r) {
+  async function mount(r, signal) {
     if (route.key !== r.key) {
       sideOpen = false;
       if (!phone.matches) ownershipOpen = false;
@@ -48,9 +48,15 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onBoardUnavai
     route = r;
     let boardId = r.board;
     if (!boards.length || !boardId) {
-      const directory = await api('GET', '/v1/boards');
-      if (route !== r) return;
-      boards = directory.boards;
+      try {
+        const directory = await readBoards(signal);
+        if (signal.aborted || route !== r) return;
+        boards = directory;
+      } catch (e) {
+        if (signal.aborted || route !== r || e.status === 401) return;
+        // An incomplete directory says nothing about the retained board's visibility.
+        if (!boardId) { location.hash = '#/boards'; return; }
+      }
     }
     boardId ||= boards[0]?.id;
     if (!boardId) { location.hash = '#/boards'; return; }
@@ -323,7 +329,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onBoardUnavai
       h('span', { class: 't-mute' }, icon), ' ', h('span', { class: 't-navlabel' }, label), count ? h('span', { class: 't-pill' }, String(count)) : null);
     const side = h('nav', { class: 't-side', id: 'chat-channels', 'aria-label': 'Channels' },
       h('button', { type: 'button', class: 't-side-close', 'data-control': 'close-channels', onclick: () => setSideOpen(false) }, 'Close channels'),
-      boards.length > 1
+      boards.length > 1 && boards.some(b => b.id === cur.boardId)
         ? h('select', { class: 't-boardsel', 'aria-label': 'Board', 'data-control': 'board', onchange: (e) => { location.hash = href({ board: e.target.value, v: 'activity' }); } },
           boards.map((b) => h('option', { value: b.id, selected: b.id === cur.boardId }, b.name)))
         : h('b', { class: 't-boardname' }, S.board.name),
