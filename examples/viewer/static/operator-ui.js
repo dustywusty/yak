@@ -2,12 +2,13 @@ import { h } from './skin-kit.js';
 import { approvalRecord, isGateApprovalEvent, taskIntent } from './operator.js';
 const enc = encodeURIComponent;
 const button = (text, click) => h('button', { type: 'button', onclick: click }, text);
+const disclosure = (label, ...nodes) => h('details', {}, h('summary', {}, label), ...nodes);
 const field = (label, node) => h('label', {}, label, node);
 
 // A shared, explicit workspace keeps the source skins and their lifecycle intact.
 // Draft nodes survive live store redraws, navigation and conflict refreshes.
 export function createOperatorUI({ session, read, route }) {
-  let panel, content, status, current, opener, refresh, sequence = 0;
+  let panel, review, destination, selectors, content, status, current, opener, refresh, sequence = 0;
   const drafts = new Map();
   const draftEdits = new WeakMap();
   const receipts = h('div', { class: 'op-receipts' });
@@ -130,9 +131,8 @@ export function createOperatorUI({ session, read, route }) {
     } catch (e) { say(e.status === 404 ? 'Item gone or hidden.' : e.message); }
   }
   function action(name, kind, values) { const b = writeButton(name, () => { const v = typeof values === 'function' ? values() : values; confirmTask(kind, kind === 'claim' ? 'Claim' : kind === 'assign' ? `Assign to @${session.me.actor.handle}` : name, b, v); }); return b; }
-  function taskControls(t) {
+  function taskControls(t, out) {
     const view = current;
-    const out = h('section', { 'aria-label': 'Task actions' }, h('h3', {}, `${t.title} · ${t.state}`));
     const path = `${view.B}/tasks/${enc(t.id)}`;
     const lease = session.claims.get(path);
     if (lease) out.append(h('p', { class: 'op-lease', 'data-task-path': path }, 'You hold this claim in this tab; renewing while the tab is open.'));
@@ -147,19 +147,25 @@ export function createOperatorUI({ session, read, route }) {
         out.append(field('New assignee', select), assign, h('p', {}, 'Assignment is suitable for work longer than this tab session.'));
       }
       if (typeof t.direct_action_required === 'boolean') out.append(action(t.direct_action_required ? 'Remove approval requirement' : 'Require my approval', 'flag', { value: !t.direct_action_required }));
-      if (t.state === 'blocked' && t.direct_action_required === true && rights('label')) {
-        const note = draft(`Gate note ${t.id}`);
-        out.append(field('Approval note or requested changes', note), action('Approve and unblock', 'approve', () => ({ note: note.value })));
-      }
     }
-    if (t.state === 'blocked' && t.direct_action_required === true && rights('post') && rights('label')) {
+    return out;
+  }
+  function gateControls(t, out) {
+    const labels = rights('label') && session.server.capabilities?.includes('yak.labels');
+    const approve = labels && manager(t);
+    const changes = labels && rights('post');
+    out.append(h('p', {}, `Gate reason: ${t.block?.reason || 'Unavailable'}`));
+    if (approve || changes) {
       const note = draft(`Gate note ${t.id}`);
-      if (!out.contains(note)) out.append(field('Requested changes', note));
-      out.append(action('Request changes', 'changes', () => ({ note: note.value })));
-    }
+      out.append(field(approve && changes ? 'Approval note or requested changes' : approve ? 'Approval note' : 'Requested changes', note));
+      if (approve) out.append(action('Approve and unblock', 'approve', () => ({ note: note.value })));
+      if (changes) out.append(action('Request changes', 'changes', () => ({ note: note.value })));
+    } else out.append(h('p', {}, 'Your permissions do not allow a gate decision here.'));
+  }
+  function gateLabel(t, out) {
+    const view = current;
     if (!t.direct_action_required && view.thread.labels?.gate) out.append(h('p', {}, 'label only; not a gate'));
     else if (t.state === 'blocked' && view.thread.labels?.gate === 'approved') out.append(h('p', {}, 'label says approved; task is still blocked'));
-    return out;
   }
   async function timeline(t, target, version) {
     const snapshot = current;
@@ -228,9 +234,15 @@ export function createOperatorUI({ session, read, route }) {
     }
     return box;
   }
+  function resetDestination() {
+    review.replaceChildren();
+    destination.replaceChildren(selectors);
+    selectors.querySelector('.op-channel').replaceChildren();
+    selectors.querySelector('.op-thread').replaceChildren();
+  }
   async function loadChannel(channel, threadId) {
     const version = ++sequence;
-    dismissConfirmations(); panel.querySelector('.op-channel').replaceChildren();
+    dismissConfirmations(); resetDestination();
     const snapshot = current = Object.freeze({ ...current, channel, threadId, thread: null, task: null });
     refresh.disabled = false;
     const B = snapshot.B; content.replaceChildren('Reading current permissions and state…');
@@ -251,18 +263,39 @@ export function createOperatorUI({ session, read, route }) {
       }
       const view = current = Object.freeze({ ...snapshot, permissions: perm.capabilities, actors, thread, task });
       const select = h('select', { 'aria-label': 'Thread', onchange: () => valid(view, version) && loadChannel(channel, select.value) }, h('option', { value: '' }, 'New thread / task'), threads.map((t) => h('option', { value: t.id, selected: t.id === threadId }, t.title)));
-      content.replaceChildren(field('Thread', select));
+      selectors.querySelector('.op-thread').replaceChildren(field('Thread', select));
+      content.replaceChildren();
       const sel = h('select', { 'aria-label': 'Channel', onchange: () => valid(view, version) && loadChannel(sel.value, '') }, view.channels.map((c) => h('option', { value: c.path, selected: c.path === channel }, c.path)));
       panel.querySelector('.op-channel').replaceChildren(field('Channel', sel));
-      if (task) { content.append(taskControls(task)); const history = h('section', {}, 'Reading task history…'); content.append(history); timeline(task, history, version); }
-      content.append(...messages.map(messageControls), composer());
+      const gate = task?.state === 'blocked' && task.direct_action_required === true;
+      if (task) {
+        const actions = h('section', { 'aria-label': 'Task actions' }, h('h3', {}, `${task.title} · ${task.state}`));
+        if (gate) {
+          const board = selectors.querySelector('[aria-label=Board]').selectedOptions[0]?.textContent || thread.board_id;
+          review.append(h('p', {}, `Board: ${board} · Channel: ${channel} · Thread: ${thread.title}`), actions);
+          gateControls(task, actions);
+          destination.replaceChildren(disclosure('Change destination', selectors));
+          const other = taskControls(task, h('div'));
+          if (other.childElementCount) content.append(disclosure('Assignment and task settings', other));
+        } else content.append(taskControls(task, actions));
+        gateLabel(task, actions);
+        const history = h('section', {}, 'Reading task history…');
+        content.append(history);
+        timeline(task, history, version);
+      }
+      const entries = messages.map(messageControls);
+      if (gate) {
+        if (entries.length) content.append(disclosure('Messages and maintenance', ...entries));
+        const canCreate = rights('task_manage') && session.server.capabilities?.includes('yak.tasks');
+        content.append(rights('post') ? disclosure(canCreate ? 'Reply or create a task' : 'Reply', composer()) : composer());
+      } else content.append(...entries, composer());
     } catch (e) { if (version === sequence) say(e.status === 404 ? 'Item gone or hidden.' : `Read failed: ${e.message}`); }
   }
   async function loadBoard(id, channel, thread) {
     const version = ++sequence;
     dismissConfirmations();
     refresh.disabled = true;
-    content.replaceChildren('Reading board…'); panel.querySelector('.op-channel').replaceChildren();
+    content.replaceChildren('Reading board…'); resetDestination();
     const snapshot = current = Object.freeze({ B: `/v1/boards/${enc(id)}`, generation: session.generation, actors: [], permissions: [] });
     try {
       const B = snapshot.B;
@@ -280,7 +313,10 @@ export function createOperatorUI({ session, read, route }) {
     status = h('p', { role: 'status' }); content = h('div', {});
     refresh = button('Refresh permissions and state', () => current?.channel && loadChannel(current.channel, current.threadId));
     refresh.disabled = true;
-    panel = h('dialog', { class: 'op-workspace', 'aria-label': 'Operator tools' }, h('h2', {}, 'Operator tools'), button('Close', close), status, h('div', { class: 'op-board' }), h('div', { class: 'op-channel' }), refresh, content, receipts);
+    review = h('div', { class: 'op-review' });
+    selectors = h('div', {}, h('div', { class: 'op-board' }), h('div', { class: 'op-channel' }), refresh, h('div', { class: 'op-thread' }));
+    destination = h('div', {}, selectors);
+    panel = h('dialog', { class: 'op-workspace', 'aria-label': 'Operator tools' }, h('h2', {}, 'Operator tools'), button('Close', close), status, review, destination, content, receipts);
     const openedPanel = panel, version = sequence;
     panel.addEventListener('keydown', (e) => e.stopPropagation());
     panel.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
