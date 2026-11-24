@@ -28,7 +28,7 @@ function dayLabel(ts) {
 
 export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liveEl }) {
   const root = () => document.getElementById('term');
-  let cur = null, route = {}, boards = [], status = 'connecting', activityNew = 0, sel = -1, help = false, sideOpen = false;
+  let cur = null, route = {}, boards = [], status = 'connecting', activityNew = 0, sel = -1, sideOpen = false;
   let ownershipOpen = false;
   let theme = store_.get(THEME_KEY) || 'dark';
   const seen = store_.get(SEEN_KEY) || {};
@@ -84,6 +84,9 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     cur.store.stop();
     clearInterval(activityTimer);
     palette?.dispose();
+    helpDialog?.close();
+    helpDialog?.remove();
+    helpDialog = null;
     cur = null;
     activity = null;
     ownershipOpen = false;
@@ -320,12 +323,8 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     const foot = h('footer', { class: 't-foot' }, h('span', { class: `t-${status}` }, status),
       h('span', { class: 't-mute' }, `${S.me?.handle} on ${S.board.name}`), h('span', { class: 't-spacer' }),
       hints.map(([k, v]) => h('span', { class: 't-hint' }, h('kbd', {}, k), ` ${v}`)));
-    const helpBox = help ? h('div', { class: 't-help', role: 'dialog' }, h('b', {}, 'Keys'),
-      [['↑ / ↓  or  k / j', 'move the selection'], ['Enter', 'open the selected thread'], ['Esc', 'close the thread or this help'],
-        ['Ctrl-K / Cmd-K', 'jump to a channel or thread'], ['g a / g m', 'go to Activity / Mentions'], ['?', 'show or hide this help']]
-        .map(([k, v]) => h('div', {}, h('kbd', {}, k), ` ${v}`)), h('p', { class: 't-mute' }, document.body.dataset.operator ? 'Use Operator tools for messages and confirmed task actions.' : 'This viewer is read-only.')) : null;
     root().replaceChildren(h('div', { class: `t-app${sideOpen ? ' t-sideopen' : ''}`, 'data-theme': theme }, side,
-      h('div', { class: 't-side-backdrop', 'aria-hidden': 'true', onclick: () => setSideOpen(false) }), main, foot, helpBox));
+      h('div', { class: 't-side-backdrop', 'aria-hidden': 'true', onclick: () => setSideOpen(false) }), main, foot));
     if (view.activity && liveEl) { liveEl.hidden = false; scroll.prepend(liveEl); }
     activity.root.scrollTop = activityTop;
     side.scrollTop = sideTop;
@@ -337,6 +336,31 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
 
   // ---------- keyboard ----------
+  // Keep the modal outside the subtree replaced by live Chat renders.
+  let helpDialog = null;
+  function openHelp() {
+    const restoreFocus = rememberFocus(document.activeElement);
+    function close() {
+      helpDialog.close();
+      helpDialog.remove();
+      helpDialog = null;
+      restoreFocus();
+    }
+    helpDialog = h('dialog', { class: 't-help', 'data-theme': theme, 'aria-labelledby': 'chat-keys',
+      oncancel: (e) => { e.preventDefault(); close(); },
+      onkeydown: (e) => {
+        e.stopPropagation();
+        if (e.key === 'Tab') e.preventDefault(); // Close is the only tab stop.
+        if (e.key === '?') { e.preventDefault(); close(); }
+      } },
+      h('header', {}, h('b', { id: 'chat-keys' }, 'Keys'),
+        h('button', { type: 'button', autofocus: true, onclick: close }, 'Close')),
+      [['↑ / ↓  or  k / j', 'move the selection'], ['Enter', 'open the selected thread'], ['Esc', 'close the thread or this help'],
+        ['Ctrl-K / Cmd-K', 'jump to a channel or thread'], ['g a / g m', 'go to Activity / Mentions'], ['?', 'show or hide this help']]
+        .map(([k, v]) => h('div', {}, h('kbd', {}, k), ` ${v}`)), h('p', { class: 't-mute' }, document.body.dataset.operator ? 'Use Operator tools for messages and confirmed task actions.' : 'This viewer is read-only.'));
+    document.body.append(helpDialog);
+    helpDialog.showModal();
+  }
   const items = () => [...root().querySelectorAll('.t-scroll .t-item')];
   function paintSel() { items().forEach((e, i) => e.classList.toggle('t-sel', i === sel)); }
   function move(d) {
@@ -348,9 +372,9 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
   let gPending = false;
   function onKey(e) {
-    if (!cur || document.getElementById('term').hidden || document.querySelector('.jump')) return;
+    if (!cur || document.getElementById('term').hidden || document.querySelector(':modal')) return;
     if (sideOpen) {
-      if (e.key === 'Escape' && !document.querySelector(':modal')) {
+      if (e.key === 'Escape') {
         e.preventDefault();
         setSideOpen(false);
       }
@@ -363,8 +387,8 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     if (k === 'ArrowDown' || k === 'j') { e.preventDefault(); move(1); }
     else if (k === 'ArrowUp' || k === 'k') { e.preventDefault(); move(-1); }
     else if (k === 'Enter' && sel >= 0) { const it = items()[sel]; if (it?.dataset.thread) go({ ch: st().thread(it.dataset.thread)?.channel_path, t: it.dataset.thread, m: it.dataset.msg }); }
-    else if (k === 'Escape') { if (help) { help = false; render(); } else if (route.t) go({ ch: route.ch || st().thread(route.t)?.channel_path }); }
-    else if (k === '?') { help = !help; render(); }
+    else if (k === 'Escape' && route.t) go({ ch: route.ch || st().thread(route.t)?.channel_path });
+    else if (k === '?') { e.preventDefault(); openHelp(); }
     else if (k === 'g') gPending = true;
   }
   document.addEventListener('keydown', onKey);

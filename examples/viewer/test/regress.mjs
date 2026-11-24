@@ -335,6 +335,44 @@ async function checkChatJump(until) {
   await until("location.hash.endsWith('?v=activity') && !document.querySelector('.jump')");
 }
 
+async function checkChatHelp(until) {
+  const thread = '#/b/brd_test?ch=ops&t=thr_ops&m=thr_ops_m2';
+  for (const width of [390, 1280]) {
+    await cmd('Emulation.setDeviceMetricsOverride', { width, height: width === 390 ? 844 : 900, deviceScaleFactor: 1, mobile: width === 390 });
+    await cmd('Page.navigate', { url: ORIGIN + '/index.html?chat-help=' + width + thread });
+    const opener = width === 390 ? '.t-close' : '.t-side .t-nav.on';
+    await until("document.querySelector('#tm-thr_ops_m2.t-target')");
+    await ev(`window.helpOpener = document.querySelector('${opener}'); helpOpener.focus()`);
+    await chatKey('ArrowDown', 40);
+    const selection = await ev("document.querySelector('.t-sel').id");
+    await chatKey('?', 191, 8);
+    const tree = (await cmd('Accessibility.getFullAXTree')).result.nodes;
+    const named = tree.some(n => n.role?.value === 'dialog' && n.name?.value === 'Keys');
+    check(`Keys opens a named dialog at ${width}px`, named);
+    if (!named) continue;
+    const closeFocused = () => ev("document.activeElement.matches('.t-help button:focus-visible') && document.activeElement.textContent === 'Close'");
+    check('Keyboard focus enters help on Close', await closeFocused());
+    await chatKey('Tab', 9);
+    await chatKey('ArrowDown', 40);
+    await chatKey('k', 75, 2);
+    await ev("window.__addTask('help_redraw', 'Help redraw')");
+    await until('!helpOpener.isConnected');
+    check('Live redraw and shortcuts keep focus on Close and preserve selection', await closeFocused() &&
+      await ev(`!document.querySelector('.jump') && document.querySelector('.t-sel').id === ${JSON.stringify(selection)}`));
+    await chatKey(width === 390 ? 'Enter' : 'Escape', width === 390 ? 13 : 27);
+    await until("!document.querySelector('.t-help')");
+    check('Dismissing help restores the replacement opener, thread and reply', await ev(`
+      document.activeElement.matches('${opener}:focus-visible') && location.hash === ${JSON.stringify(thread)} &&
+      document.querySelector('#tm-thr_ops_m2.t-target') && document.querySelector('.t-sel').id === ${JSON.stringify(selection)}`));
+  }
+  await go('#/b/brd_test?ch=ops');
+  await ev("document.querySelector('.t-title[data-control=\"thread:thr_ops\"]').focus()");
+  await chatKey('?', 191, 8);
+  await chatKey('?', 191, 8);
+  check('Toggling Keys returns to the focused thread title', await ev(`
+    !document.querySelector('.t-help') && document.activeElement.dataset.control === 'thread:thr_ops'`));
+}
+
 async function checkChatChannels(until) {
   const thread = '#/b/brd_test?ch=ops&t=thr_ops';
   const viewport = width => cmd('Emulation.setDeviceMetricsOverride', {
@@ -1013,6 +1051,7 @@ try {
   await checkClearLaneFilters(until);
   await checkChatJump(until);
   await checkChatChannels(until);
+  await checkChatHelp(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));
