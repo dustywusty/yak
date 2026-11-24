@@ -498,9 +498,9 @@ async function sessionFeedbackCase() {
 async function identityNavigationCase() {
  let assertions = 0;
  const assert = (name, ok, detail = '') => { assertions++; check(`OP17-003: ${name}`, ok, detail); };
- const header = async (name, label) => {
+ const header = async (name, selector, label) => {
   assert(`${name} shows @alice`, await ev("document.querySelector('#me').textContent==='@alice'"));
-  assert(`${name} shows ${label}`, await ev(`!document.querySelector('#forget').hidden && document.querySelector('#forget').textContent===${JSON.stringify(label)} && !document.querySelector('#nav').hidden`));
+  assert(`${name} shows ${label}`, await ev(`document.querySelector(${JSON.stringify(selector)}).checkVisibility() && document.querySelector(${JSON.stringify(selector)}).textContent===${JSON.stringify(label)} && !document.querySelector('#nav').hidden`));
  };
  const cleared = async (name) => {
   await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
@@ -512,25 +512,48 @@ async function identityNavigationCase() {
  };
  await freshIdentityFixture("window.__op.scope=['read'];");
  await login(false);
- await header('fresh read-only login', 'Forget token');
+ await header('fresh read-only login', '#forget', 'Forget token');
  assert('read-only login persists only its tab token', await ev("sessionStorage.getItem('yak-viewer-token')==='synthetic-identity-token' && window.__op.writes.length===0"));
  await ev("document.querySelector('#forget').click()");
  await cleared('read-only forget');
  assert('read-only forget sends no writes', await count()===0);
  await freshIdentityFixture("window.__op.scope=['read'];sessionStorage.setItem('yak-viewer-token','synthetic-restored-token');");
  await until("!!document.body && document.body.dataset.view==='boards'");
- await header('restored read-only token', 'Forget token');
+ await header('restored read-only token', '#forget', 'Forget token');
  assert('restoration retains read-only tab token without writes', await ev("sessionStorage.getItem('yak-viewer-token')==='synthetic-restored-token' && window.__op.writes.length===0"));
- for (const selector of ['#forget', '#operator-logout']) {
-  await freshIdentityFixture();
-  await login(true);
-  await header(`operator login via ${selector}`, 'Logout (revokes token everywhere)');
-  assert(`operator login via ${selector} shows session identity`, await ev("!document.querySelector('#operator-session').hidden && document.querySelector('#operator-identity').textContent.includes('@alice (human)') && !sessionStorage.length"));
-  await ev(`document.querySelector(${JSON.stringify(selector)}).click()`);
-  await cleared(`logout via ${selector}`);
+ await freshIdentityFixture();
+ await login(true);
+ await header('operator login', '#operator-logout', 'Logout (revokes token everywhere)');
+ assert('operator login shows session identity', await ev("!document.querySelector('#operator-session').hidden && document.querySelector('#operator-identity').textContent.includes('@alice (human)') && !sessionStorage.length"));
+ await cmd('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:false});
+ try {
+  for (const [view, route, ready] of [['boards', '#/boards', '#board-list a'], ['Lanes', '#/board?b=brd_test', '.w-card'], ['Forum', '#/forum?b=brd_test', '.skin-forum'], ['Chat', '#/b/brd_test', '.t-menu']]) {
+   await ev(`location.hash=${JSON.stringify(route)}`);
+   await until(`document.querySelector(${JSON.stringify(ready)})?.checkVisibility()`);
+   if (view==='Chat') {
+    await ev("document.querySelector('.t-menu').focus()");
+    await op17027Enter();
+    await until("document.activeElement.matches('.t-side-close')");
+   }
+   const controls = await ev(`Array.from(document.querySelectorAll('button'))
+    .filter(b => b.checkVisibility() && /logout|revoke.*token|forget token/i.test(b.textContent))
+    .map(b => b.id || b.dataset.control)`);
+   assert(`${view} exposes one session exit`, JSON.stringify(controls)==='["operator-logout"]', JSON.stringify(controls));
+   await ev("document.querySelector('#operator-tools').focus()");
+   await cmd('Input.dispatchKeyEvent', {type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+   await cmd('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+   assert(`${view} logout is unobstructed`, await ev(`(() => {
+    const button = document.querySelector('#operator-logout');
+    const {left, top, width, height} = button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(left + width / 2, top + height / 2));
+   })()`));
+   assert(`${view} logout receives Tab focus`, await ev("document.activeElement.id==='operator-logout'"));
+  }
+  await op17027Enter();
+  await cleared('operator logout');
   assert('intentional logout leaves the empty Token field neutral', await ev("!document.querySelector('#token').hasAttribute('aria-invalid') && !document.querySelector('#token').hasAttribute('aria-describedby')"));
-  assert(`logout via ${selector} revokes only its credential`, await ev("window.__op.revoked && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
- }
+  assert('logout revokes only its credential', await ev("window.__op.revoked && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
+ } finally { await cmd('Emulation.clearDeviceMetricsOverride'); }
  for (const [name, setup, operator] of [['rejected read-only credential', 'window.__op.expired=true', false], ['refused operator credential', "window.__op.kind='agent'", true]]) {
   await freshIdentityFixture();
   await ev(`${setup};document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-invalid-token';document.querySelector('#login-form').requestSubmit()`);
@@ -540,7 +563,7 @@ async function identityNavigationCase() {
   assert(`${name} sends no writes`, await count()===0);
  }
  assert('browser has no exceptions', errors.length===0, errors.join(' | '));
- console.log(`OP17-003 executed ${assertions} assertions across fresh login, restoration, two logout entries and two rejected credentials`);
+ console.log(`OP17-003 executed ${assertions} assertions across fresh login, restoration, four operator views and two rejected credentials`);
 }
 async function responseBodyFailureCase() {
  let assertions = 0;
