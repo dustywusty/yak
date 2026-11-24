@@ -266,6 +266,98 @@ const state = () => ev(`JSON.stringify({ hash: location.hash, liveInDoc: documen
   rows: [...window.__live.querySelectorAll('#feed li')].map((l) => l.textContent), banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent,
   term: !document.getElementById('term').hidden, calls: window.__fake.calls })`).then(JSON.parse);
 
+// Exercise the browser's nested scroll handling with native touch input.
+async function checkLaneTouch(until) {
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await cmd('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html#/board?b=brd_test' });
+  const ready = '.w-col-ready';
+  await until(`!!document.querySelector('${ready} .w-card')`);
+  const offsets = () => ev(`[document.querySelector('.w-cols').scrollLeft, document.querySelector('${ready} .w-list').scrollTop]`);
+  const touch = (type, touchPoints) => cmd('Input.dispatchTouchEvent', { type, touchPoints });
+  async function drag(x, y, dx, dy) {
+    await touch('touchStart', [{ x, y }]);
+    for (let step = 1; step <= 6; step++) {
+      await touch('touchMove', [{ x: x + dx * step / 6, y: y + dy * step / 6 }]);
+      await sleep(24);
+    }
+    await sleep(150); // Lift after stopping so momentum cannot carry into the next trial.
+    await touch('touchEnd', []);
+    await sleep(100);
+  }
+  async function horizontal(selector, dx) {
+    const { x, y, hit } = await ev(`(() => {
+      const el = document.querySelector('${ready} ${selector}');
+      const r = el.getBoundingClientRect();
+      const x = Math.round((Math.max(0, r.left) + Math.min(innerWidth, r.right)) / 2);
+      const y = Math.round(r.top + r.height / 2);
+      return { x, y, hit: el.contains(document.elementFromPoint(x, y)) };
+    })()`);
+    if (!hit) throw new Error('Touch missed ' + selector);
+    const [before] = await offsets();
+    await drag(x, y, dx, 0);
+    const [after] = await offsets();
+    return { moved: (after - before) * Math.sign(-dx) > 0, before, after };
+  }
+
+  for (const count of [1, 30]) {
+    if (count === 30) {
+      await ev(`for (let i = 1; i < 30; i++) window.__addTask('touch_' + i, 'Touch task ' + i); 1`);
+      await until(`document.querySelectorAll('${ready} .w-card').length === 30`);
+    }
+    check('Ready list overflow matches fixture of ' + count, await ev(`(() => {
+      const list = document.querySelector('${ready} .w-list');
+      return (list.scrollHeight > list.clientHeight) === ${count === 30};
+    })()`));
+    for (let trial = 1; trial <= 3; trial++) {
+      for (const target of ['h2', '.w-card']) {
+        for (const dx of [-90, 110]) {
+          const move = await horizontal(target, dx);
+          check(`Ready (${count}), trial ${trial}, ${target} swipe ${dx < 0 ? 'left' : 'right'}`, move.moved, JSON.stringify(move));
+        }
+      }
+    }
+  }
+
+  // Keep both scroll offsets nonzero for the redraw and return-navigation checks.
+  await horizontal('h2', -60);
+  const { x, y } = await ev(`(() => {
+    const r = document.querySelector('${ready} .w-list').getBoundingClientRect();
+    return { x: 80, y: Math.round(r.top + r.height / 2) };
+  })()`);
+  const [left, top] = await offsets();
+  await drag(x, y, 0, -150);
+  const [upLeft, upTop] = await offsets();
+  await drag(x, y, 0, 70);
+  const [downLeft, downTop] = await offsets();
+  check('Vertical drags scroll the Ready list in both directions within its lane',
+    upTop > top && downTop < upTop && downTop > 0 && left > 0 && upLeft === left && downLeft === left);
+
+  const link = await ev(`(() => {
+    const list = document.querySelector('${ready} .w-list');
+    for (const el of list.querySelectorAll('.w-title')) {
+      const r = el.getBoundingClientRect();
+      const x = (Math.max(0, r.left) + Math.min(innerWidth, r.right)) / 2, y = r.top + r.height / 2;
+      if (document.elementFromPoint(x, y) !== el) continue;
+      el.focus({ preventScroll: true });
+      return { x, y, hash: el.hash, task: el.closest('[data-task]').dataset.task };
+    }
+  })()`);
+  await ev(`for (let i = 1; i <= 80; i++) window.__taskEvent('task_owner', { title: 'Update ' + i }); 1`);
+  await until(`document.querySelector('[data-task="task_owner"] .w-title')?.textContent === 'Update 80'`);
+  const retained = async () => {
+    const [newLeft, newTop] = await offsets();
+    return newLeft === left && newTop === downTop && await ev(`document.activeElement === document.querySelector('[data-task="${link.task}"] .w-title')`);
+  };
+  check('80 live updates preserve the touched lane offsets and focused link', await retained());
+  await touch('touchStart', [{ x: link.x, y: link.y }]);
+  await touch('touchEnd', []);
+  await until(`location.hash === ${JSON.stringify(link.hash)} && !!document.querySelector('.t-close')`);
+  await ev('history.back()');
+  await until(`!!document.querySelector('${ready} .w-card')`);
+  check('Tapping the exact thread and going Back restores offsets and card focus', await retained());
+}
+
 try {
   await cmd('Page.navigate', { url: `${ORIGIN}/#/` });
   await sleep(1500);
@@ -708,6 +800,8 @@ try {
   await go('#/forum?b=brd_test');
   await ev(`document.querySelector('#forget').click();1`);
   check('Forum Forget token restores login and stops the skin', await ev(`!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !!document.querySelector('body > .top') && !document.body.dataset.skin`));
+
+  await checkLaneTouch(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));
