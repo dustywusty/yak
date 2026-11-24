@@ -65,13 +65,39 @@ await cmd('Page.addScriptToEvaluateOnNewDocument', {source: `(${operatorFixture}
 let failed=0;
 const check=(name,ok,detail='')=>{console.log(`${ok?'PASS':'FAIL'} ${name}${ok?'':` ${detail}`}`);if(!ok)failed++};
 const until=async(expr)=>{for(let n=0;n<70;n++){if(await ev(expr))return;await sleep(50)}throw new Error(`condition failed: ${expr}`)};
-const click=async(name,selector='.op-workspace')=>{await ev(`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(selector+' button')})].find(b=>b.textContent===${JSON.stringify(name)});if(!b)throw new Error('missing button '+${JSON.stringify(name)});b.click();})()`);await sleep(100)};
+async function discloseWorkspace() {
+ await ev("document.querySelectorAll('.op-workspace details:not([open]) > summary').forEach(summary => summary.click())");
+}
+const click=async(name,selector='.op-workspace')=>{
+ await ev(`(() => {
+  const b = [...document.querySelectorAll(${JSON.stringify(selector+' button')})].find(b=>b.textContent===${JSON.stringify(name)});
+  if (!b) throw new Error('missing button ' + ${JSON.stringify(name)});
+  b.closest('details:not([open])')?.querySelector('summary').click();
+  if (!b.checkVisibility()) throw new Error('button is hidden: ' + b.textContent);
+  b.focus();
+  b.click();
+ })()`);
+ await sleep(100);
+};
 const count=()=>ev('window.__op.writes.length');
-const open=async()=>{await ev("document.querySelector('#operator-tools').click()");await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");await ev("{const sel=document.querySelector('.op-workspace select[aria-label=Thread]');sel.value='th';sel.dispatchEvent(new Event('change'));}");await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')")};
+const open=async(expand=true)=>{
+ await ev("document.querySelector('#operator-tools').click()");
+ await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");
+ await ev(`{
+  const sel=document.querySelector('.op-workspace select[aria-label=Thread]');
+  if (sel.value!=='th') {
+   sel.closest('details:not([open])')?.querySelector('summary').click();
+   sel.value='th';sel.dispatchEvent(new Event('change'));
+  }
+ }`);
+ await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
+ if (expand) await discloseWorkspace();
+};
 const confirm=async(name)=>{await until("!!document.querySelector('.op-confirm[open]')");await ev(`(()=>{const b=[...document.querySelectorAll('.op-confirm button')].find(b=>b.textContent===${JSON.stringify(name)});if(!b)throw new Error('missing named confirm');b.click();b.click();})()`);await sleep(150)};
 const cancel=async()=>click('Cancel','.op-confirm');
 async function matrix(action,named=action,setup='',report=check,reject=false){
  const check=report;
+ await discloseWorkspace();
  if(setup)await ev(setup);
  const n=await count();
  await op17027TextFields('.op-workspace',action,check);check(`${action}: Enter in text fields sends nothing`,await count()===n);
@@ -516,11 +542,15 @@ async function renewalClaimViewCase() {
 async function boardSwitchCase() {
  let assertions = 0;
  const assert = (name, ok, detail='') => { assertions++; check(`OP17-005: ${name}`, ok, detail); };
- const selectBoard = async id => ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ const selectBoard = async id => {
+  await discloseWorkspace();
+  await ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ };
  const selectThread = async id => {
   await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");
   await ev(`{const s=document.querySelector('.op-workspace select[aria-label=Thread]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
   await until("!!document.querySelector('[aria-label=\"Task actions\"]')");
+  await discloseWorkspace();
  };
  for (const fail of [false,true]) for (const reply of [false,true]) {
   const variant = `${fail?'failed':'deferred'} discovery, ${reply?'reply':'new thread'}`;
@@ -569,12 +599,14 @@ async function boardSwitchCase() {
     ['Create task','/tasks','Create task']
    ]) {
     await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]') && !document.querySelector('.op-pending')?.textContent.includes('Sending')");
+    await discloseWorkspace();
     await ev("for(const n of document.querySelectorAll('.op-workspace input,.op-workspace textarea'))n.value=n.getAttribute('aria-label').startsWith('Label key')?'tag':n.getAttribute('aria-label').startsWith('Reaction')?'like':'B values'");
     const n = await count(); await click(name); if(named) await confirm(named);
     await until(`window.__op.writes.length>${n}`);
     assert(`new B ${name} uses B destination`,await ev(`window.__op.writes.at(-1).path===${JSON.stringify('/v1/boards/brd_other'+suffix)}`));
     if(name==='Create task') assert('new B task uses B channel',await ev("window.__op.writes.at(-1).body.thread.channel==='other'"),JSON.stringify(await ev('window.__op.writes.at(-1)')));
    }
+   await discloseWorkspace();
    await ev("{const s=document.querySelector('.op-workspace select[aria-label=Thread]');s.value='';s.dispatchEvent(new Event('change'));}");
    await until("!!document.querySelector('.op-workspace input[aria-label^=Title]')");
    await ev("document.querySelector('textarea[aria-label^=Message]').value='B new';document.querySelector('.op-workspace input[aria-label^=Title]').value='B title'");
@@ -680,7 +712,10 @@ async function refreshSelectionCase() {
 async function refreshDiscoveryCase() {
  let assertions = 0;
  const assert = (name, ok) => { assertions++; check(`OP17-007: ${name}`, ok); };
- const selectBoard = async id => ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ const selectBoard = async id => {
+  await discloseWorkspace();
+  await ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ };
  for (const variant of ['initial', 'switch', 'failed', 'empty']) {
   await freshIdentityFixture('window.__op.enableBoardSwitch();');
   try {
@@ -1469,6 +1504,54 @@ async function op17024ProjectionRetryCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-024 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
+async function gateWorkspaceCase() {
+ const key = async (key, code) => {
+  for (const type of ['keyDown', 'keyUp']) await cmd('Input.dispatchKeyEvent', {type, key, code: key, windowsVirtualKeyCode: code});
+ };
+ await cmd('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:false});
+ try {
+  for (const [permissions, approve, changes] of [
+   [null, true, true], [['read','post','label'], false, true],
+   [['read','label','task_admin'], true, false], [['read','post','task_admin'], false, false],
+  ]) {
+   await freshIdentityFixture(`window.__op.permissions=${JSON.stringify(permissions)}`);
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-workspace';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");
+   await ev("location.hash='#/forum?b=brd_test&ch=ops&t=th'");
+   await until("!!document.querySelector('.f-meta button')");
+   await open(false);
+   const review = '.op-workspace [aria-label="Task actions"]';
+   const buttons = await ev(`Array.from(document.querySelectorAll('${review} button')).filter(b=>b.checkVisibility()).map(b=>b.textContent)`);
+   check('gate workspace shows eligible decisions first', JSON.stringify(buttons)===JSON.stringify([...(approve?['Approve and unblock']:[]),...(changes?['Request changes']:[])]));
+   check('gate workspace identifies the selected destination', await ev("document.querySelector('.op-review')?.innerText.includes('Board: test · Channel: ops · Thread: '+window.__op.thread.title)"));
+   check('gate workspace shows the reason', await ev(`document.querySelector('${review}').innerText.includes(window.__op.task.block.reason)`));
+   if (approve || changes) {
+    check('Close has initial focus', await ev("document.activeElement.textContent==='Close'"));
+    await key('Tab',9);
+    check('Tab from Close reaches gate note',await ev("document.activeElement.getAttribute('aria-label')==='Gate note t'"));
+    await key('Tab',9);
+    const first=approve?'Approve and unblock':'Request changes';
+    check('next Tab reaches visible eligible action', await ev(`document.activeElement.textContent===${JSON.stringify(first)} && document.activeElement.getBoundingClientRect().bottom<=innerHeight`));
+   }
+   if (changes) {
+    await click('Request changes');
+    await until("document.querySelector('.op-workspace [role=status]').textContent.includes('Describe the requested changes')");
+   }
+   if (approve) {
+    await ev(`[...document.querySelectorAll('${review} button')].find(b=>b.textContent==='Approve and unblock').focus()`);
+    await op17027Enter();
+    await until("document.activeElement.textContent==='Cancel'");
+    for (const type of ['mousePressed','mouseReleased']) await cmd('Input.dispatchMouseEvent',{type,x:1,y:1,button:'left',clickCount:1});
+    check('outside click leaves confirmation open',await ev("!!document.querySelector('.op-confirm[open]')"));
+    await key('Escape',27);
+    await until("!document.querySelector('.op-confirm') && document.activeElement.textContent==='Approve and unblock'");
+   }
+   check('gate disclosures start closed',await ev("document.querySelectorAll('.op-workspace details').length>=3 && !document.querySelector('.op-workspace details[open]')"));
+   await ev("document.querySelectorAll('.op-workspace details > summary').forEach(summary=>summary.click())");
+   check('opening and disclosing send no writes',await count()===0);
+  }
+ } finally { await cmd('Emulation.clearDeviceMetricsOverride'); }
+}
 async function forumOperatorCase() {
  await freshIdentityFixture();
  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-forum';document.querySelector('#login-form').requestSubmit()");
@@ -1624,7 +1707,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
