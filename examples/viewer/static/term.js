@@ -56,7 +56,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       });
       cur = { boardId, store };
       activityTimer = setInterval(() => activity?.update(), 1000);
-      palette = jumpPalette(paletteItems, 'Jump to a channel or thread');
+      palette = jumpPalette(paletteItems, 'Jump to a channel or thread', rememberFocus);
     }
     open();
     render();
@@ -240,6 +240,24 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
 
   // ---------- render ----------
+  // Capture stable identities before a render detaches the focused node.
+  function rememberFocus(active) {
+    const control = active.dataset.control;
+    const row = active.closest('[data-activity-task]');
+    const index = row ? [...row.querySelectorAll('a')].indexOf(active) : -1;
+    return () => {
+      let target = active;
+      if (!active.isConnected) {
+        if (control) target = root().querySelector(`[data-control="${CSS.escape(control)}"]`);
+        else if (active.matches('.t-agent-activity')) target = activity?.root;
+        else if (row && index >= 0) {
+          const replacement = root().querySelector(`[data-activity-task="${CSS.escape(row.dataset.activityTask)}"]`);
+          target = replacement?.querySelectorAll('a')[index] || activity?.root;
+        } else if (active.id) target = document.getElementById(active.id);
+      }
+      target?.focus({ preventScroll: true });
+    };
+  }
   function render() {
     if (!cur) return;
     const S = st().S;
@@ -248,12 +266,8 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     const view = route.v === 'activity' ? activityView() : route.v === 'mentions' ? mentionsView() : route.t ? threadView() : channelView();
     const active = document.activeElement;
     const sameView = route.key === render.lastKey && root().contains(active);
-    const control = sameView ? active.dataset.control : null;
-    const focusRow = active?.closest('[data-activity-task]');
-    const focusIndex = focusRow ? [...focusRow.querySelectorAll('a')].indexOf(active) : -1;
-    const focusTask = focusRow?.dataset.activityTask;
+    const restoreFocus = sameView ? rememberFocus(active) : null;
     const activityTop = root().querySelector('.t-agent-activity')?.scrollTop || 0;
-    const activityFocused = active?.classList.contains('t-agent-activity');
     const sideTop = root().querySelector('.t-side')?.scrollTop || 0;
     const old = root().querySelector('.t-scroll');
     const keep = old && route.key === render.lastKey ? { top: old.scrollTop, bottom: old.scrollTop + old.clientHeight >= old.scrollHeight - 8 } : null;
@@ -268,7 +282,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
           boards.map((b) => h('option', { value: b.id, selected: b.id === cur.boardId }, b.name)))
         : h('b', { class: 't-boardname' }, S.board.name),
       h('div', { class: 't-me' }, S.me?.handle),
-      h('button', { type: 'button', class: 't-jump', 'data-control': 'jump', onclick: () => palette.open() }, 'Jump to…', h('kbd', {}, '^K')),
+      h('button', { type: 'button', class: 't-jump', 'data-control': 'jump', onclick: (e) => palette.open(e.currentTarget) }, 'Jump to…', h('kbd', {}, '^K')),
       item('@', 'Mentions', unseenMentions, { v: 'mentions' }, route.v === 'mentions'),
       item('~', 'Activity', activityNew, { v: 'activity' }, route.v === 'activity'),
       h('div', { class: 't-sec' }, 'Channels'),
@@ -296,13 +310,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     if (view.activity && liveEl) { liveEl.hidden = false; scroll.prepend(liveEl); }
     activity.root.scrollTop = activityTop;
     side.scrollTop = sideTop;
-    if (sameView && liveEl?.contains(active) && active.isConnected) active.focus({ preventScroll: true });
-    else if (control) root().querySelector(`[data-control="${CSS.escape(control)}"]`)?.focus({ preventScroll: true });
-    if (activityFocused) activity.root.focus({ preventScroll: true });
-    if (focusTask && focusIndex >= 0) {
-      const row = [...activity.root.querySelectorAll('[data-activity-task]')].find((e) => e.dataset.activityTask === focusTask);
-      (row?.querySelectorAll('a')[focusIndex] || activity.root).focus({ preventScroll: true });
-    }
+    restoreFocus?.();
     paintSel();
     if (keep) scroll.scrollTop = keep.bottom ? scroll.scrollHeight : keep.top;
     else if (route.m && scrolledTo !== route.m && document.getElementById(`tm-${route.m}`)) { document.getElementById(`tm-${route.m}`).scrollIntoView({ block: 'start' }); scrolledTo = route.m; }
