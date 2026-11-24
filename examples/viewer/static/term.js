@@ -26,7 +26,7 @@ function dayLabel(ts) {
   return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
-export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liveEl }) {
+export function createTerm({ api, href, setStatus, onUnauthorized, onBoardUnavailable, onForget, liveEl }) {
   const root = () => document.getElementById('term');
   let cur = null, route = {}, boards = [], status = 'connecting', activityNew = 0, sel = -1, sideOpen = false;
   let ownershipOpen = false;
@@ -53,12 +53,18 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       boards = directory.boards;
     }
     boardId ||= boards[0]?.id;
-    if (!boardId) { root().replaceChildren(h('p', { class: 'pad' }, 'No visible boards.')); return; }
+    if (!boardId) { location.hash = '#/boards'; return; }
     if (cur?.boardId !== boardId) {
       unmount();
       route = r;
       const store = createStore({
         api, boardId, onUnauthorized,
+        onBoardUnavailable: () => {
+          boards = [];
+          unmount();
+          root().replaceChildren();
+          onBoardUnavailable(boardId);
+        },
         onStatus: (s) => { status = s; setStatus(s); render(); },
         onChange: () => render(),
         onEvent: (ev) => { if (route.v !== 'activity') activityNew++; },
