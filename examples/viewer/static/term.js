@@ -41,6 +41,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   const go = (r) => { location.hash = href({ board: cur.boardId, ...r }); };
 
   async function mount(r) {
+    if (route.key !== r.key) sideOpen = false;
     route = r;
     let boardId = r.board;
     if (!boards.length || !boardId) boards = (await api('GET', '/v1/boards')).boards;
@@ -86,6 +87,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     cur = null;
     activity = null;
     ownershipOpen = false;
+    sideOpen = false;
     mark = {};
   }
 
@@ -240,6 +242,20 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
 
   // ---------- render ----------
+  const phone = matchMedia('(max-width: 700px)');
+  function setSideOpen(open) {
+    sideOpen = open;
+    const app = root().querySelector('.t-app');
+    if (!app) return;
+    app.classList.toggle('t-sideopen', open);
+    app.querySelector('.t-main').inert = open;
+    const menu = app.querySelector('.t-menu');
+    menu.setAttribute('aria-expanded', String(open));
+    if (phone.matches) (open ? app.querySelector('.t-side-close') : menu).focus();
+  }
+  phone.addEventListener('change', () => {
+    if (sideOpen) setSideOpen(false);
+  });
   // Capture stable identities before a render detaches the focused node.
   function rememberFocus(active) {
     const control = active.dataset.control;
@@ -274,9 +290,10 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     render.lastKey = route.key;
     const activeCh = route.t ? st().thread(route.t)?.channel_path : route.ch;
     const unseenMentions = mentions().filter((m) => m.created_at > (seenOf('@') || '9')).length;
-    const item = (icon, label, count, r, active) => h('a', { class: `t-nav${active ? ' on' : ''}${count ? ' t-unread' : ''}`, 'data-control': href({ board: cur.boardId, ...r }), href: href({ board: cur.boardId, ...r }), onclick: () => { sideOpen = false; } },
+    const item = (icon, label, count, r, active) => h('a', { class: `t-nav${active ? ' on' : ''}${count ? ' t-unread' : ''}`, 'data-control': href({ board: cur.boardId, ...r }), href: href({ board: cur.boardId, ...r }), onclick: () => { if (sideOpen) setSideOpen(false); } },
       h('span', { class: 't-mute' }, icon), ' ', h('span', { class: 't-navlabel' }, label), count ? h('span', { class: 't-pill' }, String(count)) : null);
-    const side = h('aside', { class: 't-side' },
+    const side = h('nav', { class: 't-side', id: 'chat-channels', 'aria-label': 'Channels' },
+      h('button', { type: 'button', class: 't-side-close', 'data-control': 'close-channels', onclick: () => setSideOpen(false) }, 'Close channels'),
       boards.length > 1
         ? h('select', { class: 't-boardsel', 'aria-label': 'Board', 'data-control': 'board', onchange: (e) => { location.hash = href({ board: e.target.value, v: 'activity' }); } },
           boards.map((b) => h('option', { value: b.id, selected: b.id === cur.boardId }, b.name)))
@@ -294,8 +311,9 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
           ' ', h('button', { type: 'button', 'data-control': 'forget', onclick: onForget }, document.body.dataset.operator ? 'Logout (revokes token everywhere)' : 'Forget token'))));
     const scroll = h('div', { class: `t-scroll${view.activity ? ' t-activity' : ''}`, role: 'log' }, view.body);
     activity = createAgentActivity(st(), href, status, { open: ownershipOpen, toggle: () => { ownershipOpen = !ownershipOpen; render(); } });
-    const main = h('section', { class: 't-main' },
-      h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', 'data-control': 'channels', onclick: () => { sideOpen = !sideOpen; render(); } }, '☰'), view.head),
+    const main = h('section', { class: 't-main', inert: sideOpen },
+      h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', 'data-control': 'channels', 'aria-controls': side.id,
+        'aria-expanded': String(sideOpen), onclick: () => setSideOpen(true) }, '☰'), view.head),
       activity.root, scroll,
       view.composer ? h('div', { class: 't-composer' }, document.body.dataset.operator ? h('button', { type: 'button', 'data-control': 'compose', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: cur.boardId, ch: activeCh, t: route.t } })) }, route.t ? 'Reply / task actions' : 'New thread / task') : h('input', { type: 'text', disabled: true, 'aria-label': `${view.composer} (read-only)`, placeholder: `${view.composer} (read-only viewer)` })) : null);
     const hints = route.t ? [['↑↓', 'move'], ['esc', 'close'], ['^K', 'jump'], ['?', 'help']] : [['↑↓', 'move'], ['⏎', 'open'], ['^K', 'jump'], ['?', 'help']];
@@ -306,7 +324,8 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       [['↑ / ↓  or  k / j', 'move the selection'], ['Enter', 'open the selected thread'], ['Esc', 'close the thread or this help'],
         ['Ctrl-K / Cmd-K', 'jump to a channel or thread'], ['g a / g m', 'go to Activity / Mentions'], ['?', 'show or hide this help']]
         .map(([k, v]) => h('div', {}, h('kbd', {}, k), ` ${v}`)), h('p', { class: 't-mute' }, document.body.dataset.operator ? 'Use Operator tools for messages and confirmed task actions.' : 'This viewer is read-only.')) : null;
-    root().replaceChildren(h('div', { class: `t-app${sideOpen ? ' t-sideopen' : ''}`, 'data-theme': theme }, side, main, foot, helpBox));
+    root().replaceChildren(h('div', { class: `t-app${sideOpen ? ' t-sideopen' : ''}`, 'data-theme': theme }, side,
+      h('div', { class: 't-side-backdrop', 'aria-hidden': 'true', onclick: () => setSideOpen(false) }), main, foot, helpBox));
     if (view.activity && liveEl) { liveEl.hidden = false; scroll.prepend(liveEl); }
     activity.root.scrollTop = activityTop;
     side.scrollTop = sideTop;
@@ -330,13 +349,21 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   let gPending = false;
   function onKey(e) {
     if (!cur || document.getElementById('term').hidden || document.querySelector('.jump')) return;
+    if (sideOpen) {
+      if (e.key === 'Escape' && !document.querySelector(':modal')) {
+        e.preventDefault();
+        setSideOpen(false);
+      }
+      return;
+    }
+    if (e.key === 'Enter' && e.target.closest?.('button, a')) return;
     if (e.target.closest?.('.t-agent-activity, input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
     if (gPending) { gPending = false; if (k === 'a') return go({ v: 'activity' }); if (k === 'm') return go({ v: 'mentions' }); }
     if (k === 'ArrowDown' || k === 'j') { e.preventDefault(); move(1); }
     else if (k === 'ArrowUp' || k === 'k') { e.preventDefault(); move(-1); }
     else if (k === 'Enter' && sel >= 0) { const it = items()[sel]; if (it?.dataset.thread) go({ ch: st().thread(it.dataset.thread)?.channel_path, t: it.dataset.thread, m: it.dataset.msg }); }
-    else if (k === 'Escape') { if (help) { help = false; render(); } else if (sideOpen) { sideOpen = false; render(); } else if (route.t) go({ ch: route.ch || st().thread(route.t)?.channel_path }); }
+    else if (k === 'Escape') { if (help) { help = false; render(); } else if (route.t) go({ ch: route.ch || st().thread(route.t)?.channel_path }); }
     else if (k === '?') { help = !help; render(); }
     else if (k === 'g') gPending = true;
   }

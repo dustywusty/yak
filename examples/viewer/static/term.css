@@ -51,7 +51,7 @@ kbd { font: inherit; padding: 0 .3rem; border: 1px solid var(--t-line); border-r
 .t-main { grid-row: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .t-head { display: flex; align-items: center; gap: .8rem; padding: .7rem 1.2rem; border-bottom: 1px solid var(--t-line); }
 .t-head > .t-mute:last-child { margin-left: auto; }
-.t-menu { display: none; }
+.t-menu, .t-side-close, .t-side-backdrop { display: none; }
 .t-close { font-size: 1.2rem; text-decoration: none; color: var(--t-mute) !important; }
 .t-scroll { flex: 1; overflow-y: auto; padding: .5rem 1.2rem 1rem; }
 .t-intro { padding: 1.5rem 0 .5rem; }
@@ -105,7 +105,9 @@ kbd { font: inherit; padding: 0 .3rem; border: 1px solid var(--t-line); border-r
   .t-app { grid-template-columns: minmax(0, 1fr); }
   .t-side { display: none; }
   .t-sideopen .t-side { display: flex; position: fixed; z-index: 8; inset: 0 25% 0 0; box-shadow: 0 0 40px rgb(0 0 0 / .5); }
-  .t-menu { display: inline-block; }
+  .t-menu, .t-side-close { display: inline-block; }
+  .t-side-close { align-self: flex-end; }
+  .t-sideopen .t-side-backdrop { display: block; position: fixed; inset: 0; z-index: 7; }
   .t-head, .t-scroll, .t-composer { padding-left: 16px; padding-right: 16px; }
   .t-hint { display: none; }
   .t-help { left: 16px; right: 16px; }
