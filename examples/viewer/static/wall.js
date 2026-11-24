@@ -33,6 +33,20 @@ export function wall(root, { boardId, route, threadHref }) {
 
   let frame = null, filterKey = '', status = 'resyncing', activity = null, clocks = [];
 
+  function laneMenu() {
+    const jump = h('select', { class: 'w-jump', 'aria-label': 'Jump to lane' },
+      h('option', { value: '', disabled: true, selected: true, hidden: true }, 'Jump to lane'),
+      COLUMNS.map(([key]) => h('option', { value: key })));
+    jump.addEventListener('change', () => {
+      const lane = frame.cols.children[jump.selectedIndex - 1];
+      if (!lane) return;
+      frame.cols.scrollLeft += lane.getBoundingClientRect().left - frame.cols.getBoundingClientRect().left;
+      lane.querySelector('h2').focus({ preventScroll: true });
+      jump.value = '';
+    });
+    return jump;
+  }
+
   function controls(st) {
     const sel = (key, first, options) => {
       const s = h('select', { 'aria-label': first, onchange: e => setFilter(key, e.target.value, st) },
@@ -103,7 +117,7 @@ export function wall(root, { boardId, route, threadHref }) {
   function render(st) {
     if (!st.S.board) return;
     if (!frame) {
-      frame = { head: h('header', { class: 'w-head' }), summary: h('div', { class: 'w-summary' }), bar: h('div', { class: 'w-bar' }), count: h('span', { class: 'w-count' }), cols: h('div', { class: 'w-cols', onclick: rememberCard, tabindex: '0', 'aria-label': 'Task lists; scroll horizontally for more states' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
+      frame = { head: h('header', { class: 'w-head' }), summary: h('div', { class: 'w-summary' }), bar: h('div', { class: 'w-bar' }), jump: laneMenu(), count: h('span', { class: 'w-count' }), cols: h('div', { class: 'w-cols', onclick: rememberCard, tabindex: '0', 'aria-label': 'Task lists; scroll horizontally for more states' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
       root.replaceChildren(h('div', { class: 'w-wrap' }, frame.head, frame.summary, frame.bar, frame.cols), frame.toasts);
     }
     const active = document.activeElement;
@@ -112,6 +126,7 @@ export function wall(root, { boardId, route, threadHref }) {
     const inSummary = !!active?.closest('.w-summary');
     const linkIndex = focusRow ? [...focusRow.querySelectorAll('a')].indexOf(active) : -1;
     const summaryFocus = active === activity?.root;
+    const headingFocus = active?.matches('.w-col h2') ? active.closest('.w-col').dataset.state : null;
     const listFocus = [...frame.cols.querySelectorAll('.w-list')].indexOf(active);
     const filterFocus = active?.closest('.w-filters') ? active.getAttribute('aria-label') : null;
     const selection = filterFocus && active.tagName === 'INPUT' ? [active.selectionStart, active.selectionEnd] : null;
@@ -119,7 +134,11 @@ export function wall(root, { boardId, route, threadHref }) {
     const scrolls = [...frame.cols.children].map((col) => col.querySelector('.w-list').scrollTop);
     // Rebuild controls only when their option lists change; typing keeps focus.
     const key = `${st.S.channels.map((c) => c.path).join(',')}|${[...st.S.actors.keys()].join(',')}`;
-    if (key !== filterKey) { filterKey = key; frame.bar.replaceChildren(controls(st), frame.count); }
+    if (key !== filterKey) {
+      filterKey = key;
+      frame.bar.replaceChildren(controls(st), frame.count, frame.jump);
+      if (active === frame.jump) frame.jump.focus({ preventScroll: true });
+    }
     const all = st.tasks(), shown = all.filter((t) => keep(st, t));
     frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Lanes`), h('span', {}, 'Read-only'));
     frame.count.textContent = `Showing ${shown.length} of ${all.length} tasks`;
@@ -127,14 +146,19 @@ export function wall(root, { boardId, route, threadHref }) {
     frame.summary.replaceChildren(activity.root);
     activity.root.scrollTop = summaryTop;
     clocks = [];
-    frame.cols.replaceChildren(...COLUMNS.map(([key, title]) => {
+    frame.cols.replaceChildren(...COLUMNS.map(([key, title], i) => {
       const list = shown.filter((t) => t.state === key);
+      const option = frame.jump.options[i + 1];
+      const caption = `${title} (${list.length})`;
+      if (option.textContent !== caption) option.textContent = caption;
       if (['completed', 'failed', 'canceled'].includes(key)) list.sort((a, b) => (b.outcome?.at || '').localeCompare(a.outcome?.at || ''));
       const items = h('div', { class: 'w-list', tabindex: '0', 'aria-label': `${title} tasks` }, list.map((t) => card(st, t)),
         !list.length ? h('p', { class: 'w-empty' }, 'No tasks') : null);
-      const col = h('section', { class: `w-col w-col-${key}` }, h('h2', {}, title, h('span', {}, String(list.length))), items);
+      const col = h('section', { class: `w-col w-col-${key}`, 'data-state': key }, h('h2', { tabindex: '-1' }, title, h('span', {}, String(list.length))), items);
       return col;
     }));
+    // Size clock text before restoring offsets so scroll anchoring cannot move the focused card.
+    tick(st);
     // Detached lists cannot take their old scroll offset until they have a layout.
     [...frame.cols.children].forEach((col, i) => { col.querySelector('.w-list').scrollTop = scrolls[i] || 0; });
     if (filterFocus) {
@@ -146,6 +170,7 @@ export function wall(root, { boardId, route, threadHref }) {
       const row = [...root.querySelectorAll(selector)].find((e) => (e.dataset.task || e.dataset.activityTask) === focusTask);
       (row?.querySelectorAll('a')[linkIndex] || (inSummary ? activity.root : frame.cols)).focus({ preventScroll: true });
     } else if (summaryFocus) activity.root.focus({ preventScroll: true });
+    else if (headingFocus) frame.cols.querySelector(`.w-col-${headingFocus} h2`).focus({ preventScroll: true });
     else if (listFocus >= 0) frame.cols.children[listFocus]?.querySelector('.w-list')?.focus({ preventScroll: true });
     if (restore && st.S.cursor) {
       const row = frame.cols.querySelector(`[data-task="${CSS.escape(restore.task)}"]`);
@@ -156,7 +181,6 @@ export function wall(root, { boardId, route, threadHref }) {
       }
       restore = null;
     }
-    tick(st);
   }
 
   function event(ev, st) {

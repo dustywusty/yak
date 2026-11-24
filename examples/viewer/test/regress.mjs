@@ -266,6 +266,68 @@ const state = () => ev(`JSON.stringify({ hash: location.hash, liveInDoc: documen
   rows: [...window.__live.querySelectorAll('#feed li')].map((l) => l.textContent), banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent,
   term: !document.getElementById('term').hidden, calls: window.__fake.calls })`).then(JSON.parse);
 
+// Exercise the lane menu with native type-ahead and Tab, then revisit a card.
+async function checkLaneJump(until) {
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  // Start a fresh history entry after the touch test has restored a scrolled board.
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?lane-jump#/board?b=brd_test' });
+  await until("!!document.querySelector('.w-card')");
+  const menu = "document.querySelector('select[aria-label=\"Jump to lane\"]')";
+  const board = "document.querySelector('.w-cols')";
+  const visible = await ev(`!!${menu}?.getClientRects().length`);
+  check('Phone offers a named lane menu at Ready', visible && await ev(`${board}.scrollLeft === 0`));
+  if (!visible) return;
+  const countsMatch = () => ev(`(() => {
+    const lanes = [...document.querySelectorAll('.w-col h2')];
+    const options = [...${menu}.options].filter(option => option.value);
+    return options.length === 7 && lanes.length === 7 && lanes.every((h, i) =>
+      options[i].value === h.firstChild.textContent.toLowerCase() &&
+      options[i].textContent === h.firstChild.textContent + ' (' + h.lastChild.textContent + ')');
+  })()`);
+  const key = async (key, code, char) => {
+    await cmd('Input.dispatchKeyEvent', { type:'keyDown', key, windowsVirtualKeyCode:code, text:char });
+    await cmd('Input.dispatchKeyEvent', { type:'keyUp', key, windowsVirtualKeyCode:code });
+  };
+  const jump = async (name) => {
+    await ev(`${menu}.focus()`);
+    const letter = name[0];
+    await key(letter, letter.toUpperCase().charCodeAt(0), letter);
+    check('Select ' + name + ' by name and focus its visible heading', await ev(`(() => {
+      const h = document.querySelector('.w-col-${name} h2');
+      return document.activeElement === h && Math.abs(h.getBoundingClientRect().left - ${board}.getBoundingClientRect().left) <= 1;
+    })()`));
+  };
+  check('All seven destinations match headings and counts', await countsMatch());
+  await jump('blocked');
+  await ev(`const channel = document.querySelector('.w-filters select'); channel.value='activity'; channel.dispatchEvent(new Event('change'))`);
+  check('Filtered destinations include the now-empty Blocked lane', await countsMatch() &&
+    await ev(`${menu}.querySelector('[value="blocked"]').textContent === 'Blocked (0)'`));
+  await jump('waiting');
+  await ev("for(let i=0;i<18;i++) window.__addTask('jump_' + i, 'Waiting case ' + i, 'waiting')");
+  await until("document.querySelector('.w-col-waiting h2 span').textContent === '20'");
+  check('Live updates preserve the Waiting heading focus and update menu counts',
+    await countsMatch() && await ev("document.activeElement === document.querySelector('.w-col-waiting h2')"));
+  await key('Tab', 9);
+  const list = "document.querySelector('.w-col-waiting .w-list')";
+  check('Tab from the heading reaches its list without document overflow', await ev(`document.activeElement === ${list} && document.documentElement.scrollWidth === innerWidth`));
+  const link = await ev(`(() => {
+    const a = ${list}.querySelector('[data-task="jump_8"] .w-title');
+    a.scrollIntoView({block:'center', inline:'nearest'});
+    a.focus();
+    return { hash:a.hash, left:${board}.scrollLeft, top:${list}.scrollTop };
+  })()`);
+  await key('Enter', 13, '\r');
+  await until(`location.hash === ${JSON.stringify(link.hash)} && !!document.querySelector('.t-close')`);
+  await ev('history.back()');
+  await until("!!document.querySelector('.w-card')");
+  check('Back from a jumped-to card restores its filter, both offsets and exact link',
+    link.left > 0 && link.top > 0 && await ev(`document.activeElement.hash === ${JSON.stringify(link.hash)} &&
+      document.querySelector('.w-filters select').value === 'activity' && ${board}.scrollLeft === ${link.left} && ${list}.scrollTop === ${link.top}`));
+  await cmd('Emulation.setDeviceMetricsOverride', { width:1280, height:900, deviceScaleFactor:1, mobile:false });
+  check('Desktop keeps horizontal columns without the narrow-screen menu', await ev(`!${menu}.getClientRects().length &&
+    document.querySelector('.w-col-claimed').getBoundingClientRect().left > document.querySelector('.w-col-ready').getBoundingClientRect().left`));
+}
+
 // Exercise the browser's nested scroll handling with native touch input.
 async function checkLaneTouch(until) {
   await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -802,6 +864,7 @@ try {
   check('Forum Forget token restores login and stops the skin', await ev(`!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !!document.querySelector('body > .top') && !document.body.dataset.skin`));
 
   await checkLaneTouch(until);
+  await checkLaneJump(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));
