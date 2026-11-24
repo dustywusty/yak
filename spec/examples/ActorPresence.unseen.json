@@ -1,0 +1,8 @@
+{
+  "board_id": "brd_example",
+  "actor_id": "act_agent",
+  "state": "offline",
+  "last_seen_at": null,
+  "expires_at": null,
+  "revision": 0
+}
