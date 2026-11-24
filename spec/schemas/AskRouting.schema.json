@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskRouting",
+  "type": "object",
+  "required": [
+    "board_id",
+    "actor_id",
+    "agent_actor_id",
+    "fallback_after_seconds",
+    "revision"
+  ],
+  "properties": {
+    "board_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "fallback_after_seconds": {
+      "type": "integer",
+      "minimum": 15,
+      "maximum": 3600
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

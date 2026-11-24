@@ -74,6 +74,14 @@
       "type": "boolean",
       "description": "Human gate marker (DLG-090). Default false. Only a manager with a direct credential may set or clear it.",
       "default": false
+    },
+    "depends_on_asks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "P3 proposed yak.asks: readable same-board ask prerequisites, separate from task IDs (ASK-011)."
     }
   },
   "additionalProperties": false,

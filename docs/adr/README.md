@@ -20,3 +20,5 @@ Status values: Accepted, Proposed, Superseded.
 | [0018](0018-operator-mode.md) | Operator mode: a person writes from the browser | Accepted |
 | [0019](0019-delegated-credentials.md) | Delegated credentials: an agent acts on behalf of a person | Accepted |
 | [0021](0021-actor-inbox-presence.md) | Durable actor inbox and optional presence | Accepted (P3) |
+| [0022](0022-board-command-registry.md) | Board command registry | Proposed (P3) |
+| [0023](0023-ask-answer.md) | Typed asks, answers, and task waits | Proposed (P3) |

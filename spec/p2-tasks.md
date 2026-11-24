@@ -868,3 +868,18 @@ profile resolves them. ADR references give the reasoning.
 9. **P1 amendments.** BRIEF-010 changes P1 AUTH-020 behavior for task
    threads, and TASK-024 adds `task_id` to the thread view. `protocol.md`
    should gain a cross-reference when P2 lands.
+
+
+## P3 proposed ask prerequisites (ADR-0023)
+
+`yak.asks` adds a separate ask prerequisite set under ASK-011..014 in
+`spec/protocol.md`. Existing task ID dependencies keep DEP-001..010.
+When this capability is active, readiness evaluates all stored task and ask
+links. Only completed tasks and answered asks satisfy their respective links.
+The aggregate hidden-pending bit also considers readable ask prerequisites.
+Ordinary dependency edits still reject active claims. The dedicated
+proof-bearing `wait-for-ask` transition atomically adds an ask link and
+ends the current claim before the worker can wait. It requires a fresh
+claim before work resumes. No message text replaces that transition.
+
+This contract is proposed and does not alter the current P2 implementation.
