@@ -354,3 +354,101 @@ the new names without rewriting old records. Both label namespaces remain
 reserved against client writes. Current task-state views use `yak.task.state`.
 Existing server labels on messages remain readable with their stored names.
 See [the upgrade guide](../docs/rename-yak.md) for deployment steps.
+
+## P3 proposed: actor inbox and presence (ADR-0021)
+
+This section specifies planned contracts. The reference server does not yet
+advertise `yak.inbox` or `yak.presence`. Clients MUST check discovery before
+using these routes. Each capability is independent of the other.
+
+- **INBOX-001** `yak.inbox` provides one durable inbox per board and actor.
+  The acting credential selects the actor. Reads and acknowledgments MUST be
+  self-only. Owners and administrators gain no right to another actor's inbox.
+- **INBOX-002** Mention, ask, schedule, and command producers MUST commit an
+  inbox item atomically with their source mutation and record message. An
+  item has `id`, `board_id`, `actor_id`, `source_kind`, `source_id`,
+  `message_id`, `thread_id`, and `created_at`. It MUST NOT copy source content.
+- **INBOX-003** `(board_id, actor_id, source_kind, source_id)` MUST be durable
+  and unique. Source IDs identify messages, asks, schedule occurrences, or
+  command calls. Adding the same mention again MUST NOT create another item.
+  Cleanup of acknowledged items MUST preserve producer uniqueness.
+- **INBOX-004** Production MUST require the recipient's current actor-level
+  `read` on the source channel. A later grant MUST NOT create historical
+  items. Source-specific authorization also applies to each producer.
+- **INBOX-005** `GET /v1/boards/{board_id}/inbox` requires board visibility
+  and credential `read` scope. Every item and `unread_count` MUST apply
+  current source-channel read rights and the credential ceiling. Redacted
+  or inaccessible source messages MUST hide the entire item, including IDs.
+  Counts MUST include only visible unacknowledged items for the caller.
+- **INBOX-006** Reads accept `cursor`, `limit` (1..`limits.max_page_size`),
+  and `wait_ms` (0..`limits.max_wait_ms`). Without a cursor, reads start at
+  the saved acknowledgment. A supplied cursor starts after the greater of
+  its boundary and the saved acknowledgment. Reads MUST NOT acknowledge.
+  Items MUST follow commit order without permanent skips after concurrent commits.
+- **INBOX-007** `InboxPage` returns `items`, `next_cursor`, `ack_cursor`,
+  `caught_up`, `timed_out`, and `unread_count`. Both cursors cover every
+  examined item, including hidden items. `caught_up` means the scan reached
+  the inbox head captured for that page. Cursors MUST hide positions and
+  bind board, actor, history epoch, and effective policy. Servers MUST reject
+  forged cursors and boundaries that the server did not issue to that actor. Wrong board or
+  actor yields `400 validation_failed`. Policy or history changes yield
+  `409 resync_required` with `policy_changed` or `history_reset` respectively.
+- **INBOX-008** `POST /v1/boards/{board_id}/inbox/ack` accepts `{cursor}`
+  from a returned `ack_cursor`. Authorization matches inbox reads and MUST
+  validate the cursor's policy and epoch again. It advances the saved
+  acknowledgment monotonically through that boundary, including hidden items.
+  A repeated or older valid acknowledgment MUST NOT move it backward.
+  An `Idempotency-Key` is required. Replay follows IDEM-005.
+- **INBOX-009** Unacknowledged items, saved acknowledgments, and producer
+  uniqueness MUST survive restart. Unacknowledged items MUST NOT expire
+  with event retention. A policy resync without a cursor MUST resume from
+  the saved acknowledgment. Acknowledgment proves receipt, not execution.
+- **INBOX-010** Inbox waits follow EVT-011, including credential revalidation,
+  policy changes, timeout status, and bounded `wait_ms`. Timeout returns
+  `200`, empty `items`, `timed_out: true`, and continuation cursors. Servers
+  MUST NOT hold a database connection while asleep. Durable storage, not
+  notifications, determines pending work.
+- **INBOX-011** Consumers MUST deduplicate by item ID and coordinate a shared
+  prefix before acknowledgment. Reads from `next_cursor` can wait for new
+  work without acknowledging earlier items. Explicit acknowledgment can
+  discard hidden items. Clients MUST disclose that behavior when seeking it.
+- **INBOX-012** Inbox creation, reads, and acknowledgment MUST NOT broadcast
+  items or counts into the board event stream. Source events retain their
+  existing visibility rules. No generic producer route permits forged items.
+- **PRES-001** `yak.presence` adds optional presence per board and actor.
+  `GET /v1/boards/{board_id}/actors/{actor_id}/presence` returns
+  `ActorPresence`: `board_id`, `actor_id`, `state`, `last_seen_at`,
+  `expires_at`, and `revision`. An actor with no heartbeat has state
+  `offline`, null timestamps, and revision zero.
+- **PRES-002** Presence reads require current `read` on at least one board
+  channel, within the credential ceiling. The target must have a board
+  allow grant or be the caller. Otherwise the route returns `404`. No
+  extra presence-specific right is required. It MUST NOT disclose content,
+  private channel names, another actor's inbox count, or worker activity.
+- **PRES-003** `POST /v1/boards/{board_id}/presence` accepts
+  `PresenceHeartbeatRequest` with `state: online | away | offline` and
+  optional `ttl_seconds`. The caller needs current `read` and `post` on
+  at least one board channel. Identity MUST come from the credential.
+  Ownership metadata MUST NOT permit heartbeats for another actor.
+- **PRES-004** Online and away use default TTL 120 seconds, minimum 15,
+  maximum 300. Discovery MUST advertise `presence_ttl_default_seconds`,
+  `presence_ttl_min_seconds`, and `presence_ttl_max_seconds` with those values.
+  Offline MUST reject `ttl_seconds` and clear `expires_at`. Server time sets
+  `last_seen_at`. Presence reads MUST project expired states as offline.
+  Expired states retain the last heartbeat and its expiry timestamp.
+- **PRES-005** Heartbeats require `Idempotency-Key`. Replay MUST return the
+  current authorized presence projection without refreshing TTL. A new key
+  refreshes TTL and advances the revision. Expiry MUST serialize with new
+  heartbeats and MUST NOT override a later revision.
+- **PRES-006** Each heartbeat and effective expiry emits one
+  `actor.presence_changed` event with payload `{presence: ActorPresence}`,
+  resource type `actor_presence`, resource ID equal to the actor ID, and
+  null channel/thread IDs. Resource revision equals the presence revision.
+  Expiry advances the revision once. Its `effective_at` is the expired
+  heartbeat's `expires_at`. Delivery and replay MUST apply PRES-002.
+  Content filters MUST NOT match this board-level event.
+- **PRES-007** Presence is voluntary publication of a heartbeat and its last
+  seen time. It MUST NOT represent a claim, process observation, successful
+  delivery, or proof that an actor will answer. Presence rows and expiry
+  event uniqueness MUST survive restart. Actor views in a board use the
+  board-scoped presence route. Global actor identity remains unchanged.

@@ -1,0 +1,8 @@
+{
+  "items": [],
+  "next_cursor": "i1.opaque-next",
+  "ack_cursor": "i1.opaque-next",
+  "caught_up": true,
+  "timed_out": true,
+  "unread_count": 0
+}

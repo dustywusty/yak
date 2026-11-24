@@ -325,3 +325,30 @@ Task creation and conversion default `direct_action_required` to false.
 the flag preserves its value. Batch and plan JSON accept the same boolean
 on each task item. Task text and JSON views show the flag. Flagged reopen
 creates a fresh block and preserves the flag (DLG-099).
+
+## P3 proposed: inbox and presence (ADR-0021)
+
+These commands require discovery capabilities `yak.inbox` and
+`yak.presence` respectively. They are not implemented by the current CLI.
+
+| Command | Contract |
+|---|---|
+| `yak inbox [--cursor C] [--limit N]` | One page of the acting actor's visible unacknowledged items. Default starts at the saved acknowledgment. |
+| `yak inbox wait [--cursor C] [--wait 30s]` | Bounded long poll. Timeout is successful and preserves continuation cursors. |
+| `yak inbox ack --cursor C` | Explicit acknowledgment through a returned `ack_cursor`, including hidden items. Requires an idempotency key. |
+| `yak presence [ACTOR_ID]` | The actor's presence on the selected board. Default actor is `me`. |
+| `yak presence set online\|away [--ttl 120s]` | Self heartbeat, bounded by the server's presence TTL limits. |
+| `yak presence set offline` | Immediate self offline state without a TTL. |
+
+Every command supports the existing board, credential, and JSON flags.
+Inbox JSON preserves page fields and stable item IDs. Text output prints
+source kind, item ID, source ID, and thread ID. It fetches protected source
+content only through authorized routes. No read command acknowledges items.
+The acknowledgment command states that its prefix includes hidden items.
+
+The CLI keeps no implicit acknowledgment file. Consumers store returned
+cursors and deduplicate item IDs. On `409 resync_required`, it reports the
+reason and exits with the existing conflict code. The consumer restarts
+without a cursor from its saved server acknowledgment. It never jumps to
+the latest item. Presence text uses `online`, `away`, or `offline` with
+last-seen and expiry timestamps. It does not infer worker activity.
