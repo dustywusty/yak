@@ -47,11 +47,16 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     }
     route = r;
     let boardId = r.board;
-    if (!boards.length || !boardId) boards = (await api('GET', '/v1/boards')).boards;
+    if (!boards.length || !boardId) {
+      const directory = await api('GET', '/v1/boards');
+      if (route !== r) return;
+      boards = directory.boards;
+    }
     boardId ||= boards[0]?.id;
     if (!boardId) { root().replaceChildren(h('p', { class: 'pad' }, 'No visible boards.')); return; }
     if (cur?.boardId !== boardId) {
       unmount();
+      route = r;
       const store = createStore({
         api, boardId, onUnauthorized,
         onStatus: (s) => { status = s; setStatus(s); render(); },
@@ -83,6 +88,7 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
 
   let palette = null, activity = null, activityTimer = null;
   function unmount() {
+    route = {};
     if (!cur) return;
     cur.store.stop();
     clearInterval(activityTimer);
@@ -95,6 +101,14 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     ownershipOpen = false;
     sideOpen = false;
     mark = {};
+  }
+
+  function endSession() {
+    unmount();
+    boards = [];
+    scrolledTo = '';
+    activityNew = 0;
+    root().replaceChildren();
   }
 
   // ---------- derived ----------
@@ -410,5 +424,5 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       ...[...S.threads.values()].map((t) => ({ label: `» ${t.title}`, hint: `#${t.channel_path}`, go: () => go({ ch: t.channel_path, t: t.id }) }))];
   }
 
-  return { mount, unmount, activity: () => route.v === 'activity' };
+  return { mount, unmount, endSession, activity: () => route.v === 'activity' };
 }

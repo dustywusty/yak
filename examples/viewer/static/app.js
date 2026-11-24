@@ -88,7 +88,7 @@ function needToken(message, kind = 'error') {
   document.body.removeAttribute('data-operator');
   feed.stop();
   skins.endSession();
-  term.unmount();
+  term.endSession();
   S.abort.abort();
   S.abort = new AbortController();
   S.token = null; S.me = null;

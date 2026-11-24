@@ -495,6 +495,79 @@ async function sessionFeedbackCase() {
   if(outcome!=='expired') check(`${outcome} makes exactly one revoke attempt`, await ev("window.__revokeCount===1"));
  }
 }
+async function sessionDirectoryCase() {
+ const route = '#/b/brd_test?ch=ops&t=th';
+ const login = async () => {
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-directory';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true' && !!document.querySelector('#term .t-app') && !document.querySelector('#connect').disabled");
+ };
+ const broad = "JSON.stringify(Array.from(document.querySelectorAll('.t-boardsel option'), o => [o.value, o.textContent])) === JSON.stringify([['brd_test','test'],['brd_other','other']])";
+ const narrow = "document.querySelector('.t-boardname')?.textContent==='test' && !document.querySelector('.t-boardsel')";
+ for (const exit of ['logout', 'unmounted logout', '401']) for (const startsBroad of [true, false]) {
+  const label = `${exit}, ${startsBroad ? 'narrower' : 'broader'} directory`;
+  await freshIdentityFixture("window.__singleBoardFetch=window.fetch;");
+  if (startsBroad) await ev("window.__op.enableBoardSwitch()");
+  await ev(`location.hash=${JSON.stringify(route)}`);
+  await login();
+  await until(startsBroad ? broad : narrow);
+  // Logout from a different view exercises teardown after ordinary Chat unmount.
+  if (exit === 'unmounted logout') {
+   await ev("location.hash='#/boards'");
+   await until("document.body.dataset.view==='boards' && !!document.querySelector('#board-list a')");
+  }
+  if (exit === '401') await ev("window.__op.expired=true");
+  else await ev("document.querySelector('#operator-logout').click()");
+  await until("document.body.dataset.view==='login'");
+  check(`${label} clears the previous Chat DOM at teardown`, await ev("!document.querySelector('#term').childElementCount"));
+  await ev(`window.__op.expired=false;window.__op.revoked=false;location.hash=${JSON.stringify(route)}`);
+  if (startsBroad) await ev("window.fetch=window.__singleBoardFetch");
+  else await ev("window.__op.enableBoardSwitch()");
+  await login();
+  check(`${label} reflects this session's directory on the retained route`,
+   await ev(startsBroad ? narrow : broad) && await ev('location.hash') === route);
+ }
+
+ // Complete an old directory body only after the replacement Chat is mounted.
+ await freshIdentityFixture();
+ await ev(`location.hash=${JSON.stringify(route)}`);
+ await login();
+ await until(narrow);
+ await ev(`{
+  const fetchFixture = window.fetch;
+  window.fetch = async (url, opts) => {
+   const response = await fetchFixture(url, opts);
+   if (new URL(url, location.href).pathname === '/v1/boards') {
+    window.fetch = fetchFixture;
+    const body = response.text.bind(response);
+    response.text = async () => {
+     await new Promise(resolve => { window.__releaseDirectory = resolve; });
+     return body();
+    };
+   }
+   return response;
+  };
+  location.hash='#/';
+ }`);
+ await until("typeof window.__releaseDirectory==='function'");
+ await ev("document.querySelector('#operator-logout').click()");
+ await until("document.body.dataset.view==='login'");
+ await ev(`window.__op.revoked=false;window.__op.enableBoardSwitch();location.hash=${JSON.stringify(route)}`);
+ await login();
+ await until(broad);
+ await ev("window.__releaseDirectory();new Promise(resolve => setTimeout(resolve, 0))");
+ await ev("document.querySelector('[data-control=theme]').click()");
+ check('late directory completion preserves the replacement selection and URL',
+  await ev(broad) && await ev("document.querySelector('.t-boardsel').value==='brd_test'") && await ev('location.hash') === route);
+ for (const board of ['brd_other', 'brd_test']) {
+  await ev(`{
+   const select = document.querySelector('.t-boardsel');
+   select.value = ${JSON.stringify(board)};
+   select.dispatchEvent(new Event('change'));
+  }`);
+  await until(`location.hash==='#/b/${board}?v=activity' && document.querySelector('.t-boardsel')?.value==='${board}' && !!document.querySelector('.t-agent-activity')`);
+  check(`Chat retains both choices when switching to ${board} within a session`, await ev(broad));
+ }
+}
 async function identityNavigationCase() {
  let assertions = 0;
  const assert = (name, ok, detail = '') => { assertions++; check(`OP17-003: ${name}`, ok, detail); };
@@ -2128,7 +2201,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['recovery-races', recoveryRacesCase], ['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['session-directory', sessionDirectoryCase], ['recovery-races', recoveryRacesCase], ['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
