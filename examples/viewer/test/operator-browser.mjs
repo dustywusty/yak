@@ -911,6 +911,84 @@ async function cosmeticReceiptCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-019 executed ${assertions} assertions across ${fixtures} fresh cosmetic receipt fixtures`);
 }
+async function gateProjectionCase() {
+ const route = '#/b/brd_test?ch=ops&t=th';
+ const readProjection=()=>ev(`(async()=>{
+   const base='/v1/boards/brd_test';
+   const read=async path=>(await fetch(base+path)).json();
+   const [task,{thread},{messages:[root]}]=await Promise.all([read('/tasks/t'),read('/threads/th'),read('/threads/th/messages')]);
+   return {state:task.state,revision:task.revision,block:task.block,flag:task.direct_action_required,
+    rootGate:root.labels.gate,rootRevision:root.revision,threadGate:thread.labels.gate,threadRevision:thread.revision,
+    events:window.__op.events.map(({type,resource,payload,thread_id})=>({type,thread_id,revision:resource?.revision,
+     reason:payload.reason,before:payload.labels_before,after:payload.labels_after,taskState:payload.task?.state,
+     taskBlock:payload.task?.block,threadGate:payload.thread?.labels.gate,messageGate:payload.message?.labels.gate})),snapshots:window.__op.snapshots};
+  })()`);
+ for (const variant of ['success','label rejected','response dropped']) {
+  const waiting = variant === 'response dropped';
+  const state = waiting ? 'waiting' : 'ready';
+  const gate = variant === 'label rejected' ? 'pending' : 'approved';
+  await freshIdentityFixture(`window.__op.task.dependencies=[{task_id:'prerequisite',state:'${waiting?'ready':'completed'}'}];
+   window.__op.thread.labels.team=window.__op.root.labels.team='Review <A>';
+   window.__op.failLabel=${variant==='label rejected'?1:0};window.__op.dropUnblock=${waiting};`);
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-gate';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  await ev(`location.hash=${JSON.stringify(route)}`);
+  await until("document.querySelector('.t-task-blocked')?.textContent.includes('waiting for review')");
+  const initial=await readProjection();
+  const generation=initial.snapshots;
+  console.log('Gate before confirmation',variant,JSON.stringify(initial));
+  check(variant+' blocked task, root and thread before confirmation',initial.state==='blocked' && initial.revision===3 &&
+   initial.block?.reason==='waiting for review' && initial.flag===true && initial.rootGate==='pending' && initial.threadGate==='pending');
+
+  await open();
+  await click('Approve and unblock');
+  await until("document.querySelector('.op-confirm[open]')?.textContent.includes('waiting for review')");
+  await confirm('Approve and unblock');
+  if (waiting) {
+   await click('Retry same intent');
+   check('dropped response replays identical guarded request',await ev(`(() => {
+    const [first,retry]=window.__op.writes;
+    return first.path.endsWith('/unblock') && first.headers['If-Match']==='"3"' &&
+     !!first.headers['Idempotency-Key'] && JSON.stringify(first)===JSON.stringify(retry);
+   })()`));
+  }
+  const receipt=variant==='label rejected'?'Approved; label not updated':'Saved.';
+  await until(`document.querySelector('.op-receipts')?.textContent.includes(${JSON.stringify(receipt)})`);
+  const trace=await readProjection();
+  console.log('Gate projection',variant,JSON.stringify(trace));
+  check(variant+' task projection',trace.state===state && trace.revision===4 && trace.block===null && trace.flag===true);
+  const changed=gate==='approved';
+  check(variant+' conditional root and thread projections',trace.rootGate===gate && trace.threadGate===gate &&
+   trace.rootRevision===(changed?2:1) && trace.threadRevision===trace.rootRevision);
+  const expected=['task.unblocked','thread.view_invalidated',...(changed?['message.labels_changed','thread.view_invalidated']:[])];
+  const [unblock,stateInvalidation,message,labelInvalidation]=trace.events;
+  check(variant+' event payloads reflect the state at each write',
+   unblock?.reason==='gate approved' && unblock.taskState===state && unblock.taskBlock===null &&
+   stateInvalidation?.reason==='task_state_changed' && stateInvalidation.threadGate==='pending' &&
+   stateInvalidation.before['yak.task.state']==='blocked' && stateInvalidation.after['yak.task.state']===state &&
+   (!changed || (message?.messageGate==='approved' && labelInvalidation?.reason==='root_labels_changed' &&
+    labelInvalidation.threadGate==='approved' && labelInvalidation.before.gate==='pending' && labelInvalidation.after.gate==='approved')));
+  check(variant+' one logical unblock and ordered invalidations',trace.events.every(e=>e.thread_id==='th') && JSON.stringify(trace.events.map(e=>e.type))===JSON.stringify(expected));
+  await click('Close');
+  const rendered=`document.querySelector('.t-task-${state}') && !document.querySelector('.t-task').textContent.includes('waiting for review') &&
+   document.querySelector('.a-heading')?.textContent.includes('${waiting?'1 waiting task':'0 waiting tasks'}') &&
+   document.querySelector('.t-labels')?.textContent.includes('gate=${gate}') &&
+   document.querySelector('.t-labels').textContent.includes('team=Review <A>') &&
+   document.querySelector('.t-text')?.textContent==='<script>window.pwned=1</script>'`;
+  await until(rendered);
+  check(variant+' returned Chat updated from events',await ev('window.__op.snapshots')===generation);
+  await ev("document.querySelector('a[aria-label=\"Close thread\"]').click()");
+  await until(`document.querySelector('.t-title') && (${rendered})`);
+  await ev("document.querySelector('.t-title').click();window.__op.resync=true");
+  await until(`window.__op.snapshots===${generation+1} && !!document.querySelector('.t-h1') && (${rendered})`);
+  const resnapshot=await readProjection();
+  console.log('Gate after resnapshot',variant,resnapshot.snapshots);
+  check(variant+' channel summary and resnapshot preserve approval and user content',
+   JSON.stringify({...resnapshot,snapshots:generation})===JSON.stringify(trace));
+  await ev("document.querySelector('#operator-logout').click()");
+ }
+}
+
 async function op17031ConditionalLabelsCase() {
  let assertions=0, fixtures=0;
  const assert=(name,ok)=>{assertions++;check(`OP17-031: ${name}`,ok);};
@@ -1546,7 +1624,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
@@ -1574,9 +1652,9 @@ try {
   check(`agent unblock is never approval (principal ${principal})`,await ev("document.querySelector('.op-workspace').textContent.includes('not approved')"));
   if(principal)check('delegated provenance shows both actors',await ev("document.querySelector('.op-workspace').textContent.includes('@bot (agent) for @alice (human)')"));
  }
- await ev("window.__op.task.state='blocked';window.__op.events=[];window.__op.thread.labels.gate='approved'");await click('Refresh permissions and state');await sleep(100);
+ await ev("window.__op.task.state='blocked';window.__op.events=[];window.__op.root.labels.gate=window.__op.thread.labels.gate='approved'");await click('Refresh permissions and state');await sleep(100);
  check('display approval cannot hide a blocked gate',await ev("document.querySelector('.op-workspace').textContent.includes('label says approved; task is still blocked')"));
- await ev("window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(100);
+ await ev("window.__op.root.labels.gate=window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(100);
 
  await matrix('Remove approval requirement');check('A13 clear sends only gate flag and If-Match',await ev("JSON.stringify(window.__op.writes.at(-1).body)===''+JSON.stringify({direct_action_required:false}) && !!window.__op.writes.at(-1).headers['If-Match']"));
  await matrix('Require my approval');
@@ -1593,7 +1671,7 @@ try {
  for(const gate of [false,true])await matrix('Create task','Create task',`document.querySelector('input[aria-label^="Task title"]').value='new task';document.querySelector('input[type=checkbox][aria-label^="Needs my approval"]').checked=${gate}`);
  check('A11 no dependencies',await ev("!('depends_on' in window.__op.writes.at(-1).body) && window.__op.writes.at(-1).body.direct_action_required===true"));
  // Reopen the synthetic gate to exercise conflict and ambiguous transport paths.
- await ev("window.__op.task.state='blocked';window.__op.task.current_claim=null;window.__op.task.assignee_actor_id=null;window.__op.conflict=true;window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(150);await click('Approve and unblock');await confirm('Approve and unblock');
+ await ev("window.__op.task.state='blocked';window.__op.task.block={reason:'waiting for review'};window.__op.task.current_claim=null;window.__op.task.assignee_actor_id=null;window.__op.conflict=true;window.__op.root.labels.gate=window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(150);await click('Approve and unblock');await confirm('Approve and unblock');
  check('412 displays conflict review guidance',await ev("document.querySelector('.op-receipts').textContent.includes('Previously read:') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')"));
  await click('Review current state');await sleep(150);await ev("window.__op.dropUnblock=true");await click('Approve and unblock');await confirm('Approve and unblock');check('uncertain intent disables every new write button',await ev("[...document.querySelectorAll('.op-workspace button')].filter(b=>['Send reply','Set label','Create task'].includes(b.textContent)).every(b=>b.disabled)"));await click('Retry same intent');await sleep(150);
  check('ambiguous unblock retry reuses receipt',await ev("window.__op.seenKeys.at(-1)===window.__op.seenKeys.at(-2)"));
