@@ -527,37 +527,40 @@ async function sessionDirectoryCase() {
    await ev(startsBroad ? narrow : broad) && await ev('location.hash') === route);
  }
 
- // Complete an old directory body only after the replacement Chat is mounted.
- await freshIdentityFixture();
- await ev(`location.hash=${JSON.stringify(route)}`);
- await login();
- await until(narrow);
- await ev(`{
-  const fetchFixture = window.fetch;
-  window.fetch = async (url, opts) => {
-   const response = await fetchFixture(url, opts);
-   if (new URL(url, location.href).pathname === '/v1/boards') {
-    window.fetch = fetchFixture;
-    const body = response.text.bind(response);
-    response.text = async () => {
+ // Release the old second page after a new credential has loaded its directory.
+ for (const path of ['#/', '#/boards']) {
+  await freshIdentityFixture();
+  await ev(`location.hash=${JSON.stringify(route)}`);
+  await login();
+  await until(narrow);
+  await ev(`{
+   const original = window.fetch;
+   window.fetch = async (url, opts) => {
+    const u = new URL(url, location.href);
+    if (u.pathname !== '/v1/boards') return original(url, opts);
+    if (!u.searchParams.has('page_token')) return Response.json({boards:[{id:'old',name:'Old board'}],next_page_token:'later'});
+    window.fetch = original;
+    const page = Response.json({boards:[{id:'stale',name:'Stale board'}],next_page_token:'unexpected'});
+    const body = page.text.bind(page);
+    page.text = async () => {
      await new Promise(resolve => { window.__releaseDirectory = resolve; });
      return body();
     };
-   }
-   return response;
-  };
-  location.hash='#/';
- }`);
- await until("typeof window.__releaseDirectory==='function'");
- await ev("document.querySelector('#operator-logout').click()");
- await until("document.body.dataset.view==='login'");
- await ev(`window.__op.revoked=false;window.__op.enableBoardSwitch();location.hash=${JSON.stringify(route)}`);
- await login();
- await until(broad);
- await ev("window.__releaseDirectory();new Promise(resolve => setTimeout(resolve, 0))");
- await ev("document.querySelector('[data-control=theme]').click()");
- check('late directory completion preserves the replacement selection and URL',
-  await ev(broad) && await ev("document.querySelector('.t-boardsel').value==='brd_test'") && await ev('location.hash') === route);
+    return page;
+   };
+   location.hash=${JSON.stringify(path)};
+  }`);
+  await until("typeof window.__releaseDirectory==='function'");
+  await ev("document.querySelector('#operator-logout').click()");
+  await until("document.body.dataset.view==='login'");
+  await ev(`window.__op.revoked=false;window.__op.enableBoardSwitch();location.hash=${JSON.stringify(route)}`);
+  await login();
+  await until(broad);
+  await ev("window.__releaseDirectory();new Promise(resolve => setTimeout(resolve, 0))");
+  await ev("document.querySelector('[data-control=theme]').click()");
+  check(`late directory completion from ${path} preserves the replacement selection and URL`,
+   await ev(broad) && await ev("document.querySelector('.t-boardsel').value==='brd_test' && !document.querySelector('#board-list a')") && await ev('location.hash') === route);
+ }
  for (const board of ['brd_other', 'brd_test']) {
   await ev(`{
    const select = document.querySelector('.t-boardsel');
@@ -611,7 +614,7 @@ async function boardAccessRecoveryCase() {
   }
   return false;
  };
- for (const scenario of ['logout', '401', 'empty', 'later page', 'transient', 'channel retry']) {
+ for (const scenario of ['logout', '401', 'empty', 'later page', 'page failure', 'missing entry', 'transient', 'channel retry']) {
   await freshIdentityFixture("window.__firstBoard=window.fetch;window.__op.enableBoardSwitch()");
   await ev(`location.hash=${JSON.stringify(route)}`);
   await login(true);
@@ -619,7 +622,7 @@ async function boardAccessRecoveryCase() {
   if (scenario==='401') await ev('window.__op.expired=true');
   else await ev("document.querySelector('#operator-logout').click()");
   await until("document.body.dataset.view==='login'");
-  const readable = ['later page','transient','channel retry'].includes(scenario);
+  const readable = ['later page','page failure','missing entry','transient','channel retry'].includes(scenario);
   await ev(`{
    window.__op.revoked=false;window.__op.expired=false;window.__boardReads=0;window.__channelReads=0;
    const scenario=${JSON.stringify(scenario)}, readable=${readable};
@@ -628,15 +631,28 @@ async function boardAccessRecoveryCase() {
    window.fetch=async (url,opts)=>{
     const u=new URL(url,location.href);
     if (u.pathname==='/v1/boards' && scenario==='empty') return Response.json({boards:[],next_page_token:null});
-    if (u.pathname==='/v1/boards' && scenario==='later page') return Response.json(u.searchParams.get('page_token')==='second'
-     ? {boards:[{id:'brd_other',name:'other'}],next_page_token:null}
-     : {boards:[{id:'brd_test',name:'test'}],next_page_token:'second'});
+    if (u.pathname==='/v1/boards' && ['page failure','missing entry'].includes(scenario)) {
+     if (u.searchParams.has('page_token')) return window.__retryDirectory
+      ? Response.json({boards:[{id:'brd_other',name:'test'}],next_page_token:null})
+      : Response.json({detail:'Directory unavailable'},{status:503});
+     return Response.json({boards:[{id:'archive',name:'Archive'},{id:'notes',name:'Notes'}],next_page_token:scenario==='page failure'?'later':null});
+    }
+    if (u.pathname==='/v1/boards' && scenario==='later page') {
+     if (Number(u.searchParams.get('limit')) > 2) return Response.json({detail:'Maximum page size is two'},{status:400});
+     switch (u.searchParams.get('page_token')) {
+      case null: return Response.json({boards:[{id:'archive',name:'Archive'},{id:'notes',name:'Notes'}],next_page_token:'2+/=&'});
+      case '2+/=&': return Response.json({boards:[{id:'brd_other',name:'Review board'}],next_page_token:'3 %25'});
+      case '3 %25': return Response.json({boards:[{id:'brd_test',name:'test'}],next_page_token:null});
+      default: return Response.json({detail:'Incorrect continuation'},{status:400});
+     }
+    }
     if (u.pathname==='/v1/boards/brd_other/channels') {
      window.__channelReads++;
      if (scenario==='channel retry' && window.__channelReads===1) return Response.json({code:'not_found'},{status:404});
     }
     if (u.pathname==='/v1/boards/brd_other') {
      window.__boardReads++;
+     if (scenario==='later page') return Response.json({id:'brd_other',name:'Review board'});
      if (scenario==='logout') await new Promise(resolve=>{window.__denyCurrentBoard=resolve});
      if (scenario==='transient' && window.__boardReads===1) return Response.json({code:'unavailable'},{status:503});
     }
@@ -652,7 +668,43 @@ async function boardAccessRecoveryCase() {
   }
   if (readable) {
    await until("!!document.querySelector('.t-task-blocked')");
-   check(`${scenario} keeps the readable selected board`, await ev('location.hash')===route && await ev('window.__boardReads') >= (scenario==='later page'?1:2));
+   check(`${scenario} keeps the readable selected board`, await ev('location.hash')===route && await ev('window.__boardReads') >= (['later page','page failure','missing entry'].includes(scenario)?1:2));
+   if (scenario==='page failure' || scenario==='missing entry') {
+    check(`${scenario} identifies the readable board from its direct read`, await ev("document.querySelector('.t-boardname')?.textContent==='test' && !document.querySelector('.t-boardsel')"));
+    if (scenario==='page failure') {
+     await ev("document.querySelector('[data-control=switch-board]').click()");
+     await until("document.querySelector('#board-list').innerText.includes('Could not load boards')");
+     check('failed continuation exposes no partial picker links', await ev("!document.querySelector('#board-list a')"));
+     await ev("window.__retryDirectory=true;document.querySelector('#board-list button').focus()");
+     await op17027Enter();
+     await until("document.querySelectorAll('#board-list a').length===3");
+    }
+   }
+   if (scenario==='later page') {
+    check('retained thread, selected board and footer identify the same destination', await ev(`
+     document.querySelector('.t-boardsel')?.value==='brd_other' &&
+     document.querySelector('.t-boardsel option:checked')?.textContent==='Review board' &&
+     document.querySelector('.t-foot').textContent.includes('on Review board') &&
+     document.querySelector('.t-boardsel option[value=brd_test]')?.textContent==='test' &&
+     document.querySelector('.t-close')?.hash==='#/b/brd_other?ch=other' &&
+     !!document.querySelector('#tm-root_other')`));
+    await ev("document.querySelector('[data-control=switch-board]').click()");
+    await until("document.querySelector('#board-list a')?.checkVisibility()");
+    const link = `document.querySelector('#board-list a[href="#/b/brd_other"]')`;
+    check('picker links the page-two board by ID and name', await ev(link + "?.querySelector('strong').textContent==='Review board'"));
+    const last = `document.querySelector('#board-list a[href="#/b/brd_test"]')`;
+    check('picker includes the final page', await ev(last + "?.querySelector('strong').textContent==='test'"));
+    await ev(last+'.focus()');
+    await op17027Enter();
+    await until("location.hash==='#/b/brd_test' && document.querySelector('.t-boardsel')?.value==='brd_test'");
+    await ev("document.querySelector('[data-control=switch-board]').click()");
+    await until(link + "?.checkVisibility()");
+    await ev(link+'.focus()');
+    await op17027Enter();
+    await until("location.hash==='#/b/brd_other' && document.querySelector('.t-foot')?.textContent.includes('on Review board')");
+    await ev("const select=document.querySelector('.t-boardsel');select.value='brd_test';select.dispatchEvent(new Event('change'))");
+    await until("location.hash==='#/b/brd_test?v=activity' && document.querySelector('.t-foot')?.textContent.includes('on test')");
+   }
    continue;
   }
   await until("document.querySelector('#boards').checkVisibility() && document.querySelector('#forget').checkVisibility()");

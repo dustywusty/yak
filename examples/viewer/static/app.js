@@ -157,28 +157,55 @@ function href(r) {
   return `#/b/${encodeURIComponent(r.board)}${qs ? `?${qs}` : ''}`;
 }
 
+async function readBoards(signal) {
+  const boards = [];
+  let token = null;
+  do {
+    const page = await api('GET', '/v1/boards', { page_token: token }, signal);
+    for (const board of page.boards) boards.push(board);
+    token = page.next_page_token;
+  } while (token);
+  return boards;
+}
+
+let navigation;
 async function onRoute() {
+  navigation?.abort();
+  navigation = new AbortController();
+  const signal = AbortSignal.any([navigation.signal, S.abort.signal]);
   if (!S.token) {
     if (document.body.dataset.view !== 'login') showLogin();
     return;
   }
   try {
-    if (!S.me) { S.me = await api('GET', '/v1/me'); renderTop(); }
+    if (!S.me) { S.me = await api('GET', '/v1/me', {}, signal); renderTop(); }
     feed.start();
     const r = parseRoute();
     if (r.view !== 'skin') skins.unmount();
     if (r.view !== 'term') term.unmount();
     feed.setVisible(r.view === 'term' && r.v === 'activity');
     show(r.view);
-    if (r.view === 'term') return await term.mount(r);
+    if (r.view === 'term') return await term.mount(r, signal);
     if (r.view === 'skin') return await skins.mount(r);
-    const { boards } = await api('GET', '/v1/boards');
+    const list = $('board-list');
+    list.replaceChildren();
+    let boards;
+    try {
+      boards = await readBoards(signal);
+    } catch (e) {
+      if (!signal.aborted && e.status !== 401) {
+        list.replaceChildren(h('li', { class: 'muted' }, 'Could not load boards. ',
+          h('button', { type: 'button', onclick: onRoute }, 'Retry')));
+      }
+      return;
+    }
+    if (signal.aborted) return;
     const rows = boards.map((b) => h('li', { class: 'board-row' },
       h('a', { href: href({ board: b.id }) },
         h('strong', {}, b.name),
         b.caller_is_board_admin && h('div', { class: 'muted' }, 'board admin'),
         h('div', { class: 'muted small' }, `created ${new Date(b.created_at).toLocaleString()}`))));
-    $('board-list').replaceChildren(...(rows.length ? rows : [h('li', { class: 'muted' }, 'No visible boards.')]));
+    list.replaceChildren(...(rows.length ? rows : [h('li', { class: 'muted' }, 'No visible boards.')]));
   } catch (e) {
     if (e.name === 'AbortError' || e.status === 401) return;
     banner(e.status === 404 ? 'Board not found or not visible.' : `Error: ${e.message}`);
@@ -267,7 +294,7 @@ $('forget').addEventListener('click', forget);
 const feed = createFeed({ api, h, time, href, onTask: () => {}, onUnauthorized: () => needToken(UNAUTHORIZED), onError: banner });
 const skins = createSkins({ api, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED) });
 const term = createTerm({
-  api, href, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED), onForget: forget, liveEl: $('live'),
+  api, readBoards, href, setStatus, onUnauthorized: () => needToken(UNAUTHORIZED), onForget: forget, liveEl: $('live'),
   onBoardUnavailable: (boardId) => {
     const r = parseRoute();
     if (r.view !== 'term' || (r.board && r.board !== boardId)) return;
