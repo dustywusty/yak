@@ -67,7 +67,8 @@ async function api(method, path, params = {}, signal = S.abort.signal) {
   if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
   if (!res.ok) {
     const err = new ApiError(res.status, body);
-    if (res.status === 401) needToken(UNAUTHORIZED);
+    // Connect handles its own rejection and associates it with the submitted field.
+    if (res.status === 401 && document.body.dataset.view !== 'login') needToken(UNAUTHORIZED);
     throw err;
   }
   return body;
@@ -79,9 +80,9 @@ function loadToken() {
   try { S.token = sessionStorage.getItem(TOKEN_KEY); } catch { S.token = null; }
 }
 
-function needToken(message) {
+function needToken(message, invalidToken = false) {
   if (session?.ending) return;
-  if (session?.active) { session.end({ unauthorized: true }).finally(() => needToken(message)); return; }
+  if (session?.active) { session.end({ unauthorized: true }).finally(() => needToken(message, invalidToken)); return; }
   operatorUI?.clear();
   document.body.removeAttribute('data-operator');
   feed.stop();
@@ -92,14 +93,26 @@ function needToken(message) {
   S.token = null; S.me = null;
   $('board-list').replaceChildren();
   try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* storage blocked */ }
-  showLogin(message);
+  showLogin(message, invalidToken);
 }
 
-function showLogin(message) {
-  show('login');
-  renderTop();
+function setLoginFeedback(message, invalidToken = false) {
+  const token = $('token');
+  if (invalidToken) {
+    token.setAttribute('aria-invalid', 'true');
+    token.setAttribute('aria-describedby', 'login-error');
+  } else {
+    token.removeAttribute('aria-invalid');
+    token.removeAttribute('aria-describedby');
+  }
   $('login-error').hidden = !message;
   $('login-error').textContent = message || '';
+}
+
+function showLogin(message, invalidToken) {
+  show('login');
+  renderTop();
+  setLoginFeedback(message, invalidToken);
   $('token').focus();
 }
 
@@ -201,6 +214,7 @@ $('login-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const v = $('token').value.trim();
   $('token').value = '';
+  setLoginFeedback();
   if (!v || session?.ending) return;
   $('connect').disabled = true;
   S.token = v; S.me = null;
@@ -208,19 +222,19 @@ $('login-form').addEventListener('submit', async (ev) => {
     const [me, server] = await Promise.all([api('GET', '/v1/me'), api('GET', '/v1/server')]);
     if ($('operator-login').checked && S.operatorEnabled) {
       const why = credentialRefusal(me, server, S.serverDate);
-      if (why) throw new Error(why);
+      if (why) return needToken(why, true);
       try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* unavailable */ }
       S.me = me; session.start(me, server, S.serverDate, S.serverMono);
       document.body.dataset.operator = 'true';
       if (!server.capabilities?.includes('yak.credentials.restrictions')) banner("Warning: a stolen token could issue and revoke your credentials. This server has no credential restrictions.");
     } else {
-      if (!me.credential.scopes.every((s) => s === 'read')) throw new Error('A write credential requires operator mode. Use a read-only credential here.');
+      if (!me.credential.scopes.every((s) => s === 'read')) return needToken('A write credential requires operator mode. Use a read-only credential here.', true);
       S.me = me;
       try { sessionStorage.setItem(TOKEN_KEY, v); } catch { /* memory only */ }
     }
     renderTop();
     await onRoute();
-  } catch (e) { needToken(e.status === 401 ? UNAUTHORIZED : e.message); }
+  } catch (e) { needToken(e.status === 401 ? UNAUTHORIZED : e.message, e.status === 401); }
   finally { $('connect').disabled = false; }
 });
 
