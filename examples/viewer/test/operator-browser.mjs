@@ -388,6 +388,46 @@ async function freshIdentityFixture(setup = '') {
   await until("!!window.__op && !!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden && !!document.body && ['login','boards'].includes(document.body.dataset.view)");
  } finally { await cmd('Page.removeScriptToEvaluateOnNewDocument', {identifier}); }
 }
+async function tokenFeedbackCase() {
+ const neutral = "document.querySelector('#token').getAttribute('aria-invalid') !== 'true' && !document.querySelector('#token').hasAttribute('aria-describedby')";
+ await freshIdentityFixture("window.__op.scope=['read'];window.__op.expired=true");
+ check('initial Token has no rejection', await ev(neutral));
+ await ev(`document.querySelector('#login-form').addEventListener('submit', () => {
+   window.__feedbackCleared = (${neutral}) && !document.querySelector('#login-error').textContent;
+ })`);
+ const marker = 'synthetic-token-feedback';
+ const priorPreferences = await ev('JSON.stringify(localStorage)');
+ let echoed = false;
+ const watchConsole = ({data}) => {
+  const event = JSON.parse(data);
+  if (event.method === 'Runtime.consoleAPICalled' && JSON.stringify(event.params.args).includes(marker)) echoed = true;
+ };
+ browser.addEventListener('message', watchConsole);
+ try {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+   await cmd('Input.insertText', {text: marker});
+   await op17027Enter();
+   await until("!document.querySelector('#connect').disabled && document.querySelector('#login-error').textContent.includes('401')");
+   check(`attempt ${attempt} clears earlier feedback on submit`, await ev('window.__feedbackCleared'));
+   const message = await ev("document.querySelector('#login-error').innerText");
+   const tree = (await cmd('Accessibility.getFullAXTree')).result.nodes;
+   const field = tree.find(node => node.role.value === 'textbox' && node.name?.value === 'Token');
+   check(`attempt ${attempt} describes the focused invalid Token`, !!message && field?.description?.value === message &&
+     await ev("document.activeElement.id==='token' && document.activeElement.getAttribute('aria-invalid')==='true'"));
+   check(`attempt ${attempt} announces the visible rejection`, await ev("!!document.querySelector('#login-error').closest('[role=status],[role=alert],[aria-live=polite],[aria-live=assertive]')"));
+   check(`attempt ${attempt} clears the password without echo or persistence`, !echoed && await ev(`!document.querySelector('#token').value && !document.body.innerText.includes(${JSON.stringify(marker)}) && !sessionStorage.length`) && await ev('JSON.stringify(localStorage)') === priorPreferences);
+  }
+ } finally { browser.removeEventListener('message', watchConsole); }
+ await ev("window.__op.expired=false");
+ await cmd('Input.insertText', {text: 'synthetic-valid'});
+ await op17027Enter();
+ await until("document.body.dataset.view==='boards'");
+ check('valid reconnect clears rejection', await ev(neutral + " && !document.querySelector('#login-error').textContent"));
+ await ev("document.querySelector('#forget').click()");
+ check('intentional forget leaves Token neutral', await ev(neutral + " && document.querySelector('#login-error').textContent.includes('forgotten')"));
+ await freshIdentityFixture("window.__op.expired=true;sessionStorage.setItem('yak-viewer-token','synthetic-restored')");
+ check('rejected restored session reports 401 with a neutral Token field', await ev(neutral + " && document.querySelector('#login-error').textContent.includes('401')"));
+}
 async function identityNavigationCase() {
  let assertions = 0;
  const assert = (name, ok, detail = '') => { assertions++; check(`OP17-003: ${name}`, ok, detail); };
@@ -421,6 +461,7 @@ async function identityNavigationCase() {
   assert(`operator login via ${selector} shows session identity`, await ev("!document.querySelector('#operator-session').hidden && document.querySelector('#operator-identity').textContent.includes('@alice (human)') && !sessionStorage.length"));
   await ev(`document.querySelector(${JSON.stringify(selector)}).click()`);
   await cleared(`logout via ${selector}`);
+  assert('intentional logout leaves the empty Token field neutral', await ev("!document.querySelector('#token').hasAttribute('aria-invalid') && !document.querySelector('#token').hasAttribute('aria-describedby')"));
   assert(`logout via ${selector} revokes only its credential`, await ev("window.__op.revoked && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
  }
  for (const [name, setup, operator] of [['rejected read-only credential', 'window.__op.expired=true', false], ['refused operator credential', "window.__op.kind='agent'", true]]) {
@@ -428,6 +469,7 @@ async function identityNavigationCase() {
   await ev(`${setup};document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-invalid-token';document.querySelector('#login-form').requestSubmit()`);
   await until("!!document.querySelector('#login-error') && !document.querySelector('#login-error').hidden && !!document.querySelector('#connect') && !document.querySelector('#connect').disabled");
   await cleared(name);
+  assert(`${name} explains the field rejection`, await ev("document.querySelector('#token').getAttribute('aria-invalid')==='true' && document.querySelector('#token').getAttribute('aria-describedby')==='login-error'"));
   assert(`${name} sends no writes`, await count()===0);
  }
  assert('browser has no exceptions', errors.length===0, errors.join(' | '));
@@ -1800,7 +1842,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
