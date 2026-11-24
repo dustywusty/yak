@@ -73,7 +73,7 @@ export function createOperatorUI({ session, read, route }) {
     return { state: task.state, assignee: task.assignee_actor_id ?? null, claim: task.current_claim?.actor_id ?? null,
       brief_revision: task.brief_revision, revision: task.revision, direct_action_required: task.direct_action_required };
   }
-  async function showConflict(box, intent, source, snapshot, version, statusCode) {
+  async function showConflict(box, intent, source, snapshot, version, error) {
     const here = () => valid(snapshot, version);
     box.classList.add('op-conflict');
     box.replaceChildren('Request rejected. Return to the original destination to review its current state.');
@@ -87,9 +87,12 @@ export function createOperatorUI({ session, read, route }) {
       if (here()) loadChannel(snapshot.channel, snapshot.thread?.id);
     });
     const request = intent.steps[0];
-    const details = { status: statusCode, method: request.method, path: request.path };
+    const details = { status: error.status, method: request.method, path: request.path };
     const technical = h('pre', {});
     box.replaceChildren(heading, facts, inspect, disclosure('Request details', technical));
+    const reported = error.problem?.current_state ?? error.problem?.state;
+    const rejectionState = error.status === 409 && typeof reported === 'string' && reported;
+    if (rejectionState) heading.after(h('p', {}, `State at rejection: ${reported}`));
     technical.textContent = JSON.stringify(details, null, 2);
     if (!before) return;
     try {
@@ -110,6 +113,7 @@ export function createOperatorUI({ session, read, route }) {
       compare('Claim holder', before.claim, after.claim, (id) => person(id, 'Unclaimed'));
       compare('Brief revision', before.brief_revision, after.brief_revision);
       facts.replaceChildren(changes.length ? h('ul', {}, changes) : 'The reviewed task facts are unchanged.');
+      if (rejectionState) facts.prepend(h('p', {}, `State on reread: ${after.state}`));
       technical.textContent = JSON.stringify({ ...details, before, current: after, previous_labels: intent.labels, current_labels: updated.thread.labels }, null, 2);
     } catch {
       if (here()) facts.textContent = 'The updated task could not be read. Review it again before acting.';
@@ -138,11 +142,11 @@ export function createOperatorUI({ session, read, route }) {
         if (valid(snapshot, version)) { source.disabled = false; done?.(); await loadChannel(snapshot.channel, snapshot.thread?.id); }
         else await refreshApprovedTask();
       } catch (e) {
-        if (!session.active || i.generation !== session.generation) return;
+        if (!session.active || session.ending || i.generation !== session.generation) return;
         const cosmetic = i.index > 0;
         if (!cosmetic && [409, 412].includes(e.status)) {
           session.pending.delete(i); source.disabled = false;
-          await showConflict(box, i, source, snapshot, version, e.status);
+          await showConflict(box, i, source, snapshot, version, e);
           return;
         }
         const message = e.status === 404 ? 'Item gone or hidden.' : `${e.problem?.code || 'Request failed'}: ${e.problem?.reason || e.message}${e.problem?.current_state || e.problem?.state ? `; state ${e.problem.current_state || e.problem.state}` : ''}`;
@@ -153,7 +157,7 @@ export function createOperatorUI({ session, read, route }) {
         else {
           session.pending.delete(i); source.disabled = false;
         }
-        if (cosmetic && startingStep === 0 && valid(snapshot, version)) await refreshApprovedTask(box);
+        if (cosmetic && startingStep === 0) await refreshApprovedTask(box);
       }
     };
     execute();
@@ -304,6 +308,7 @@ export function createOperatorUI({ session, read, route }) {
     selectors.querySelector('.op-thread').replaceChildren();
   }
   async function loadChannel(channel, threadId, notice = '', partialReceipt) {
+    const priorFocus = partialReceipt && document.activeElement;
     say(notice);
     const version = ++sequence;
     dismissConfirmations(); resetDestination();
@@ -359,7 +364,11 @@ export function createOperatorUI({ session, read, route }) {
         partialReceipt.replaceWith(receiptPosition);
         selectedReceipt.append(partialReceipt);
         partialReceipt.tabIndex = -1;
-        if (document.activeElement === document.body) partialReceipt.focus();
+        if (document.activeElement === document.body) {
+          // A retained draft may still be the operator's active editing target.
+          if (draftEdits.has(priorFocus) && priorFocus.checkVisibility()) priorFocus.focus();
+          else partialReceipt.focus();
+        }
       }
     } catch (e) {
       if (version === sequence && session.active && !session.ending) {

@@ -1738,6 +1738,90 @@ async function op17024ProjectionRetryCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-024 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
+async function recoveryRacesCase() {
+ const login = async () => {
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value=crypto.randomUUID();document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  await open(false);
+ };
+ for (const variant of ['failed read','later read']) {
+  await freshIdentityFixture("window.__op.task.state='ready';window.__op.task.block=null");
+  await login();
+  await click('Work on this now (while this tab is open)');
+  await until("!!document.querySelector('.op-confirm[open]')");
+  await ev(`{
+   const base=window.fetch, fixture=window.__op;
+   fixture.claimAttempts=0;
+   window.fetch=async (url,opts={})=>{
+    const path=new URL(url,location.href).pathname;
+    if (opts.method==='POST' && path==='/v1/boards/brd_test/tasks/t/claims') {
+     fixture.claimAttempts++;
+     return Response.json({code:'invalid_transition',current_state:'waiting'},{status:409});
+    }
+    if (opts.method==='GET' && path==='/v1/boards/brd_test/tasks/t' && ${variant==='failed read'})
+     return Response.json({code:'unavailable'},{status:503});
+    return base(url,opts);
+   };
+  }`);
+  await confirm('Claim');
+  await until("document.querySelector('.op-conflict') && !document.querySelector('.op-conflict').innerText.includes('Reading updated')");
+  const summary=await ev("document.querySelector('.op-conflict').innerText");
+  check(variant+' preserves the state reported at rejection',summary.includes('State at rejection: waiting'));
+  check(variant+' distinguishes the later read',variant==='failed read' ? summary.includes('could not be read') && !summary.includes('State on reread') : summary.includes('State on reread: ready') && summary.includes('facts are unchanged'));
+  check(variant+' sends one claim attempt',await ev('window.__op.claimAttempts===1 && window.__op.writes.length===0'));
+  await ev("document.querySelector('#operator-logout').click()");
+ }
+ for (const variant of ['refresh','navigate','replace session']) {
+  await freshIdentityFixture("window.__op.enableConfirmationDelay();window.__op.failLabel=1");
+  await login();
+  await ev('window.__op.delayConfirmation=true');
+  await click('Approve and unblock');
+  await confirm('Approve and unblock');
+  await until("typeof window.__op.resolveConfirmation==='function'");
+  await click('Refresh permissions and state');
+  await until("!!document.querySelector('.op-review textarea')");
+  check(variant+' refreshed while unblock still pending',await ev("window.__op.task.state==='blocked' && window.__op.writes.length===1"));
+  if (variant==='navigate') {
+   await ev("const sel=document.querySelector('.op-thread select');sel.value='';sel.dispatchEvent(new Event('change'))");
+   await until("!!document.querySelector('input[aria-label^=Title]')");
+   await ev("document.querySelector('input[aria-label^=Title]').focus()");
+  } else if (variant==='replace session') {
+   await ev("document.querySelector('#operator-logout').click()");
+   await until("document.body.dataset.view==='login'");
+   // The replacement login uses a fresh synthetic credential.
+   await ev("window.__op.revoked=false");
+   await login();
+  }
+  await ev("window.__op.permissions=['read','post','label'];window.__op.resolveConfirmation()");
+  await until("window.__op.task.state==='ready'");
+  if (variant==='replace session') {
+   check('new session receives no old receipt or label write',await ev("!document.querySelector('.op-pending') && window.__op.writes.length===2 && !window.__op.writes.some(w=>w.path.endsWith('/labels'))"));
+  } else {
+   await until("document.querySelector('.op-pending')?.textContent.includes('Retry label only')");
+   check(variant+' sends exactly unblock and conditional label',await ev(`(() => {
+    const [unblock,label]=window.__op.writes;
+    return window.__op.writes.length===2 && unblock.path.endsWith('/tasks/t/unblock') &&
+     unblock.headers['If-Match']==='"3"' && label.path.endsWith('/messages/root/labels') &&
+     label.body.operations[0].expect.value==='pending';
+   })()`));
+   if (variant==='navigate') {
+    check('late partial receipt respects destination and focus',await ev("document.querySelector('.op-thread select').value==='' && document.activeElement.matches('input[aria-label^=Title]')"));
+   } else {
+    await until("!!document.querySelector('[aria-label=\"Task actions\"] h3')");
+    check('same destination reconciles task, grants, receipt and focus',await ev(`(() => {
+     const actions=document.querySelector('[aria-label="Task actions"]');
+     return actions.querySelector('h3').textContent.endsWith(' · ready') && actions.contains(document.activeElement) &&
+      document.activeElement.matches('.op-pending') && !document.querySelector('.op-review textarea,[aria-label="New assignee"]');
+    })()`));
+    await click('Retry label only');
+    await until("document.querySelector('.op-pending')?.textContent.includes('Saved.')");
+    check('same destination retries only original label request',await ev("window.__op.writes.length===3 && JSON.stringify(window.__op.writes[1])===JSON.stringify(window.__op.writes[2])"));
+   }
+  }
+  await ev("document.querySelector('#operator-logout').click()");
+ }
+}
+
 async function partialApprovalFocusCase() {
  const ready = "document.querySelector('[aria-label=\"Task actions\"] h3')?.textContent.endsWith(' · ready')";
  const receipt = "document.querySelector('.op-pending')";
@@ -2045,7 +2129,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['recovery-races', recoveryRacesCase], ['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
