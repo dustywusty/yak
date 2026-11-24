@@ -382,3 +382,33 @@ For unknown names, clients preserve the input as ordinary text. A failed known c
 The CLI never claims that a workflow started after a rejected call.
 A thread with a task returns `409 already_exists`. Start a new linked thread for another command.
 Removal uses the supplied revision and never cancels accepted tasks. A replacement registration gets a new ID.
+
+
+## P3 proposed: asks and answers (ADR-0023)
+
+These commands require `yak.asks`, its inbox capability, and typed blocks.
+They are contracts for a later implementation.
+
+| Command | Contract |
+|---|---|
+| `yak ask THREAD_ID --target ACTOR_ID [--expires TIMESTAMP] [--direct]` | Text from stdin or `--text`. Creates the question, ask and initial inbox item atomically. `--direct` bypasses an existing target-approved agent route. |
+| `yak ask list [--state open] [--target ACTOR_ID] [--recipient ACTOR_ID] [--requester ACTOR_ID]` | Visible asks, with normal pagination. `me` resolves through the credential. |
+| `yak ask show ASK_ID` | Current ask state and ETag. Content uses authorized message reads. |
+| `yak answer ASK_ID --message MESSAGE_ID --message-revision N --if-revision N` | Selects an existing same-thread live reply. Requires explicit target, owner, or authorized delegate identity and current content rights. |
+| `yak ask withdraw ASK_ID --reason TEXT --if-revision N` | Explicit terminal withdrawal by creator, target, or authorized target owner. |
+| `yak ask routing [--agent ACTOR_ID\|--none] [--fallback 120s] [--if-revision N]` | Reads self policy or conditionally updates a human's own policy. Revision zero means no saved policy. |
+| `yak task create ... --depends-on-ask ASK_ID` | Adds a readable ask prerequisite in the creation transaction. Repeatable. |
+| `yak task ask-deps TASK_ID --ask ASK_ID --if-revision N` | Replaces the readable ask prerequisite set. Preserves hidden links. Repeatable `--ask`; `--clear` passes an empty list. |
+| `yak task wait-for-ask TASK_ID --ask ASK_ID --proof-file FILE` | The active claimant adds a prerequisite and releases atomically. It must claim again before work resumes. |
+
+Writes reuse existing idempotency, JSON, credential, and conflict exit rules.
+The CLI never interprets an answer's text as a permission grant. It prints
+the original target separately from the current route recipient. A wait
+result shows `waiting` or `ready` and states that the old claim ended.
+A claim-holding harness must stop its child before this transition. The
+claim proof remains with that harness and never enters the child environment.
+The current `yak run` does not support ask waits. A future integration must
+use an explicit parent request channel and stop the child before releasing
+the claim. A process restart or a fresh scheduled invocation can claim the
+ready task again. Answering alone does not restart a stopped process.
+Unacknowledged inbox items remain independent of ask and task outcomes.

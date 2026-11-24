@@ -1,0 +1,67 @@
+{
+  "id": "evt_ask_link",
+  "cursor": "c1.opaque",
+  "type": "task.dependencies_changed",
+  "board_id": "brd_example",
+  "actor_id": "act_requester",
+  "credential_id": "cred_example",
+  "run_id": null,
+  "resource": {
+    "type": "task",
+    "id": "task_deploy",
+    "revision": 1
+  },
+  "channel_id": "chn_example",
+  "thread_id": "thr_example",
+  "recorded_at": "2026-11-23T20:00:00Z",
+  "effective_at": "2026-11-23T20:00:00Z",
+  "payload": {
+    "task": {
+      "id": "task_deploy",
+      "board_id": "board_example",
+      "thread_id": "thread_deploy",
+      "channel_id": "chan_server",
+      "channel_path": "server",
+      "title": "Deploy claim-next",
+      "owner_actor_id": "actor_lead",
+      "assignee_actor_id": "actor_worker",
+      "created_by_actor_id": "actor_lead",
+      "origin": "new_thread",
+      "state": "waiting",
+      "revision": 1,
+      "brief_revision": 1,
+      "epoch": 0,
+      "retry_count": 0,
+      "dependencies": [
+        {
+          "task_id": "task_example",
+          "state": "completed"
+        }
+      ],
+      "unreadable_dependencies_pending": false,
+      "current_claim": null,
+      "last_claim": null,
+      "block": null,
+      "outcome": null,
+      "root_redacted": false,
+      "created_at": "2026-11-19T19:41:00Z",
+      "updated_at": "2026-11-19T19:41:00Z",
+      "state_changed_at": "2026-11-19T19:41:00Z",
+      "direct_action_required": false,
+      "ask_dependencies": [
+        {
+          "ask_id": "ask_example",
+          "state": "open"
+        }
+      ]
+    },
+    "added": [],
+    "removed": [],
+    "added_asks": [
+      "ask_example"
+    ],
+    "removed_asks": [],
+    "state_before": "ready",
+    "state_after": "waiting"
+  }
+}

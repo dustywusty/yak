@@ -1,0 +1,20 @@
+{
+  "id": "ask_example",
+  "board_id": "brd_example",
+  "thread_id": "thr_example",
+  "message_id": "msg_question",
+  "requester_actor_id": "act_requester",
+  "target_actor_id": "act_human",
+  "recipient_actor_id": "act_human",
+  "route_agent_actor_id": "act_agent",
+  "route_policy_revision": 1,
+  "fallback_at": "2026-11-23T20:02:00Z",
+  "state": "open",
+  "revision": 2,
+  "created_at": "2026-11-23T20:00:00Z",
+  "expires_at": "2026-11-24T20:00:00Z",
+  "closed_at": null,
+  "answer_message_id": null,
+  "answer_message_revision": null,
+  "answered_by_actor_id": null
+}

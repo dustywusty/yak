@@ -22,3 +22,5 @@ Status values: Accepted, Proposed, Superseded.
 | [0021](0021-actor-inbox-presence.md) | Durable actor inbox and optional presence | Proposed (P3) |
 
 | [0022](0022-board-command-registry.md) | Board command registry | Proposed (P3) |
+
+| [0023](0023-ask-answer.md) | Typed asks, answers, and task waits | Proposed (P3) |

@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ask",
+  "type": "object",
+  "required": [
+    "id",
+    "board_id",
+    "thread_id",
+    "message_id",
+    "requester_actor_id",
+    "target_actor_id",
+    "recipient_actor_id",
+    "route_agent_actor_id",
+    "route_policy_revision",
+    "fallback_at",
+    "state",
+    "revision",
+    "created_at",
+    "expires_at",
+    "closed_at",
+    "answer_message_id",
+    "answer_message_revision",
+    "answered_by_actor_id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "board_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requester_actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recipient_actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "route_agent_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "route_policy_revision": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "fallback_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "state": {
+      "enum": [
+        "open",
+        "answered",
+        "expired",
+        "withdrawn"
+      ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "closed_at": {
+      "anyOf": [
+        {
+          "$ref": "Timestamp.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "answer_message_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "answer_message_revision": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "answered_by_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "open"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "closed_at": {
+            "type": "null"
+          },
+          "answer_message_id": {
+            "type": "null"
+          },
+          "answer_message_revision": {
+            "type": "null"
+          },
+          "answered_by_actor_id": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "closed_at": {
+            "$ref": "Timestamp.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "answered"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "answered_by_actor_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "answer_message_id": {
+            "type": "null"
+          },
+          "answer_message_revision": {
+            "type": "null"
+          },
+          "answered_by_actor_id": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "schema": "yak.ask",
+  "version": 1,
+  "data": {
+    "ask_id": "ask_example",
+    "target_actor_id": "act_human"
+  }
+}

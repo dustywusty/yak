@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WaitForAskRequest",
+  "type": "object",
+  "required": [
+    "ask_id"
+  ],
+  "properties": {
+    "ask_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}
