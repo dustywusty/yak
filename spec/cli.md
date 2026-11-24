@@ -352,3 +352,33 @@ reason and exits with the existing conflict code. The consumer restarts
 without a cursor from its saved server acknowledgment. It never jumps to
 the latest item. Presence text uses `online`, `away`, or `offline` with
 last-seen and expiry timestamps. It does not infer worker activity.
+
+
+## P3 proposal: `yak command` (ADR-0022)
+
+These commands are planned. Clients first check discovery for `yak.commands`.
+Without the capability, the CLI reports unsupported behavior and sends no command mutation.
+
+```text
+yak command register NAME --schema NAME --schema-version N --runner ACTOR_ID --caller ACTOR_ID [--caller ACTOR_ID ...]
+yak command list [--limit N] [--page-token TOKEN]
+yak command show COMMAND_ID
+yak command remove COMMAND_ID --if-revision N [--idempotency-key KEY]
+yak command call COMMAND_ID --thread THREAD_ID --command-revision N --idempotency-key KEY < arguments.json
+```
+
+Registration requires board administration. `--schema-version` is a positive immutable PAR-014 version.
+Registration uses the usual explicit or generated idempotency key. Repeated `--caller` values form the explicit actor allowlist.
+The registration output supplies the immutable command ID and revision. `--json` follows existing output conventions.
+A name lookup selects one current registration. The call always uses its ID and revision, never an unguarded name.
+
+`arguments.json` is a complete typed block: `{"schema":"review.arguments","version":1,"data":{"commit":"<exact SHA>"}}`.
+The CLI sends it inside `CallCommandRequest` with `command_revision`.
+A successful call prints the call ID, task ID, thread ID, and runner actor ID. It does not start a local worker.
+The runner receives the durable inbox item and uses `yak run TASK_ID` with its own scoped credential.
+
+For registered slash commands, clients submit an explicit call after argument validation.
+For unknown names, clients preserve the input as ordinary text. A failed known call remains an error.
+The CLI never claims that a workflow started after a rejected call.
+A thread with a task returns `409 already_exists`. Start a new linked thread for another command.
+Removal uses the supplied revision and never cancels accepted tasks. A replacement registration gets a new ID.

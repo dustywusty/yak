@@ -780,7 +780,8 @@
           "enum": [
             "new_thread",
             "converted",
-            "batch"
+            "batch",
+            "command"
           ]
         },
         "batch_id": {

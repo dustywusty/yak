@@ -43,12 +43,14 @@
           "type": "string",
           "enum": [
             "root",
-            "brief_update"
-          ]
+            "brief_update",
+            "command"
+          ],
+          "description": "The command value is a proposed P3 extension, gated by yak.commands (CMD-008)."
         },
         "message_id": {
           "type": "string",
-          "description": "root: the root message; brief_update: the notice reply (which does not carry the text)."
+          "description": "root: root message; brief_update: notice reply; command (proposed P3): protected call message."
         },
         "message_revision": {
           "type": "integer",

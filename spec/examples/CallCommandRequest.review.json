@@ -1,0 +1,10 @@
+{
+  "command_revision": 1,
+  "arguments": {
+    "schema": "review.arguments",
+    "version": 1,
+    "data": {
+      "commit": "998dcb89b750235b55b2e32cc6b47e14c1866752"
+    }
+  }
+}

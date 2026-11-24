@@ -16,7 +16,9 @@ info:
 
     P1 and P2 describe implemented behavior. ADR-0021 adds proposed P3 inbox
     and presence operations, gated by `yak.inbox` and `yak.presence`. The
-    reference server does not yet advertise those capabilities.
+    reference server does not yet advertise those capabilities. ADR-0022 adds
+    proposed commands gated by `yak.commands`; x-yak-stage: proposed-p3 marks
+    those command operations. No proposed capability is enabled by this document.
 
     Object schemas live in
     `spec/schemas/*.schema.json` (JSON Schema 2020-12) and are the single
@@ -131,6 +133,8 @@ servers:
 security:
   - bearerAuth: []
 tags:
+  - name: commands
+    description: Proposed P3 board commands, gated by yak.commands.
   - name: discovery
   - name: identity
   - name: boards
@@ -2630,6 +2634,196 @@ paths:
         authorization: Self only; current read and post on at least one board channel, bounded by credential scopes.
         events: [actor.presence_changed]
 
+  # Proposed P3 operations: capability yak.commands, ADR-0022.
+  /v1/boards/{board_id}/commands:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+    get:
+      operationId: listCommands
+      tags: [commands]
+      summary: List active board command metadata (proposed P3).
+      x-yak-stage: proposed-p3
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: Proposed P3 response. Current authorization applies on replay.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandPage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: registerCommand
+      tags: [commands]
+      summary: Register an immutable command definition (proposed P3).
+      x-yak-stage: proposed-p3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterCommandRequest" }
+            examples:
+              review: { externalValue: ./examples/RegisterCommandRequest.review.json }
+      responses:
+        "201":
+          description: Proposed P3 response. Current authorization applies on replay.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardCommand" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-yak:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: Board administrator bounded by board_admin credential scope.
+        events: [command.registered]
+  /v1/boards/{board_id}/commands/{command_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/CommandId"
+    get:
+      operationId: getCommand
+      tags: [commands]
+      summary: Read command metadata, including a removal tombstone (proposed P3).
+      x-yak-stage: proposed-p3
+      responses:
+        "200":
+          description: Proposed P3 response. Current authorization applies on replay.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardCommand" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: removeCommand
+      tags: [commands]
+      summary: Remove a command without canceling accepted tasks (proposed P3).
+      x-yak-stage: proposed-p3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyOptional"
+        - $ref: "#/components/parameters/IfMatchRequired"
+      responses:
+        "200":
+          description: Proposed P3 response. Current authorization applies on replay.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardCommand" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-yak:
+        idempotency: optional
+        idempotency_namespace: board
+        precondition: If-Match required
+        authorization: Board administrator bounded by board_admin credential scope.
+        events: [command.removed]
+  /v1/boards/{board_id}/threads/{thread_id}/commands/{command_id}/calls:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/ThreadId"
+      - $ref: "#/components/parameters/CommandId"
+    post:
+      operationId: callCommand
+      tags: [commands]
+      summary: Atomically create one call, message, task, brief and inbox item (proposed P3).
+      description: |
+        CMD-004..014 apply. Requires an existing thread without a task and a live root.
+        The body pins the command revision and exact immutable argument schema.
+        A replay resolves its accepted call before the active-registration check.
+        Arguments are validated before writes. A hidden thread returns 404.
+      x-yak-stage: proposed-p3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CallCommandRequest" }
+            examples:
+              review: { externalValue: ./examples/CallCommandRequest.review.json }
+      responses:
+        "201":
+          description: Proposed P3 response. Current authorization applies on replay.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandCall" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+      x-yak:
+        idempotency: required
+        idempotency_namespace: board
+        precondition: none
+        authorization: Current read and post, caller allowlist, TASK-011 conversion authority; runner holds read, post and claim independently.
+        events: [message.created, task.created, thread.view_invalidated, command.called]
+        errors:
+          "409 already_exists": Thread already contains a task, including a terminal task.
+          "409 invalid_transition": Removed registration or tombstoned root.
+          "412 revision_conflict": command_revision differs from the registration revision.
+  /v1/boards/{board_id}/command-calls/{call_id}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/CommandCallId"
+    get:
+      operationId: getCommandCall
+      tags: [commands]
+      summary: Read call references with current thread authorization (proposed P3).
+      x-yak-stage: proposed-p3
+      responses:
+        "200":
+          description: Proposed P3 response. Current authorization applies on replay.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotent-Replayed: { $ref: "#/components/headers/Idempotent-Replayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandCall" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2647,6 +2841,12 @@ components:
     InboxAck: { $ref: ./schemas/InboxAck.schema.json }
     ActorPresence: { $ref: ./schemas/ActorPresence.schema.json }
     PresenceHeartbeatRequest: { $ref: ./schemas/PresenceHeartbeatRequest.schema.json }
+    CommandSchemaRef: { $ref: ./schemas/CommandSchemaRef.schema.json }
+    RegisterCommandRequest: { $ref: ./schemas/RegisterCommandRequest.schema.json }
+    BoardCommand: { $ref: ./schemas/BoardCommand.schema.json }
+    CommandPage: { $ref: ./schemas/CommandPage.schema.json }
+    CallCommandRequest: { $ref: ./schemas/CallCommandRequest.schema.json }
+    CommandCall: { $ref: ./schemas/CommandCall.schema.json }
     Timestamp: { $ref: ./schemas/Timestamp.schema.json }
     ChannelPath: { $ref: ./schemas/ChannelPath.schema.json }
     Capability: { $ref: ./schemas/Capability.schema.json }
@@ -2728,6 +2928,8 @@ components:
     RootRedactionRequest: { $ref: ./schemas/RootRedactionRequest.schema.json }
 
   parameters:
+    CommandCallId: { name: call_id, in: path, required: true, schema: { type: string, minLength: 1 } }
+    CommandId: { name: command_id, in: path, required: true, schema: { type: string, minLength: 1 } }
     BoardId: { name: board_id, in: path, required: true, schema: { type: string, minLength: 1 } }
     ChannelId: { name: channel_id, in: path, required: true, schema: { type: string, minLength: 1 } }
     GrantId: { name: grant_id, in: path, required: true, schema: { type: string, minLength: 1 } }

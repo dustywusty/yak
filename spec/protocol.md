@@ -452,3 +452,45 @@ using these routes. Each capability is independent of the other.
   delivery, or proof that an actor will answer. Presence rows and expiry
   event uniqueness MUST survive restart. Actor views in a board use the
   board-scoped presence route. Global actor identity remains unchanged.
+
+
+## P3 proposal: board commands (ADR-0022)
+
+These requirements apply only when discovery advertises `yak.commands`.
+They describe a proposed extension, not current P1 or P2 server behavior.
+The extension depends on PAR-014 typed blocks, P2 tasks, and ADR-0021 inbox delivery.
+
+- **CMD-001** A command server MUST advertise `yak.commands` only after it implements the complete extension.
+- **CMD-002** Registration MUST bind an immutable ID, active unique lowercase name, board schema version, runner actor, and explicit caller allowlist.
+  Registration and removal require board administration, bounded by the credential's `board_admin` scope.
+- **CMD-003** Registry reads MUST require board visibility and a `read` scope. They expose metadata only, never argument values.
+- **CMD-004** A call MUST pin the registration ID and revision and validate the `{schema, version, data}` block against its registered schema.
+  An unknown schema or mismatched version returns `400 validation_failed`. PAR-014 limits apply before commit.
+- **CMD-005** A caller MUST hold current channel `read` and `post`, appear in the allowlist, and satisfy TASK-011 conversion authority.
+  The runner MUST independently hold channel `read`, `post`, and `claim`. Neither registration nor assignment grants rights.
+- **CMD-006** A thread MUST retain its single-task invariant (TASK-013). Calls to task threads return `409 already_exists` without writes.
+  A tombstoned root returns `409 invalid_transition`. Conversion and call creation serialize against each other.
+- **CMD-007** The server MUST create the call, typed message, assigned ready task, initial brief, events, and inbox item atomically.
+  The caller owns the task. The registered runner is its assignee.
+- **CMD-008** For command-created tasks, the server MUST amend TASK-014 and TASK-021 with `origin: command` and call-message brief provenance.
+  The initial brief copies canonical argument JSON and the command name from the call message.
+  The brief source has `kind: command`, `message_id`, and `message_revision`.
+- **CMD-009** The server MUST protect authoritative call messages from ordinary edits or deletion with `409 task_root_protected`.
+  Task-aware redaction MUST scrub their brief copies and cancel unfinished work. Root redaction also scrubs command briefs.
+- **CMD-010** The inbox producer MUST use `source_kind: command` and the stable call ID as `source_id`, with the call message and thread references.
+  ADR-0021 uniqueness and current authorization apply. No argument snapshot is retained in the item.
+- **CMD-011** Registration and call routes MUST require `Idempotency-Key`. Removal accepts the key under ADR-0003.
+  Retries MUST return the same identities without another task, message, inbox item, or event.
+- **CMD-012** Call receipts MUST commit with their resources and survive restart. Replay MUST use current channel authorization before projection.
+  Changed requests under one key return `409 idempotency_conflict`. Receipt expiry never bypasses TASK-013.
+- **CMD-013** Removal MUST require `If-Match`, retain a tombstone, and reject new calls to that ID.
+  Accepted calls remain valid. Replacement registrations MUST receive new IDs, even when they reuse the name.
+- **CMD-014** Call reads MUST require current channel `read` and return `404` for hidden threads.
+  Replays of accepted calls resolve before the active-registration check, so removal does not invalidate an authorized receipt.
+- **CMD-015** Runners MUST claim and settle through P2 with their own credentials and post progress and results in the same thread.
+  Prose and result text confer no additional authority. Inbox acknowledgement never completes a task.
+- **CMD-016** Clients MUST preserve unknown slash commands as ordinary text. Stored message text MUST NOT invoke a command automatically.
+
+Planned acceptance maps CMD-001..004 to registration and schema tests, CMD-005..010 to atomic authorization and brief tests,
+CMD-011..014 to concurrent replay, restart, replacement, and revocation tests, and CMD-015..016 to the worked reviewer flow.
+Wire schemas and examples are checked by the existing offline conformance harness.
