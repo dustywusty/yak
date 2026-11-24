@@ -272,6 +272,55 @@ async function chatKey(key, code, modifiers = 0) {
   await cmd('Input.dispatchKeyEvent', { ...event, type: 'keyUp' });
 }
 
+async function checkInputHints(until) {
+  function luminance(rgb) {
+    const [r, g, b] = rgb.map(channel => {
+      const s = channel / 255;
+      return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+
+  async function checkMedia(selector, label) {
+    for (const media of ['light', 'dark']) {
+      await cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: media }] });
+      await until(`matchMedia('(prefers-color-scheme: ${media})').matches`);
+      const sample = await ev(`(() => {
+        const input = document.querySelector('${selector}');
+        const hint = getComputedStyle(input, '::placeholder');
+        return { color: hint.color, opacity: Number(hint.opacity), background: getComputedStyle(input).backgroundColor,
+          visible: input.matches(':placeholder-shown') && !!input.getClientRects().length };
+      })()`);
+      const channels = color => color.match(/[\d.]+/g).map(Number);
+      const [r, g, b, a = 1] = channels(sample.color);
+      const background = channels(sample.background);
+      const alpha = sample.opacity * a;
+      const ink = [r, g, b].map((c, i) => alpha * c + (1 - alpha) * background[i]);
+      const [dark, light] = [luminance(background), luminance(ink)].sort((x, y) => x - y);
+      const ratio = (light + 0.05) / (dark + 0.05);
+      check(`${label}, ${media} media placeholder contrast ${ratio.toFixed(2)}:1`,
+        sample.visible && (background[3] ?? 1) === 1 && ratio >= 4.5, JSON.stringify(sample));
+    }
+  }
+
+  await go('#/b/brd_test?ch=ops');
+  for (const theme of ['dark', 'light']) {
+    if (await ev("document.querySelector('.t-app').dataset.theme") !== theme) {
+      await ev("document.querySelector('[data-control=theme]').click()");
+    }
+    await until(`document.querySelector('.t-app').dataset.theme === '${theme}'`);
+    await chatKey('k', 75, 2);
+    await until("document.activeElement.matches('.jump input')");
+    await checkMedia('.jump input', theme + ' Chat Jump');
+    await chatKey('Escape', 27);
+  }
+  await go('#/boards');
+  await ev("document.querySelector('#forget').click()");
+  await until("document.activeElement.id === 'token'");
+  await checkMedia('#token', 'Connect');
+  await cmd('Emulation.setEmulatedMedia', { features: [] });
+}
+
 async function checkChatTaskIdentity(until) {
   await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await cmd('Page.navigate', { url: ORIGIN + '/index.html?task-identity#/board?b=brd_test' });
@@ -1179,6 +1228,7 @@ try {
   await checkChatHelp(until);
   await checkThreadOwnership(until);
   await checkChatTaskIdentity(until);
+  await checkInputHints(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));

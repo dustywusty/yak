@@ -40,6 +40,7 @@ kbd { font: inherit; padding: 0 .3rem; border: 1px solid var(--t-line); border-r
 .t-live { color: var(--t-ok); }
 .t-reconnecting { color: var(--t-bad); }
 .t-resyncing { color: var(--t-warn); }
+body[data-view=term] .jump input::placeholder { color: #b1b3bd; opacity: 1; }
 .t-jump { display: flex; justify-content: space-between; margin: 0 .2rem .7rem; color: var(--t-mute) !important; background: var(--t-bg) !important; }
 .t-sec { margin: .8rem .4rem .2rem; color: var(--t-mute); }
 .t-nav { display: flex; gap: .3rem; align-items: center; padding: .1rem .4rem; border-radius: 3px; color: var(--t-mute) !important; text-decoration: none; min-width: 0; }
