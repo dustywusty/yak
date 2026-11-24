@@ -120,13 +120,12 @@ kbd { font: inherit; padding: 0 .3rem; border: 1px solid var(--t-line); border-r
 .t-filter { color: var(--t-acc); }
 .t-filter a { text-decoration: none; margin-left: .2rem; }
 
-.a-toggle { display: none; }
+.t-main .a-heading:has(.a-toggle) { align-items: center; }
+.t-main .t-agent-activity:has(.a-toggle[aria-expanded=false]) { min-height: 0; }
+.t-main .t-agent-activity:has(.a-toggle[aria-expanded=false]) #chat-ownership-details { display: none; }
 @media (max-width: 700px) {
   .t-main .a-heading { display: grid; grid-template-columns: 1fr auto; align-items: center; }
   .t-main .a-counts { grid-column: 1 / -1; grid-row: 2; }
-  .a-toggle { display: block; }
-  .t-main .t-agent-activity:has(.a-toggle[aria-expanded=false]) { min-height: 0; }
-  .t-main .t-agent-activity:has(.a-toggle[aria-expanded=false]) #chat-ownership-details { display: none; }
 }
 
 /* Board activity stays visible above the chat, with its own bounded scroll. */
