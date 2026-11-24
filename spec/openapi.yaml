@@ -16,7 +16,8 @@ info:
 
     P1 and P2 describe implemented behavior. ADR-0021 adds proposed P3 inbox
     and presence operations, gated by `yak.inbox` and `yak.presence`. The
-    reference server does not yet advertise those capabilities.
+    reference server does not yet advertise those capabilities. ADR-0023
+    adds proposed `yak.asks` routes, gated by inbox and PAR-014 typed blocks.
 
     Object schemas live in
     `spec/schemas/*.schema.json` (JSON Schema 2020-12) and are the single
@@ -2630,6 +2631,360 @@ paths:
         authorization: Self only; current read and post on at least one board channel, bounded by credential scopes.
         events: [actor.presence_changed]
 
+  "/v1/boards/{board_id}/asks":
+    parameters: [{"$ref": "#/components/parameters/BoardId"}, {"$ref": "#/components/parameters/XRequestId"}]
+    get:
+      operationId: "listAsks"
+      tags: ["identity"]
+      summary: "Proposed P3 authorized asks."
+      description: "ASK-004. Filters combine with AND; pages and replay recheck current source authorization."
+      responses:
+        "200":
+          description: "Current authorized projection."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Current source read; hide question-redacted asks."
+      parameters: [{"name": "state", "in": "query", "schema": {"type": "string", "enum": ["open", "answered", "expired", "withdrawn"]}}, {"name": "target_actor_id", "in": "query", "schema": {"type": "string"}}, {"name": "recipient_actor_id", "in": "query", "schema": {"type": "string"}}, {"name": "requester_actor_id", "in": "query", "schema": {"type": "string"}}, {"$ref": "#/components/parameters/PageToken"}, {"$ref": "#/components/parameters/Limit"}]
+    post:
+      operationId: "createAsk"
+      tags: ["identity"]
+      summary: "Proposed P3 typed question and durable delivery."
+      description: "ASK-001..003,008. Creates question, reserved block, ask, and initial inbox item atomically. Target policy controls optional routing. Source expiry must be future server time."
+      responses:
+        "201":
+          description: "Current authorized projection."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ask"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Current thread read and post; target actor-level source read. Caller cannot appoint an agent."
+        idempotency: "required"
+        precondition: "none"
+        events: ["message.created", "ask.created"]
+      parameters: [{"$ref": "#/components/parameters/IdempotencyKey"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAskRequest"
+  "/v1/boards/{board_id}/asks/{ask_id}":
+    parameters: [{"$ref": "#/components/parameters/BoardId"}, {"$ref": "#/components/parameters/XRequestId"}, {"name": "ask_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}}]
+    get:
+      operationId: "readAsk"
+      tags: ["identity"]
+      summary: "Proposed P3 current question outcome."
+      description: "ASK-003..004,009. Materialize due expiry and fallback before projection. ETag carries the effective ask revision."
+      responses:
+        "200":
+          description: "Current authorized projection."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ask"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Current source read; hide question-redacted asks."
+  "/v1/boards/{board_id}/asks/{ask_id}/answer":
+    parameters: [{"$ref": "#/components/parameters/BoardId"}, {"$ref": "#/components/parameters/XRequestId"}, {"name": "ask_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}}]
+    post:
+      operationId: "markAskAnswer"
+      tags: ["identity"]
+      summary: "Proposed P3 select a same-thread reply."
+      description: "ASK-005..006,009,012. Check ask ETag and live reply revision. Due expiry wins. At fallback time the agent loses authority. Selected answer edits are protected. Answered satisfies every linked waiting task atomically but never unblocks a manual human gate."
+      responses:
+        "200":
+          description: "Current authorized projection."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ask"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Current source read and post; target, current target owner, or current explicitly authorized routed agent."
+        idempotency: "required"
+        precondition: "If-Match required"
+        events: ["message.created", "ask.answered", "task.became_ready", "thread.view_invalidated"]
+      parameters: [{"$ref": "#/components/parameters/IdempotencyKey"}, {"$ref": "#/components/parameters/IfMatchRequired"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkAskAnswerRequest"
+  "/v1/boards/{board_id}/asks/{ask_id}/withdraw":
+    parameters: [{"$ref": "#/components/parameters/BoardId"}, {"$ref": "#/components/parameters/XRequestId"}, {"name": "ask_id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1}}]
+    post:
+      operationId: "withdrawAsk"
+      tags: ["identity"]
+      summary: "Proposed P3 withdraw an open question."
+      description: "ASK-016. Reason required. Terminal asks cannot transition again; withdrawn prerequisites remain unsatisfied."
+      responses:
+        "200":
+          description: "Current authorized projection."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ask"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Current source read and post; creator, target or current target owner. Routed-agent identity alone is insufficient."
+        idempotency: "required"
+        precondition: "If-Match required"
+        events: ["ask.withdrawn"]
+      parameters: [{"$ref": "#/components/parameters/IdempotencyKey"}, {"$ref": "#/components/parameters/IfMatchRequired"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WithdrawAskRequest"
+  "/v1/boards/{board_id}/ask-routing":
+    parameters: [{"$ref": "#/components/parameters/BoardId"}, {"$ref": "#/components/parameters/XRequestId"}]
+    get:
+      operationId: "readAskRouting"
+      tags: ["identity"]
+      summary: "Proposed P3 self routing policy."
+      description: "ASK-007. Missing policy returns revision zero with null agent and delay 120."
+      responses:
+        "200":
+          description: "Current authorized projection."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskRouting"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Self only; board visible with credential read scope."
+    put:
+      operationId: "setAskRouting"
+      tags: ["identity"]
+      summary: "Proposed P3 publish or disable self routing consent."
+      description: "ASK-007..009. If-Match revision zero creates a policy. Changing or disabling a policy immediately revokes prior routed-agent answer authority. Recorded in audit; policy contents never appear in board events."
+      responses:
+        "200":
+          description: "Current authorized projection."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskRouting"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Human acting as self with current read and post on a board channel; nominated agent must currently be owned by that human."
+        idempotency: "not_applicable"
+        precondition: "If-Match required"
+        events: []
+      parameters: [{"$ref": "#/components/parameters/IfMatchRequired"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAskRoutingRequest"
+  "/v1/boards/{board_id}/tasks/{task_id}/ask-dependencies":
+    parameters: [{"$ref": "#/components/parameters/BoardId"}, {"$ref": "#/components/parameters/XRequestId"}, {"$ref": "#/components/parameters/TaskId"}]
+    put:
+      operationId: "setTaskAskDependencies"
+      tags: ["tasks"]
+      summary: "Proposed P3 replace readable ask prerequisites."
+      description: "ASK-011..013. Preserve hidden ask links and task prerequisite links. Combined limit applies. Evaluate all stored links, including hidden ones."
+      responses:
+        "200":
+          description: "Current authorized projection."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Task manager; added asks readable and same board; no active claim or terminal task."
+        idempotency: "not_applicable"
+        precondition: "If-Match required"
+        events: ["task.dependencies_changed", "thread.view_invalidated"]
+      parameters: [{"$ref": "#/components/parameters/IfMatchRequired"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAskDependenciesRequest"
+  "/v1/boards/{board_id}/tasks/{task_id}/wait-for-ask":
+    parameters: [{"$ref": "#/components/parameters/BoardId"}, {"$ref": "#/components/parameters/XRequestId"}, {"$ref": "#/components/parameters/TaskId"}]
+    post:
+      operationId: "waitTaskForAsk"
+      tags: ["tasks"]
+      summary: "Proposed P3 add an ask prerequisite and release the current claim."
+      description: "ASK-014. Atomic special transition returns waiting unless all prerequisites are satisfied. A raced answer can yield ready. Old claim proof ends; work resumes only under a fresh claim."
+      responses:
+        "200":
+          description: "Current authorized projection."
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+      x-yak:
+        capability: "yak.asks"
+        status: "proposed"
+        authorization: "Current active claimant with task read and claim and ask read; manager role not required."
+        idempotency: "required"
+        precondition: "none"
+        events: ["task.released", "task.dependencies_changed", "thread.view_invalidated"]
+        claim_proof: "required"
+      parameters: [{"$ref": "#/components/parameters/IdempotencyKey"}, {"$ref": "#/components/parameters/YakClaimProof"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WaitForAskRequest"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2641,6 +2996,16 @@ components:
         expired or revoked token, or a disabled actor, is 401 unauthenticated.
 
   schemas:
+    Ask: { $ref: ./schemas/Ask.schema.json }
+    AskPage: { $ref: ./schemas/AskPage.schema.json }
+    CreateAskRequest: { $ref: ./schemas/CreateAskRequest.schema.json }
+    MarkAskAnswerRequest: { $ref: ./schemas/MarkAskAnswerRequest.schema.json }
+    WithdrawAskRequest: { $ref: ./schemas/WithdrawAskRequest.schema.json }
+    AskRouting: { $ref: ./schemas/AskRouting.schema.json }
+    SetAskRoutingRequest: { $ref: ./schemas/SetAskRoutingRequest.schema.json }
+    SetAskDependenciesRequest: { $ref: ./schemas/SetAskDependenciesRequest.schema.json }
+    WaitForAskRequest: { $ref: ./schemas/WaitForAskRequest.schema.json }
+    AskBlock: { $ref: ./schemas/AskBlock.schema.json }
     InboxItem: { $ref: ./schemas/InboxItem.schema.json }
     InboxPage: { $ref: ./schemas/InboxPage.schema.json }
     InboxAckRequest: { $ref: ./schemas/InboxAckRequest.schema.json }

@@ -1,0 +1,6 @@
+{
+  "thread_id": "thr_example",
+  "target_actor_id": "act_human",
+  "text": "Which release should this task use?",
+  "expires_at": "2026-11-24T20:00:00Z"
+}

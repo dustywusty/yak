@@ -1,0 +1,7 @@
+{
+  "board_id": "brd_example",
+  "actor_id": "act_human",
+  "agent_actor_id": null,
+  "fallback_after_seconds": 120,
+  "revision": 0
+}

@@ -106,7 +106,7 @@
     },
     "unreadable_dependencies_pending": {
       "type": "boolean",
-      "description": "True exactly when the task is waiting and every readable prerequisite is completed (DEP-009)."
+      "description": "True exactly when the task is waiting and every readable prerequisite is completed (DEP-009). With yak.asks, every visible task prerequisite must be completed and every visible ask prerequisite answered (ASK-013)."
     },
     "current_claim": {
       "anyOf": [
@@ -181,6 +181,31 @@
       "type": "boolean",
       "description": "Human gate marker (DLG-090). Default false. Only a manager with a direct credential may set or clear it.",
       "default": false
+    },
+    "ask_dependencies": {
+      "type": "array",
+      "description": "P3 yak.asks: readable ask prerequisites only. Present in current task views when advertised, optional in historical P2 events.",
+      "items": {
+        "type": "object",
+        "required": [
+          "ask_id",
+          "state"
+        ],
+        "properties": {
+          "ask_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "state": {
+            "enum": [
+              "open",
+              "answered",
+              "expired",
+              "withdrawn"
+            ]
+          }
+        }
+      }
     }
   },
   "if": {

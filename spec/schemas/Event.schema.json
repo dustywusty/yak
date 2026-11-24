@@ -554,7 +554,12 @@
               "task.updated",
               "task.brief_updated",
               "task.brief_redacted",
-              "actor.presence_changed"
+              "actor.presence_changed",
+              "ask.created",
+              "ask.answered",
+              "ask.routed",
+              "ask.expired",
+              "ask.withdrawn"
             ]
           }
         }
@@ -590,6 +595,266 @@
           "properties": {
             "presence": {
               "$ref": "ActorPresence.schema.json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "ask.created"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "ask"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "ask_id",
+            "state",
+            "target_actor_id",
+            "recipient_actor_id"
+          ],
+          "properties": {
+            "ask_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recipient_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "const": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "ask.answered"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "ask"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "ask_id",
+            "state",
+            "target_actor_id",
+            "recipient_actor_id"
+          ],
+          "properties": {
+            "ask_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recipient_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "const": "answered"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "ask.routed"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "ask"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "ask_id",
+            "state",
+            "target_actor_id",
+            "recipient_actor_id"
+          ],
+          "properties": {
+            "ask_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recipient_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "const": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "ask.expired"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "ask"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "ask_id",
+            "state",
+            "target_actor_id",
+            "recipient_actor_id"
+          ],
+          "properties": {
+            "ask_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recipient_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "const": "expired"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "ask.withdrawn"
+        },
+        "resource": {
+          "properties": {
+            "type": {
+              "const": "ask"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "ask_id",
+            "state",
+            "target_actor_id",
+            "recipient_actor_id"
+          ],
+          "properties": {
+            "ask_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recipient_actor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "const": "withdrawn"
             }
           }
         }
@@ -1013,6 +1278,11 @@
         },
         "prerequisite_task_id": {
           "type": "string"
+        },
+        "prerequisite_ask_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "P3 yak.asks: omitted if source ask unreadable or question-redacted."
         }
       }
     },
@@ -1047,6 +1317,22 @@
         },
         "state_after": {
           "$ref": "TaskState.schema.json"
+        },
+        "added_asks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "P3 yak.asks: readable ask IDs only; no hidden counts."
+        },
+        "removed_asks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "P3 yak.asks: readable ask IDs only; no hidden counts."
         }
       }
     },

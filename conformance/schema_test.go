@@ -148,6 +148,15 @@ func TestSpecSchemasRejectInvalid(t *testing.T) {
 	cases := []struct{ schema, doc string }{
 		// P3 proposed inbox/presence contracts: explicit ack, bounded heartbeat,
 		// and typed events. These are schema checks, not server capability claims.
+		{"CreateAskRequest", `{"thread_id":"t","target_actor_id":"a","text":"why?","delegate_actor_id":"unapproved"}`},
+		{"MarkAskAnswerRequest", `{"message_id":"m"}`},
+		{"MarkAskAnswerRequest", `{"message_id":"m","message_revision":0}`},
+		{"MarkAskAnswerRequest", `{"message_id":"m","message_revision":1,"approved":true}`},
+		{"AskBlock", `{"schema":"yak.ask","version":1,"data":{"ask_id":"q","target_actor_id":"a","answer":"forged"}}`},
+		{"SetAskRoutingRequest", `{"agent_actor_id":"a","fallback_after_seconds":14}`},
+		{"SetAskRoutingRequest", `{"agent_actor_id":"a","owner_actor_id":"other"}`},
+		{"WaitForAskRequest", `{"ask_id":"a","proof":"secret"}`},
+		{"SetAskDependenciesRequest", `{"ask_ids":"ask_example"}`},
 		{"InboxAckRequest", `{}`},
 		{"InboxAckRequest", `{"cursor":"i1.test","actor_id":"another"}`},
 		{"InboxAckRequest", `{"cursor":null}`},

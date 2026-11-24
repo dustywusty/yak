@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CreateAskRequest",
+  "type": "object",
+  "required": [
+    "thread_id",
+    "target_actor_id",
+    "text"
+  ],
+  "properties": {
+    "thread_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expires_at": {
+      "$ref": "Timestamp.schema.json"
+    },
+    "route_via_agent": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "additionalProperties": false
+}

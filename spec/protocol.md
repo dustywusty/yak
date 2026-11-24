@@ -452,3 +452,141 @@ using these routes. Each capability is independent of the other.
   delivery, or proof that an actor will answer. Presence rows and expiry
   event uniqueness MUST survive restart. Actor views in a board use the
   board-scoped presence route. Global actor identity remains unchanged.
+
+## P3 proposed: asks, answers, and task waits (ADR-0023)
+
+This contract requires `yak.asks`, `yak.inbox`, and PAR-014 typed blocks.
+It is not implemented by the current reference server. Implementations MUST
+advertise `yak.asks` only after its required dependencies are available.
+P2 behavior remains unchanged when this capability is absent.
+
+- **ASK-001** `POST /v1/boards/{board_id}/asks` accepts `CreateAskRequest`.
+  The caller needs current `read` and `post` on its existing thread. The
+  target must be an enabled actor with current actor-level source-channel
+  `read`. Otherwise return `404 not_found`. Optional `expires_at` MUST be
+  future server time. Omission means no deadline. The operation MUST create
+  one question reply, one ask, its reserved typed block, and the initial
+  inbox item in one transaction. It MUST require `Idempotency-Key`.
+- **ASK-002** The block is `{schema: "yak.ask", version: 1, data:
+  {ask_id, target_actor_id}}`. PAR-014 MUST register that immutable schema
+  before use. Only the ask operation can create this reserved block.
+  Generic message writes MUST reject forged or modified ask blocks.
+  Question text is immutable in every state. Ordinary edits return
+  `409 ask_question_protected`. Deletion follows ASK-015.
+- **ASK-003** Ask fields follow the `Ask` schema. IDs, creator, target,
+  thread, and question message remain immutable. The initial state is
+  `open`. Its only transitions are `answered`, `expired`, or `withdrawn`.
+  Terminal asks MUST NOT reopen. Each stored transition advances revision.
+  Responses carry the revision in `ETag`. A thread can have multiple asks
+  while keeping the P2 limit of one task per thread.
+- **ASK-004** `GET …/asks/{ask_id}` and `GET …/asks` require current
+  source-channel `read` within the credential ceiling. Listings support
+  `state`, `target_actor_id`, `recipient_actor_id`, `requester_actor_id`,
+  `page_token`, and `limit`. They MUST omit inaccessible or question-redacted
+  asks and their counts. No list accepts a caller-supplied identity as
+  authority. Routing policy details MUST NOT appear in board events.
+- **ASK-005** `POST …/asks/{ask_id}/answer` accepts `{message_id,
+  message_revision}` with `If-Match` for the ask and `Idempotency-Key`.
+  The selected message MUST be a live non-root reply in the same thread
+  at that message revision. A changed message yields `412 revision_conflict`.
+  An absent, foreign-thread, or redacted reply yields `404 not_found`.
+  The marker needs current source `read` and `post`, plus target identity,
+  current ownership of that target, or current routed-agent authority.
+  Ownership alone MUST NOT grant content access. Record marker identity
+  separately from the selected reply's author. No text match can select it.
+- **ASK-006** Answer selection stores the reply ID, selected revision,
+  marker, and closure time. It appends a notice without copying the answer.
+  The marker acts for the immutable target, even when it is a delegate.
+  An answer MUST NOT grant scopes, credentials, task-management rights, or
+  direct human-gate authority. No ordinary reply edit can change the
+  selected revision. Ordinary edits of a selected answer MUST return
+  `409 ask_answer_protected`. Ordinary redaction remains available.
+- **ASK-007** `GET/PUT …/ask-routing` accesses the caller's per-board
+  `AskRouting`. Only a human acting as self can write it, with current
+  `read` and `post` on a board channel. `PUT` requires `If-Match` and
+  accepts `SetAskRoutingRequest`. An absent policy is revision zero with
+  a null agent and delay 120 seconds. A non-null agent MUST be an enabled
+  agent currently owned by that human. Delay is 15..3600 seconds, default
+  120. A null agent disables routing. Policy writes advance the revision.
+- **ASK-008** A human policy explicitly permits its nominated agent to
+  select answers for asks created under that policy. It grants no other
+  permission. Unless `route_via_agent: false`, creation can use that policy
+  if the nominated agent also has current actor-level source `read` and
+  `post`. Otherwise delivery goes directly to the target. Third-party
+  creators MUST NOT appoint a delegate or change its configured delay.
+  Creation records the chosen policy revision, agent, and fallback time.
+- **ASK-009** Routed-agent answers require the same current policy revision
+  and nomination, current ownership, current source `read` and `post`, and
+  server time before `fallback_at`. A changed policy, lost ownership, or
+  lost source rights revokes that answer authority immediately. The target
+  and its current authorized owner can answer before or after fallback.
+  All operations MUST materialize due expiry and fallback under the board
+  lock before checking the requested transition. At expiry, expiry wins.
+  At fallback, the agent loses authority. A stale expiry or fallback MUST
+  NOT overwrite a terminal state or newer revision.
+- **ASK-010** Fallback changes `recipient_actor_id` to the original target
+  and creates at most one additional inbox item for that recipient.
+  `source_kind` is `ask`, `source_id` is the unchanged ask ID, and
+  `message_id` is the original question. The old agent item remains until
+  acknowledgment. Producer uniqueness is per recipient under INBOX-003.
+  Target source rights MUST be rechecked. Revocation can suppress delivery
+  without answering the ask. A terminal ask MUST NOT create fallback items.
+  Durable fallback state and workers MUST survive restart. Reads and writes
+  MUST project effective routing and expiry without relying on a sweeper.
+- **ASK-011** `CreateTaskRequest.depends_on_asks` adds ask prerequisites
+  atomically at task creation. `PUT …/tasks/{task_id}/ask-dependencies`
+  accepts `{ask_ids}` from a task manager with `If-Match`. It replaces
+  only readable ask links and preserves unreadable links. Readiness MUST
+  evaluate all stored links, including unreadable prerequisites. Every added ask
+  MUST be on the same board and readable. Combined task and ask links
+  obey `max_dependencies_per_task`. Duplicate IDs normalize as sets.
+  Ordinary edits MUST reject active claims and terminal tasks under DEP-006.
+- **ASK-012** With this capability, task readiness requires every task
+  prerequisite completed and every ask prerequisite answered. Expired and
+  withdrawn asks remain unsatisfied. Their visible state explains the wait.
+  A manager can explicitly remove a link or select a new ask. Answering
+  MUST activate every eligible waiting dependent synchronously in the same
+  transaction. Blocked tasks stay blocked. No terminal outcome cascades.
+- **ASK-013** Current task views gain `ask_dependencies: [{ask_id,state}]`
+  for readable asks only. Historical P2 payloads can omit this field.
+  Hidden ask IDs, states, and counts MUST NOT leak. With `yak.asks`,
+  `unreadable_dependencies_pending` is true exactly when the task is waiting
+  and every visible task prerequisite is completed and visible ask prerequisite
+  is answered. Task events and replay MUST use the same current projection.
+- **ASK-014** `POST …/tasks/{task_id}/wait-for-ask` accepts `{ask_id}` with
+  `Yak-Claim-Proof` and `Idempotency-Key`. The active claimant needs current
+  task `read` and `claim`, plus current ask `read`. It adds the ask link
+  and releases its claim atomically. It is a separate P3 transition, not
+  an ordinary DEP-006 edit. The task becomes waiting or ready under ASK-012.
+  The old proof MUST NOT authorize further work. If an answer already won,
+  the result can be ready. Resuming work requires a fresh claim.
+- **ASK-015** Question redaction MUST hide the ask and scrub its block
+  from history. If open, it withdraws the ask in the same transaction.
+  Selected-answer redaction hides the answer ID and selected revision from
+  ask projections, but answered remains terminal and satisfies prerequisites.
+  Later loss of content access MUST NOT reverse an answered prerequisite.
+  No copied question or answer can survive in ask events, notices, or inboxes.
+- **ASK-016** `POST …/asks/{ask_id}/withdraw` requires `If-Match`,
+  `Idempotency-Key`, current source `read` and `post`, and creator, target,
+  or current target-owner identity. A routed agent gains no withdrawal right.
+  Its body requires a reason. Terminal transitions return `409 invalid_transition`.
+  Identical idempotent retries return the current authorized projection under
+  IDEM-005, without another notice, event, inbox item, or task activation.
+- **ASK-017** Ask creation, answer, fallback, expiry, and withdrawal emit
+  `ask.created`, `ask.answered`, `ask.routed`, `ask.expired`, and
+  `ask.withdrawn` respectively. Payloads carry only `ask_id`, `state`,
+  `target_actor_id`, and `recipient_actor_id`. Resource type is `ask` with
+  its ID and revision. Channel and thread identify the question's source.
+  Expiry `effective_at` is its deadline. Current source authorization and
+  question redaction MUST apply to all historical events. Task-link changes
+  use `task.dependencies_changed` with `added_asks` and `removed_asks`
+  containing only readable ask IDs. Existing `added` and `removed` remain
+  task-ID arrays. `task.became_ready` can include `prerequisite_ask_id` only
+  for a readable ask. Claim release uses `task.released`.
+  ASK-014 emits release then dependency change and a thread invalidation.
+- **ASK-018** "Waiting on you" lists visible open asks whose current
+  `recipient_actor_id` is the caller. It shows requester, original target,
+  current recipient, deadline, and only readable dependent tasks. Human
+  targets can also inspect questions routed to their agent through the
+  target filter. Acknowledgment MUST NOT answer an ask. The viewer MUST
+  refetch current state and authority before offering answer selection.
