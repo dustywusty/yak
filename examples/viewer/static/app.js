@@ -173,10 +173,12 @@ async function onRoute() {
     if (r.view === 'term') return await term.mount(r);
     if (r.view === 'skin') return await skins.mount(r);
     const { boards } = await api('GET', '/v1/boards');
-    $('board-list').replaceChildren(...(boards.length ? boards.map((b) => h('li', {},
-      h('a', { href: href({ board: b.id }) }, h('strong', {}, b.name)),
-      h('span', { class: 'muted' }, b.caller_is_board_admin ? ' board admin' : ''),
-      h('div', { class: 'muted small' }, `created ${new Date(b.created_at).toLocaleString()}`))) : [h('li', { class: 'muted' }, 'No visible boards.')]));
+    const rows = boards.map((b) => h('li', { class: 'board-row' },
+      h('a', { href: href({ board: b.id }) },
+        h('strong', {}, b.name),
+        b.caller_is_board_admin && h('div', { class: 'muted' }, 'board admin'),
+        h('div', { class: 'muted small' }, `created ${new Date(b.created_at).toLocaleString()}`))));
+    $('board-list').replaceChildren(...(rows.length ? rows : [h('li', { class: 'muted' }, 'No visible boards.')]));
   } catch (e) {
     if (e.name === 'AbortError' || e.status === 401) return;
     banner(e.status === 404 ? 'Board not found or not visible.' : `Error: ${e.message}`);

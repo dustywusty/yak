@@ -74,7 +74,7 @@ const FAKE = () => {
     if (!/^Bearer yak\.test\.token$/.test(opts.headers?.Authorization || '')) return json({ code: 'unauthenticated', status: 401, detail: 'no token' }, 401);
     count(`${m} ${p.replace(B, 'B').replace(/snp_\w+/, 'S')}`);
     if (p === '/v1/me') return json({ actor: actors[2], credential: { id: 'cred_v', actor_id: 'act_view', scopes: ['read'], board_ids: boards.map((b) => b.id) } });
-    if (p === '/v1/boards') return json({ boards });
+    if (p === '/v1/boards') return json({ boards: T.pickerBoards ?? boards });
     if (p === `/v1/boards/${B}`) return json(boards[0]);
     // A second, empty board makes the picker useful in repeatable previews.
     if (p.startsWith('/v1/boards/brd_planning')) {
@@ -557,6 +557,56 @@ async function checkLaneJump(until) {
 }
 
 // Exercise the browser's nested scroll handling with native touch input.
+async function checkBoardPicker(until) {
+  const name = 'UnbrokenBoardName'.repeat(5);
+  await ev(`window.__fake.pickerBoards = [
+    { id: 'brd_test', name: ${JSON.stringify(name)}, caller_is_board_admin: true, created_at: '2026-01-01T00:00:00Z' },
+    { id: 'brd_planning', name: 'Release planning', caller_is_board_admin: false, created_at: '2026-01-02T00:00:00Z' }
+  ]; 1`);
+  await cmd('Page.bringToFront');
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 320, height: 844, deviceScaleFactor: 1, mobile: true });
+  await go('#/boards');
+  const rows = await ev(`[...document.querySelectorAll('#board-list li')].map(row => {
+    const link = row.querySelector('a');
+    const box = link.getBoundingClientRect(), item = row.getBoundingClientRect();
+    const date = row.querySelector('.small').getBoundingClientRect();
+    const point = { x: date.left + date.width / 2, y: date.top + date.height / 2 };
+    const hit = (x, y) => document.elementFromPoint(x, y)?.closest('a') === link;
+    return { width: box.width, height: box.height, itemWidth: item.width, itemHeight: item.height,
+      fullTarget: box.width === item.width && item.height - box.height <= 1 &&
+        hit(item.left + 1, item.top + 1) && hit(item.right - 2, item.bottom - 2) && hit(point.x, point.y),
+      datePoint: point, name: row.querySelector('strong').textContent,
+      wraps: row.querySelector('strong').getClientRects().length > 1 && row.scrollWidth <= row.clientWidth,
+      admin: link.textContent.includes('board admin') };
+  })`);
+  check('picker rows include their padding and date in one full-size target at 320px',
+    rows.length === 2 && rows.every(r => r.fullTarget && r.width >= 24 && r.height >= 24), JSON.stringify(rows));
+  check('picker preserves a long wrapping name and shows admin only for the reported board',
+    rows[0].name === name && rows[0].wraps && rows[0].admin && !rows[1].admin);
+  await ev(`document.querySelector('#forget').focus()`);
+  await chatKey('Tab', 9);
+  check('Tab focuses the first board link with a visible outline', await ev(`
+    document.activeElement === document.querySelector('#board-list li:first-child a:focus-visible') &&
+    parseFloat(getComputedStyle(document.activeElement).outlineWidth) > 0`));
+  await chatKey('Tab', 9);
+  check('the next tab stop is the second board link', await ev(`
+    document.activeElement === document.querySelector('#board-list li:nth-child(2) a')`));
+  await chatKey('Enter', 13);
+  await until(`location.hash === '#/b/brd_planning' && document.querySelector('.t-foot')?.textContent.includes('Release planning')`);
+  await go('#/boards');
+  await cmd('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [rows[0].datePoint] });
+  await cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await until(`location.hash === '#/b/brd_test' && !!document.querySelector('.t-foot')`);
+  await cmd('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await ev('window.__fake.pickerBoards = []; 1');
+  await go('#/boards');
+  check('empty board picker stays inert', await ev(`
+    document.querySelector('#board-list').textContent === 'No visible boards.' &&
+    !document.querySelector('#board-list :is(a,button,input,[tabindex])')`));
+  await ev('delete window.__fake.pickerBoards');
+}
+
 async function checkLaneTouch(until) {
   await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await cmd('Emulation.setTouchEmulationEnabled', { enabled: true });
@@ -1087,6 +1137,7 @@ try {
   await ev(`document.querySelector('#board-list a[href*="brd_planning"]').click();1`);
   await sleep(800);
   check('second board opens its own empty Chat without leaking demo tasks', await ev(`location.hash.includes('brd_planning') && document.querySelector('.t-foot').textContent.includes('Release planning') && !document.querySelector('#term').textContent.includes('Build the viewer bundle') && document.getElementById('banner').hidden`));
+  await checkBoardPicker(until);
   await go('#/forum?b=brd_test');
   await ev(`document.querySelector('#forget').click();1`);
   check('Forum Forget token restores login and stops the skin', await ev(`!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !!document.querySelector('body > .top') && !document.body.dataset.skin`));
