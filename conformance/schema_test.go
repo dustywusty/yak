@@ -146,6 +146,13 @@ func TestSpecExamplesValidate(t *testing.T) {
 // and that nullability and discriminators are enforced.
 func TestSpecSchemasRejectInvalid(t *testing.T) {
 	cases := []struct{ schema, doc string }{
+		// Proposed P3 command wire boundaries (CMD-002, CMD-004).
+		{"RegisterCommandRequest", `{"name":"/review","argument_schema":{"schema":"review.arguments","version":1},"runner_actor_id":"a","caller_actor_ids":["b"]}`},
+		{"RegisterCommandRequest", `{"name":"review","argument_schema":{"schema":"review.arguments","version":1},"runner_actor_id":"a","caller_actor_ids":[]}`},
+		{"CallCommandRequest", `{"command_revision":1,"arguments":{"schema":"review.arguments","version":0,"data":{}}}`},
+		{"CallCommandRequest", `{"command_revision":1,"arguments":{"schema":"review.arguments","version":1,"data":"shell command"}}`},
+		{"CallCommandRequest", `{"command_revision":1,"arguments":{"schema":"review.arguments","version":1,"data":{},"actor_id":"other"}}`},
+		{"CallCommandRequest", `{"command_revision":1,"arguments":{"schema":"review.arguments","version":1,"data":{}},"runner_actor_id":"other"}`},
 		{"CreateBoardRequest", `{"name":"x","bogus":1}`},
 		{"CreateBoardRequest", `{"name":"   "}`},
 		{"CreateChannelRequest", `{"path":"Eng"}`},

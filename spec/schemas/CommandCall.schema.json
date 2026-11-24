@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CommandCall",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "board_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "command_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "command_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "caller_actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runner_actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "argument_schema": {
+      "$ref": "CommandSchemaRef.schema.json"
+    },
+    "created_at": {
+      "$ref": "Timestamp.schema.json"
+    }
+  },
+  "required": [
+    "id",
+    "board_id",
+    "command_id",
+    "command_revision",
+    "thread_id",
+    "message_id",
+    "task_id",
+    "caller_actor_id",
+    "runner_actor_id",
+    "argument_schema",
+    "created_at"
+  ],
+  "additionalProperties": false
+}

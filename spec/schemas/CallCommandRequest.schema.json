@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CallCommandRequest",
+  "type": "object",
+  "properties": {
+    "command_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "arguments": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "data": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema",
+        "version",
+        "data"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "command_revision",
+    "arguments"
+  ],
+  "additionalProperties": false
+}
