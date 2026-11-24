@@ -713,6 +713,57 @@ async function boardSwitchCase() {
  assert('required variants executed nonzero assertions',assertions>=40);
  console.log(`OP17-005 executed ${assertions} assertions across four fresh board transitions and six fresh pending-recovery fixtures`);
 }
+async function staleGateCase() {
+ for (const variant of ['ready', 'reduced', 'navigate', 'logout']) {
+  await freshIdentityFixture();
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-stale-gate';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  await open();
+  await ev(`{
+   window.__op.task.state='ready';
+   document.querySelector('[aria-label="Gate note t"]').value='Keep this gate note';
+   document.querySelector('textarea[aria-label^="Message"]').value='Keep this reply';
+   const approve=[...document.querySelectorAll('.op-review button')].find(b=>b.textContent==='Approve and unblock');
+   approve.focus();
+   const base=window.fetch;
+   window.fetch=async(url,opts={})=>{
+    const response=await base(url,opts);
+    if (!window.__op.releaseRead && new URL(url,location.href).pathname==='/v1/boards/brd_test/tasks/t') {
+     await new Promise(resolve=>window.__op.releaseRead=resolve);
+    }
+    return response;
+   };
+  }`);
+  const before=await count();
+  await op17027Enter();
+  await until("!!window.__op.releaseRead");
+  if (variant==='reduced') await ev("window.__op.permissions=['read']");
+  if (variant==='navigate') {
+   await ev(`window.__op.permissions=['read'];const select=document.querySelector('select[aria-label=Thread]');select.value='';select.dispatchEvent(new Event('change'));`);
+   await until("document.querySelector('select[aria-label=Thread]')?.value===''");
+  } else if (variant==='logout') {
+   await ev("document.querySelector('#operator-logout').click()");
+   await until("!document.body.dataset.operator");
+  }
+  const expectedWrites=before+(variant==='logout' ? 1 : 0);
+  await ev("window.__op.releaseRead()");
+  await sleep(150);
+  check(`stale gate ${variant}: no confirmation or write`,!await ev("!!document.querySelector('.op-confirm')") && await count()===expectedWrites);
+  if (variant==='ready') {
+   check('stale gate: fresh state and obsolete actions removed',await ev("document.querySelector('.op-workspace h3')?.textContent.endsWith(' · ready') && !document.querySelector('.op-review button')"));
+   check('stale gate: explanation has keyboard focus',await ev("document.activeElement.matches('.op-workspace [role=status]') && document.activeElement.textContent.includes('no longer a gate')"));
+   check('stale gate: reply draft retained',await ev("document.querySelector('textarea[aria-label^=Message]').value==='Keep this reply'"));
+   await ev("window.__op.task.state='blocked'");
+   await click('Refresh permissions and state');
+   check('stale gate: original gate note retained on return',await ev("document.querySelector('textarea[aria-label^=Gate]')?.value==='Keep this gate note'"));
+  } else if (variant==='reduced') {
+   check('stale gate: reload honors latest channel grants',await ev("document.querySelector('.op-workspace h3')?.textContent.endsWith(' · ready') && !document.querySelector('.op-workspace [data-op-write]')"));
+  } else if (variant==='navigate') {
+   check('stale gate: reduced destination remains selected without stale feedback or writes',await ev("document.querySelector('select[aria-label=Thread]')?.value==='' && !document.querySelector('.op-workspace [data-op-write]') && document.querySelector('.op-workspace [role=status]').textContent===''"));
+  } else check('stale gate: ended session stays closed',!await ev("!!document.querySelector('.op-workspace, [data-op-write]')"));
+  if (variant!=='logout') await ev("document.querySelector('#operator-logout').click()");
+ }
+}
 // Hold the automatic post-write refresh while manual refreshes supersede it.
 async function refreshSelectionCase() {
  await freshIdentityFixture();
@@ -1749,7 +1800,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
