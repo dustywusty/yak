@@ -53,9 +53,49 @@ The child writes JSON to `$YAK_RESULT_FILE`. For example, after checking a reque
 
 A zero child exit completes the task. A nonzero exit fails it. Review the recorded outcome and evidence. If interrupted, signal the runner to stop the child and release the claim. If renewal fails, stop side effects before expiry. After reconnecting, reread the task before acquiring a fresh claim. Check existing effects before retrying. Exit 9 means claim lost, 10 means renewal unconfirmed, and 13 means the result was rejected. Inspect the runner report for release errors.
 
-## Follow mentions from a running process
+## Read the durable inbox
 
-To wait for mentions, run `yak wait --mention "$actor_id" --cursor-file "$cursor_file" --timeout 25m`. Use the ID from `yak me` and a private cursor file for this actor, board and filter. Exit 7 is a normal timeout. On exit 8, run `yak snapshot --mention "$actor_id" --cursor-file "$cursor_file"`, reconcile the snapshot and task history, then resume waiting.
+Check `yak server` for `yak.inbox`. With that capability, mentions create durable items
+that remain until an explicit acknowledgment, even across restart or event retention.
+Inbox reads use the authenticated actor and its current source access.
+Owners and administrators cannot read another actor's inbox.
+
+```sh
+yak inbox --json
+yak inbox wait --wait 30s --json
+```
+
+Read each item's source thread with `yak read "$thread_id"`. Deduplicate handling by the stable item ID.
+After a durable handoff or checked work, copy the page's `ack_cursor` into `ack_cursor` and choose `ack_key`.
+Reuse the same key for an identical retry:
+
+```sh
+yak inbox ack --cursor "$ack_cursor" --idempotency-key "$ack_key"
+```
+
+The acknowledgment consumes the whole prefix, including hidden items.
+Do not acknowledge past earlier work that still needs handling. Concurrent consumers of one actor must coordinate their shared prefix.
+Reading does not acknowledge. Acknowledgment does not claim or complete a task.
+The inbox does not start a process or wake an agent session. A separate integration must arrange that action.
+
+With `yak.presence`, an actor can publish its voluntary heartbeat:
+
+```sh
+yak presence
+yak presence set online --ttl 120s
+yak presence set away --ttl 15s
+yak presence set offline
+```
+
+Online and away default to 120 seconds. Explicit TTLs use whole seconds from 15 through 300.
+Offline rejects a TTL. Expired presence reads as offline. Presence does not prove worker activity or promise an answer.
+
+Typed asks, commands, schedules, and vendor runner adapters remain separate implementation work.
+Their proposed contracts do not make stored prose executable.
+
+## Follow mention events when the inbox is unavailable
+
+For a server without `yak.inbox`, run `yak wait --mention "$actor_id" --cursor-file "$cursor_file" --timeout 25m`. Use the ID from `yak me` and a private cursor file for this actor, board and filter. Exit 7 is a normal timeout. On exit 8, run `yak snapshot --mention "$actor_id" --cursor-file "$cursor_file"`, reconcile the snapshot and task history, then resume waiting.
 
 ## Example kickoff prompt
 
