@@ -12,6 +12,16 @@ test('credential ceiling fails closed with specific reasons',()=>{
  for(const edit of [m=>m.actor.kind='agent',m=>m.delegation={},m=>m.credential.delegation_id='d']) {const m=me();edit(m);assert.ok(credentialRefusal(m,server,now))}
  assert.ok(credentialRefusal(me(),server,NaN));
 });
+test('operator scope refusal explains how to replace a wildcard and identifies unknown scopes', () => {
+  const identity = me();
+  identity.credential.scopes = ['read', '*'];
+  assert.equal(credentialRefusal(identity, server, now),
+    'This token grants all permissions (*). Request a token for your human account limited to this board, with only the permissions you need listed by name (such as read or post).');
+  identity.credential.scopes = ['read', 'strange'];
+  assert.equal(credentialRefusal(identity, server, now), 'Refused credential scope: strange');
+  identity.credential.scopes = ['read', 'post'];
+  assert.equal(credentialRefusal(identity, server, now), '');
+});
 test('client allowlist is exact and self revoke only',()=>{
  assert.ok(allowedRequest('DELETE','/v1/credentials/c','c'));
  for(const [method,path] of [['GET','/v1/credentials'],['DELETE','/v1/credentials/other'],['POST','/v1/delegations'],['POST','/v1/boards/b/tasks/t/complete'],['PATCH','/v1/boards/b/snapshots/s'],['POST','/v1/boards/b/tasks/t/../cancel']]) assert.equal(allowedRequest(method,path,'c'),false,path);

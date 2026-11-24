@@ -2,7 +2,7 @@
 // Mentions, Activity (the live feed), and channels with unread counts;
 // thread summaries; a thread pane; keyboard navigation. Read-only by default.
 // Opt-in operator mode opens shared Operator tools for message/task writes
-// through the guarded workspace and exposes revoking logout.
+// through the guarded workspace.
 // Terminal command input stays disabled, including in operator mode.
 
 import { createStore, h, gateHint, avatar, jumpPalette, snip, ago, now } from './skin-kit.js';
@@ -26,9 +26,9 @@ function dayLabel(ts) {
   return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
-export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liveEl }) {
+export function createTerm({ api, readBoards, href, setStatus, onUnauthorized, onBoardUnavailable, onForget, liveEl }) {
   const root = () => document.getElementById('term');
-  let cur = null, route = {}, boards = [], status = 'connecting', activityNew = 0, sel = -1, help = false, sideOpen = false;
+  let cur = null, route = {}, boards = [], status = 'connecting', activityNew = 0, sel = -1, sideOpen = false;
   let ownershipOpen = false;
   let theme = store_.get(THEME_KEY) || 'dark';
   const seen = store_.get(SEEN_KEY) || {};
@@ -40,23 +40,44 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   const setSeen = (k) => { (seen[cur.boardId] ||= {})[k] = new Date(now()).toISOString(); store_.set(SEEN_KEY, seen); };
   const go = (r) => { location.hash = href({ board: cur.boardId, ...r }); };
 
-  async function mount(r) {
+  async function mount(r, signal) {
+    if (route.key !== r.key) {
+      sideOpen = false;
+      if (!phone.matches) ownershipOpen = false;
+    }
     route = r;
     let boardId = r.board;
-    if (!boards.length || !boardId) boards = (await api('GET', '/v1/boards')).boards;
+    if (!boards.length || !boardId) {
+      try {
+        const directory = await readBoards(signal);
+        if (signal.aborted || route !== r) return;
+        boards = directory;
+      } catch (e) {
+        if (signal.aborted || route !== r || e.status === 401) return;
+        // An incomplete directory says nothing about the retained board's visibility.
+        if (!boardId) { location.hash = '#/boards'; return; }
+      }
+    }
     boardId ||= boards[0]?.id;
-    if (!boardId) { root().replaceChildren(h('p', { class: 'pad' }, 'No visible boards.')); return; }
+    if (!boardId) { location.hash = '#/boards'; return; }
     if (cur?.boardId !== boardId) {
       unmount();
+      route = r;
       const store = createStore({
         api, boardId, onUnauthorized,
+        onBoardUnavailable: () => {
+          boards = [];
+          unmount();
+          root().replaceChildren();
+          onBoardUnavailable(boardId);
+        },
         onStatus: (s) => { status = s; setStatus(s); render(); },
         onChange: () => render(),
         onEvent: (ev) => { if (route.v !== 'activity') activityNew++; },
       });
       cur = { boardId, store };
       activityTimer = setInterval(() => activity?.update(), 1000);
-      palette = jumpPalette(paletteItems, 'Jump to a channel or thread');
+      palette = jumpPalette(paletteItems, 'Jump to a channel or thread', rememberFocus);
     }
     open();
     render();
@@ -79,14 +100,27 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
 
   let palette = null, activity = null, activityTimer = null;
   function unmount() {
+    route = {};
     if (!cur) return;
     cur.store.stop();
     clearInterval(activityTimer);
     palette?.dispose();
+    helpDialog?.close();
+    helpDialog?.remove();
+    helpDialog = null;
     cur = null;
     activity = null;
     ownershipOpen = false;
+    sideOpen = false;
     mark = {};
+  }
+
+  function endSession() {
+    unmount();
+    boards = [];
+    scrolledTo = '';
+    activityNew = 0;
+    root().replaceChildren();
   }
 
   // ---------- derived ----------
@@ -138,13 +172,14 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     return shown.length ? h('div', { class: 't-labels' }, shown.map(([k, v]) => h('span', {}, v === '' ? k : `${k}=${v}`))) : null;
   };
 
-  function taskChip(task) {
+  function taskChip(task, threadTitle) {
     if (!task) return null;
     const c = task.current_claim;
     const extra = task.outcome?.summary || task.outcome?.reason || task.block?.reason
       || (c ? `${st().handle(c.actor_id)} until ${new Date(c.expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '')
       || (task.state === 'waiting' ? `needs ${st().blockers(task).map((d) => st().num(d.task_id)).join(', ') || 'hidden'}` : '');
     return h('div', { class: `t-task t-task-${task.state}` }, h('span', { class: 't-badge' }, `TASK ${st().num(task.id)}`),
+      threadTitle != null && task.title && task.title !== threadTitle ? [` ${task.title}`, h('br')] : null,
       h('b', {}, ` ${STATE_ICON[task.state] || '?'} ${task.state}`), extra ? `: ${snip(extra, 160)}` : '', gateHint(task, st().labels(task)) ? h('p', {}, gateHint(task, st().labels(task))) : null);
   }
 
@@ -200,13 +235,14 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
 
   function threadView() {
     const t = st().thread(route.t);
-    if (!t) return { head: [h('b', {}, 'Thread')], body: [h('p', { class: 't-mute t-pad' }, 'Thread not found or not visible.')], composer: 'Reply…' };
+    if (!t) return { thread: true, head: [h('b', {}, 'Thread')], body: [h('p', { class: 't-mute t-pad' }, 'Thread not found or not visible.')], composer: 'Reply…' };
     const msgs = st().messages(t.id), byId = new Map(msgs.map((m) => [m.id, m]));
     const root = msgs.find((m) => m.is_root), replies = msgs.filter((m) => !m.is_root);
     return {
+      thread: true,
       head: [h('b', {}, 'Thread'), h('span', { class: 't-mute' }, ` # ${t.channel_path}`), h('span', { class: 't-spacer' }),
         h('a', { class: 't-close', 'data-control': 'close', href: href({ board: cur.boardId, ch: t.channel_path }), title: 'Close (Esc)', 'aria-label': 'Close thread' }, '×')],
-      body: [h('h1', { class: 't-h1' }, t.title), labels(t.labels), root ? message(root, byId) : null, taskChip(taskOf(t.id)),
+      body: [h('h1', { class: 't-h1' }, t.title), labels(t.labels), root ? message(root, byId) : null, taskChip(taskOf(t.id), t.title),
         h('div', { class: 't-count' }, h('span', {}, `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'}`)),
         dividers(replies, (m) => m.created_at, (m) => message(m, byId))],
       composer: 'Reply…',
@@ -240,6 +276,39 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
 
   // ---------- render ----------
+  const phone = matchMedia('(max-width: 700px)');
+  function setSideOpen(open) {
+    sideOpen = open;
+    const app = root().querySelector('.t-app');
+    if (!app) return;
+    app.classList.toggle('t-sideopen', open);
+    app.querySelector('.t-main').inert = open;
+    const menu = app.querySelector('.t-menu');
+    menu.setAttribute('aria-expanded', String(open));
+    if (phone.matches) (open ? app.querySelector('.t-side-close') : menu).focus();
+  }
+  phone.addEventListener('change', () => {
+    if (sideOpen) setSideOpen(false);
+    render();
+  });
+  // Capture stable identities before a render detaches the focused node.
+  function rememberFocus(active) {
+    const control = active.dataset.control;
+    const row = active.closest('[data-activity-task]');
+    const index = row ? [...row.querySelectorAll('a')].indexOf(active) : -1;
+    return () => {
+      let target = active;
+      if (!active.isConnected) {
+        if (control) target = root().querySelector(`[data-control="${CSS.escape(control)}"]`);
+        else if (active.matches('.t-agent-activity')) target = activity?.root;
+        else if (row && index >= 0) {
+          const replacement = root().querySelector(`[data-activity-task="${CSS.escape(row.dataset.activityTask)}"]`);
+          target = replacement?.querySelectorAll('a')[index] || activity?.root;
+        } else if (active.id) target = document.getElementById(active.id);
+      }
+      target?.focus({ preventScroll: true });
+    };
+  }
   function render() {
     if (!cur) return;
     const S = st().S;
@@ -248,27 +317,24 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
     const view = route.v === 'activity' ? activityView() : route.v === 'mentions' ? mentionsView() : route.t ? threadView() : channelView();
     const active = document.activeElement;
     const sameView = route.key === render.lastKey && root().contains(active);
-    const control = sameView ? active.dataset.control : null;
-    const focusRow = active?.closest('[data-activity-task]');
-    const focusIndex = focusRow ? [...focusRow.querySelectorAll('a')].indexOf(active) : -1;
-    const focusTask = focusRow?.dataset.activityTask;
+    const restoreFocus = sameView ? rememberFocus(active) : null;
     const activityTop = root().querySelector('.t-agent-activity')?.scrollTop || 0;
-    const activityFocused = active?.classList.contains('t-agent-activity');
     const sideTop = root().querySelector('.t-side')?.scrollTop || 0;
     const old = root().querySelector('.t-scroll');
     const keep = old && route.key === render.lastKey ? { top: old.scrollTop, bottom: old.scrollTop + old.clientHeight >= old.scrollHeight - 8 } : null;
     render.lastKey = route.key;
     const activeCh = route.t ? st().thread(route.t)?.channel_path : route.ch;
     const unseenMentions = mentions().filter((m) => m.created_at > (seenOf('@') || '9')).length;
-    const item = (icon, label, count, r, active) => h('a', { class: `t-nav${active ? ' on' : ''}${count ? ' t-unread' : ''}`, 'data-control': href({ board: cur.boardId, ...r }), href: href({ board: cur.boardId, ...r }), onclick: () => { sideOpen = false; } },
+    const item = (icon, label, count, r, active) => h('a', { class: `t-nav${active ? ' on' : ''}${count ? ' t-unread' : ''}`, 'data-control': href({ board: cur.boardId, ...r }), href: href({ board: cur.boardId, ...r }), onclick: () => { if (sideOpen) setSideOpen(false); } },
       h('span', { class: 't-mute' }, icon), ' ', h('span', { class: 't-navlabel' }, label), count ? h('span', { class: 't-pill' }, String(count)) : null);
-    const side = h('aside', { class: 't-side' },
-      boards.length > 1
+    const side = h('nav', { class: 't-side', id: 'chat-channels', 'aria-label': 'Channels' },
+      h('button', { type: 'button', class: 't-side-close', 'data-control': 'close-channels', onclick: () => setSideOpen(false) }, 'Close channels'),
+      boards.length > 1 && boards.some(b => b.id === cur.boardId)
         ? h('select', { class: 't-boardsel', 'aria-label': 'Board', 'data-control': 'board', onchange: (e) => { location.hash = href({ board: e.target.value, v: 'activity' }); } },
           boards.map((b) => h('option', { value: b.id, selected: b.id === cur.boardId }, b.name)))
         : h('b', { class: 't-boardname' }, S.board.name),
       h('div', { class: 't-me' }, S.me?.handle),
-      h('button', { type: 'button', class: 't-jump', 'data-control': 'jump', onclick: () => palette.open() }, 'Jump to…', h('kbd', {}, '^K')),
+      h('button', { type: 'button', class: 't-jump', 'data-control': 'jump', onclick: (e) => palette.open(e.currentTarget) }, 'Jump to…', h('kbd', {}, '^K')),
       item('@', 'Mentions', unseenMentions, { v: 'mentions' }, route.v === 'mentions'),
       item('~', 'Activity', activityNew, { v: 'activity' }, route.v === 'activity'),
       h('div', { class: 't-sec' }, 'Channels'),
@@ -277,32 +343,27 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       h('div', { class: 't-sidefoot' },
         h('div', {}, h('a', { 'data-control': 'lanes', href: `#/board?b=${encodeURIComponent(cur.boardId)}` }, 'Lanes'), ' · ', h('a', { 'data-control': 'forum', href: `#/forum?b=${encodeURIComponent(cur.boardId)}` }, 'Forum'), ' · ', h('a', { 'data-control': 'switch-board', href: '#/boards' }, 'Switch board')),
         h('div', {}, h('button', { type: 'button', 'data-control': 'theme', onclick: () => { theme = theme === 'dark' ? 'light' : 'dark'; store_.set(THEME_KEY, theme); render(); } }, theme === 'dark' ? '◐ light' : '◑ dark'),
-          ' ', h('button', { type: 'button', 'data-control': 'forget', onclick: onForget }, document.body.dataset.operator ? 'Logout (revokes token everywhere)' : 'Forget token'))));
+          document.body.dataset.operator ? null : [' ', h('button', { type: 'button', 'data-control': 'forget', onclick: onForget }, 'Forget token')])));
     const scroll = h('div', { class: `t-scroll${view.activity ? ' t-activity' : ''}`, role: 'log' }, view.body);
-    activity = createAgentActivity(st(), href, status, { open: ownershipOpen, toggle: () => { ownershipOpen = !ownershipOpen; render(); } });
-    const main = h('section', { class: 't-main' },
-      h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', 'data-control': 'channels', onclick: () => { sideOpen = !sideOpen; render(); } }, '☰'), view.head),
+    const disclosure = phone.matches || view.thread
+      ? { open: ownershipOpen, toggle: () => { ownershipOpen = !ownershipOpen; render(); } }
+      : null;
+    activity = createAgentActivity(st(), href, status, disclosure);
+    const main = h('section', { class: 't-main', inert: sideOpen },
+      h('header', { class: 't-head' }, h('button', { type: 'button', class: 't-menu', 'aria-label': 'Channels', 'data-control': 'channels', 'aria-controls': side.id,
+        'aria-expanded': String(sideOpen), onclick: () => setSideOpen(true) }, '☰'), view.head),
       activity.root, scroll,
       view.composer ? h('div', { class: 't-composer' }, document.body.dataset.operator ? h('button', { type: 'button', 'data-control': 'compose', onclick: () => window.dispatchEvent(new CustomEvent('yak-operator-open', { detail: { board: cur.boardId, ch: activeCh, t: route.t } })) }, route.t ? 'Reply / task actions' : 'New thread / task') : h('input', { type: 'text', disabled: true, 'aria-label': `${view.composer} (read-only)`, placeholder: `${view.composer} (read-only viewer)` })) : null);
     const hints = route.t ? [['↑↓', 'move'], ['esc', 'close'], ['^K', 'jump'], ['?', 'help']] : [['↑↓', 'move'], ['⏎', 'open'], ['^K', 'jump'], ['?', 'help']];
     const foot = h('footer', { class: 't-foot' }, h('span', { class: `t-${status}` }, status),
       h('span', { class: 't-mute' }, `${S.me?.handle} on ${S.board.name}`), h('span', { class: 't-spacer' }),
       hints.map(([k, v]) => h('span', { class: 't-hint' }, h('kbd', {}, k), ` ${v}`)));
-    const helpBox = help ? h('div', { class: 't-help', role: 'dialog' }, h('b', {}, 'Keys'),
-      [['↑ / ↓  or  k / j', 'move the selection'], ['Enter', 'open the selected thread'], ['Esc', 'close the thread or this help'],
-        ['Ctrl-K / Cmd-K', 'jump to a channel or thread'], ['g a / g m', 'go to Activity / Mentions'], ['?', 'show or hide this help']]
-        .map(([k, v]) => h('div', {}, h('kbd', {}, k), ` ${v}`)), h('p', { class: 't-mute' }, document.body.dataset.operator ? 'Use Operator tools for messages and confirmed task actions.' : 'This viewer is read-only.')) : null;
-    root().replaceChildren(h('div', { class: `t-app${sideOpen ? ' t-sideopen' : ''}`, 'data-theme': theme }, side, main, foot, helpBox));
+    root().replaceChildren(h('div', { class: `t-app${sideOpen ? ' t-sideopen' : ''}`, 'data-theme': theme }, side,
+      h('div', { class: 't-side-backdrop', 'aria-hidden': 'true', onclick: () => setSideOpen(false) }), main, foot));
     if (view.activity && liveEl) { liveEl.hidden = false; scroll.prepend(liveEl); }
     activity.root.scrollTop = activityTop;
     side.scrollTop = sideTop;
-    if (sameView && liveEl?.contains(active) && active.isConnected) active.focus({ preventScroll: true });
-    else if (control) root().querySelector(`[data-control="${CSS.escape(control)}"]`)?.focus({ preventScroll: true });
-    if (activityFocused) activity.root.focus({ preventScroll: true });
-    if (focusTask && focusIndex >= 0) {
-      const row = [...activity.root.querySelectorAll('[data-activity-task]')].find((e) => e.dataset.activityTask === focusTask);
-      (row?.querySelectorAll('a')[focusIndex] || activity.root).focus({ preventScroll: true });
-    }
+    restoreFocus?.();
     paintSel();
     if (keep) scroll.scrollTop = keep.bottom ? scroll.scrollHeight : keep.top;
     else if (route.m && scrolledTo !== route.m && document.getElementById(`tm-${route.m}`)) { document.getElementById(`tm-${route.m}`).scrollIntoView({ block: 'start' }); scrolledTo = route.m; }
@@ -310,6 +371,31 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
 
   // ---------- keyboard ----------
+  // Keep the modal outside the subtree replaced by live Chat renders.
+  let helpDialog = null;
+  function openHelp() {
+    const restoreFocus = rememberFocus(document.activeElement);
+    function close() {
+      helpDialog.close();
+      helpDialog.remove();
+      helpDialog = null;
+      restoreFocus();
+    }
+    helpDialog = h('dialog', { class: 't-help', 'data-theme': theme, 'aria-labelledby': 'chat-keys',
+      oncancel: (e) => { e.preventDefault(); close(); },
+      onkeydown: (e) => {
+        e.stopPropagation();
+        if (e.key === 'Tab') e.preventDefault(); // Close is the only tab stop.
+        if (e.key === '?') { e.preventDefault(); close(); }
+      } },
+      h('header', {}, h('b', { id: 'chat-keys' }, 'Keys'),
+        h('button', { type: 'button', autofocus: true, onclick: close }, 'Close')),
+      [['↑ / ↓  or  k / j', 'move the selection'], ['Enter', 'open the selected thread'], ['Esc', 'close the thread or this help'],
+        ['Ctrl-K / Cmd-K', 'jump to a channel or thread'], ['g a / g m', 'go to Activity / Mentions'], ['?', 'show or hide this help']]
+        .map(([k, v]) => h('div', {}, h('kbd', {}, k), ` ${v}`)), h('p', { class: 't-mute' }, document.body.dataset.operator ? 'Use Operator tools for messages and confirmed task actions.' : 'This viewer is read-only.'));
+    document.body.append(helpDialog);
+    helpDialog.showModal();
+  }
   const items = () => [...root().querySelectorAll('.t-scroll .t-item')];
   function paintSel() { items().forEach((e, i) => e.classList.toggle('t-sel', i === sel)); }
   function move(d) {
@@ -321,15 +407,23 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
   }
   let gPending = false;
   function onKey(e) {
-    if (!cur || document.getElementById('term').hidden || document.querySelector('.jump')) return;
+    if (!cur || document.getElementById('term').hidden || document.querySelector(':modal')) return;
+    if (sideOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSideOpen(false);
+      }
+      return;
+    }
+    if (e.key === 'Enter' && e.target.closest?.('button, a')) return;
     if (e.target.closest?.('.t-agent-activity, input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
     if (gPending) { gPending = false; if (k === 'a') return go({ v: 'activity' }); if (k === 'm') return go({ v: 'mentions' }); }
     if (k === 'ArrowDown' || k === 'j') { e.preventDefault(); move(1); }
     else if (k === 'ArrowUp' || k === 'k') { e.preventDefault(); move(-1); }
     else if (k === 'Enter' && sel >= 0) { const it = items()[sel]; if (it?.dataset.thread) go({ ch: st().thread(it.dataset.thread)?.channel_path, t: it.dataset.thread, m: it.dataset.msg }); }
-    else if (k === 'Escape') { if (help) { help = false; render(); } else if (sideOpen) { sideOpen = false; render(); } else if (route.t) go({ ch: route.ch || st().thread(route.t)?.channel_path }); }
-    else if (k === '?') { help = !help; render(); }
+    else if (k === 'Escape' && route.t) go({ ch: route.ch || st().thread(route.t)?.channel_path });
+    else if (k === '?') { e.preventDefault(); openHelp(); }
     else if (k === 'g') gPending = true;
   }
   document.addEventListener('keydown', onKey);
@@ -342,5 +436,5 @@ export function createTerm({ api, href, setStatus, onUnauthorized, onForget, liv
       ...[...S.threads.values()].map((t) => ({ label: `» ${t.title}`, hint: `#${t.channel_path}`, go: () => go({ ch: t.channel_path, t: t.id }) }))];
   }
 
-  return { mount, unmount, activity: () => route.v === 'activity' };
+  return { mount, unmount, endSession, activity: () => route.v === 'activity' };
 }

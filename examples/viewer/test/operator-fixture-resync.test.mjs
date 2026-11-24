@@ -12,6 +12,7 @@ function fixture() {
   });
   return {
     state: window.__op,
+    fetch: window.fetch,
     snapshot: (signal) => window.fetch('/v1/boards/brd_test/snapshots', { method: 'POST', signal }),
     events: (signal, cursor = 'cur') => window.fetch(
       `/v1/boards/brd_test/events?${new URLSearchParams(cursor ? { cursor } : { from: 'latest' })}`,
@@ -136,3 +137,29 @@ test('aborted snapshot cannot replace the current owner', async () => {
   assert.equal(f.state.snapshots, 1);
   await receivesResync(f, store);
 });
+
+for (const [state, stale] of [['ready', false], ['waiting', false], ['ready', true]]) {
+  test(`unblock rejects a ${state} task with a ${stale ? 'stale' : 'matching'} revision`, async () => {
+    const f = fixture();
+    const { task, thread, root, events } = f.state;
+    task.state = state;
+    task.block = null;
+    task.unreadable_dependencies_pending = state === 'waiting';
+    thread.labels['yak.task.state'] = root.labels['yak.task.state'] = state;
+    const before = structuredClone({ task, thread, root });
+
+    const revision = stale ? task.revision - 1 : task.revision;
+    const response = await f.fetch('/v1/boards/brd_test/tasks/t/unblock', {
+      method: 'POST',
+      headers: { 'If-Match': `"${revision}"`, 'Idempotency-Key': 'synthetic-unblock' },
+      body: JSON.stringify({ reason: 'gate approved' }),
+    });
+
+    assert.equal(response.status, stale ? 412 : 409);
+    assert.deepEqual(await response.json(), stale
+      ? { code: 'revision_conflict', revision: before.task.revision }
+      : { code: 'invalid_transition', current_state: state });
+    assert.equal(events.length, 0);
+    assert.deepEqual(structuredClone({ task, thread, root }), before);
+  });
+}

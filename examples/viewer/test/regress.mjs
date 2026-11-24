@@ -74,7 +74,7 @@ const FAKE = () => {
     if (!/^Bearer yak\.test\.token$/.test(opts.headers?.Authorization || '')) return json({ code: 'unauthenticated', status: 401, detail: 'no token' }, 401);
     count(`${m} ${p.replace(B, 'B').replace(/snp_\w+/, 'S')}`);
     if (p === '/v1/me') return json({ actor: actors[2], credential: { id: 'cred_v', actor_id: 'act_view', scopes: ['read'], board_ids: boards.map((b) => b.id) } });
-    if (p === '/v1/boards') return json({ boards });
+    if (p === '/v1/boards') return json({ boards: T.pickerBoards ?? boards });
     if (p === `/v1/boards/${B}`) return json(boards[0]);
     // A second, empty board makes the picker useful in repeatable previews.
     if (p.startsWith('/v1/boards/brd_planning')) {
@@ -265,6 +265,516 @@ const go = async (hash, wait = 800) => { await ev(`location.hash = ${JSON.string
 const state = () => ev(`JSON.stringify({ hash: location.hash, liveInDoc: document.contains(window.__live), status: window.__live.querySelector('#feed-status').textContent,
   rows: [...window.__live.querySelectorAll('#feed li')].map((l) => l.textContent), banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent,
   term: !document.getElementById('term').hidden, calls: window.__fake.calls })`).then(JSON.parse);
+
+async function chatKey(key, code, modifiers = 0) {
+  const event = { key, windowsVirtualKeyCode: code, modifiers };
+  await cmd('Input.dispatchKeyEvent', { ...event, type: 'keyDown', text: key === 'Enter' ? '\r' : '' });
+  await cmd('Input.dispatchKeyEvent', { ...event, type: 'keyUp' });
+}
+
+async function checkInputHints(until) {
+  function luminance(rgb) {
+    const [r, g, b] = rgb.map(channel => {
+      const s = channel / 255;
+      return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+
+  async function checkMedia(selector, label) {
+    for (const media of ['light', 'dark']) {
+      await cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: media }] });
+      await until(`matchMedia('(prefers-color-scheme: ${media})').matches`);
+      const sample = await ev(`(() => {
+        const input = document.querySelector('${selector}');
+        const hint = getComputedStyle(input, '::placeholder');
+        return { color: hint.color, opacity: Number(hint.opacity), background: getComputedStyle(input).backgroundColor,
+          visible: input.matches(':placeholder-shown') && !!input.getClientRects().length };
+      })()`);
+      const channels = color => color.match(/[\d.]+/g).map(Number);
+      const [r, g, b, a = 1] = channels(sample.color);
+      const background = channels(sample.background);
+      const alpha = sample.opacity * a;
+      const ink = [r, g, b].map((c, i) => alpha * c + (1 - alpha) * background[i]);
+      const [dark, light] = [luminance(background), luminance(ink)].sort((x, y) => x - y);
+      const ratio = (light + 0.05) / (dark + 0.05);
+      check(`${label}, ${media} media placeholder contrast ${ratio.toFixed(2)}:1`,
+        sample.visible && (background[3] ?? 1) === 1 && ratio >= 4.5, JSON.stringify(sample));
+    }
+  }
+
+  await go('#/b/brd_test?ch=ops');
+  for (const theme of ['dark', 'light']) {
+    if (await ev("document.querySelector('.t-app').dataset.theme") !== theme) {
+      await ev("document.querySelector('[data-control=theme]').click()");
+    }
+    await until(`document.querySelector('.t-app').dataset.theme === '${theme}'`);
+    await chatKey('k', 75, 2);
+    await until("document.activeElement.matches('.jump input')");
+    await checkMedia('.jump input', theme + ' Chat Jump');
+    await chatKey('Escape', 27);
+  }
+  await go('#/boards');
+  await ev("document.querySelector('#forget').click()");
+  await until("document.activeElement.id === 'token'");
+  await checkMedia('#token', 'Connect');
+  await cmd('Emulation.setEmulatedMedia', { features: [] });
+}
+
+async function checkChatTaskIdentity(until) {
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?task-identity#/board?b=brd_test' });
+  const dependency = ".w-col-waiting [data-task=task_wait] a[href*='thr_deploy']";
+  await until(`document.querySelector("${dependency}")?.textContent.includes('#5 Approve production rollout')`);
+  const left = await ev(`document.querySelector("${dependency}").focus(); document.querySelector('.w-cols').scrollLeft`);
+  await chatKey('Enter', 13);
+  await until("document.querySelector('.t-task-blocked')");
+  check('Waiting prerequisite opens its numbered task beside the authored Chat heading and root', await ev(`
+    document.querySelector('.t-h1').innerText === 'Deploy thread' && document.querySelector('.t-text').innerText === 'deploy root' &&
+    document.querySelector('.t-task .t-badge').innerText === 'TASK #5' &&
+    document.querySelector('.t-task').innerText.includes('Approve production rollout')`));
+  await ev('history.back()');
+  await until(`document.querySelector("${dependency}")`);
+  check('Back restores the Waiting lane and its exact prerequisite link', left > 0 && await ev(`
+    document.activeElement === document.querySelector("${dependency}") && document.querySelector('.w-cols').scrollLeft === ${left}`));
+  await go('#/b/brd_test?ch=activity&t=thr_work');
+  check('Chat omits a duplicate task title when the thread heading matches', await ev(`
+    document.querySelector('.t-h1').innerText === 'Build the viewer bundle' &&
+    !document.querySelector('.t-task').innerText.includes('Build the viewer bundle')`));
+  await go('#/b/brd_test?ch=ops&t=thr_ops');
+  check('Chat keeps the conversation without inferring a task', await ev(`
+    document.querySelector('.t-h1').innerText === 'Ops thread' && !document.querySelector('.t-task')`));
+  await ev("window.__taskEvent('task_owner', { title: '<em>Rollout & review</em>' })");
+  await go('#/b/brd_test?ch=ops%2Fdeploy&t=thr_deploy');
+  check('Chat renders markup-like task titles literally', await ev(`
+    document.querySelector('.t-task').innerText.includes('<em>Rollout & review</em>') && !document.querySelector('.t-task em')`));
+}
+
+async function checkChatJump(until) {
+  await cmd('Page.bringToFront');
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  const thread = '#/b/brd_test?ch=ops&t=thr_ops';
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?chat-jump' + thread });
+  await until("document.querySelector('.t-close')");
+  await ev("window.openerButton = document.querySelector('.t-jump'); window.openerButton.focus()");
+  await chatKey('Enter', 13);
+  const selected = (label) => ev(`(() => {
+    const input = document.activeElement;
+    const list = document.getElementById(input.getAttribute('aria-controls'));
+    const options = list?.querySelectorAll('[role=option][aria-selected=true]');
+    return list?.role === 'listbox' && options.length === 1 && options[0].textContent === ${JSON.stringify(label)}
+      && options[0].id === input.getAttribute('aria-activedescendant') && options[0].getClientRects().length > 0;
+  })()`);
+  const named = await ev(`document.activeElement.role === 'combobox' && document.activeElement.matches(':focus-visible') &&
+    document.activeElement.getAttribute('aria-expanded') === 'true' && !!document.querySelector('.jump:modal[aria-label]')`);
+  check('Keyboard Jump opens a named modal with visible combobox focus', named);
+  if (!named) return;
+  const tree = (await cmd('Accessibility.getFullAXTree')).result.nodes;
+  check('Accessibility tree names the Jump dialog, combobox and result list',
+    ['dialog', 'combobox', 'listbox'].every(role => tree.some(n => n.role.value === role && n.name?.value)));
+  check('Jump limits its unfiltered list to twelve destinations', await ev("document.querySelectorAll('.jump [role=option]').length === 12"));
+  await chatKey('ArrowDown', 40);
+  check('Down announces Mentions as the sole selected option', await selected('@ Mentions'));
+  await chatKey('ArrowUp', 38);
+  check('Up announces Activity as the sole selected option', await selected('~ Activity'));
+  for (const modifiers of [0, 8]) {
+    await chatKey('Tab', 9, modifiers);
+    check('Tab stays in Jump, modifiers ' + modifiers, await ev("document.activeElement.role === 'combobox'"));
+  }
+  await cmd('Input.insertText', { text: 'no such destination' });
+  await chatKey('Enter', 13);
+  check('Empty Enter retains Jump with no active descendant or options', await ev(`location.hash === ${JSON.stringify(thread)} &&
+    document.activeElement.role === 'combobox' && !document.activeElement.hasAttribute('aria-activedescendant') &&
+    !document.querySelector('.jump [role=option]')`));
+  await ev("window.__addTask('jump_redraw', 'Jump redraw', 'ready')");
+  await until("!window.openerButton.isConnected");
+  await chatKey('Escape', 27);
+  check('Escape restores the redrawn Jump button without closing its thread', await ev(`location.hash === ${JSON.stringify(thread)} &&
+    document.activeElement.matches('.t-jump:focus-visible') && !document.querySelector('.jump')`));
+  await ev("document.querySelector('.t-close').focus()");
+  await chatKey('k', 75, 2);
+  await ev("window.oldClose = document.querySelector('.t-close'); window.__addTask('jump_again', 'Another redraw', 'ready')");
+  await until("!window.oldClose.isConnected");
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await cmd('Input.dispatchMouseEvent', { type, button: 'left', clickCount: 1, x: 2, y: 2 });
+  }
+  check('Backdrop restores the shortcut opener on the same thread', await ev(`location.hash === ${JSON.stringify(thread)} &&
+    document.activeElement.matches('.t-close') && !document.querySelector('.jump')`));
+  await chatKey('k', 75, 4);
+  await cmd('Input.insertText', { text: 'mention' });
+  check('Typing filters to the selected Mentions destination', await selected('@ Mentions'));
+  await ev(`window.jumpRoutes = []; addEventListener('hashchange', e => window.jumpRoutes.push(new URL(e.newURL).hash));`);
+  await chatKey('Enter', 13);
+  await until("location.hash.endsWith('?v=mentions') && !document.querySelector('.jump')");
+  await until('window.jumpRoutes.length > 0');
+  check('Enter navigates to Mentions once', await ev("window.jumpRoutes.length === 1 && window.jumpRoutes[0] === '#/b/brd_test?v=mentions'"));
+  await chatKey('k', 75, 2);
+  await ev("document.querySelector('.jump [role=option]').click()");
+  await until("location.hash.endsWith('?v=activity') && !document.querySelector('.jump')");
+}
+
+async function checkThreadOwnership(until) {
+  const thread = '#/b/brd_test?ch=ops&t=thr_ops&m=thr_ops_m2';
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html' + thread });
+  await until("document.querySelector('#tm-thr_ops_m2.t-target')");
+  await ev(`window.toggle = () => document.querySelector('.a-toggle');
+    window.details = () => document.getElementById(toggle().getAttribute('aria-controls'));
+    window.inChat = el => {
+      const pane = document.querySelector('.t-scroll').getBoundingClientRect(), r = el.getBoundingClientRect();
+      return r.height > 0 && r.top >= pane.top && r.bottom <= Math.min(pane.bottom, innerHeight);
+    }`);
+  const compact = await ev(`toggle()?.checkVisibility() && toggle().textContent === 'Show details' &&
+    toggle().getAttribute('aria-expanded') === 'false' && !details().checkVisibility() &&
+    document.querySelector('.a-counts').innerText.includes('2 claimed tasks')`);
+  check('Desktop thread opens with ownership counts and a collapsed Show details button', compact);
+  check('The opening pane shows the thread title, root and highlighted reply', await ev(`
+    document.querySelector('.t-h1').getBoundingClientRect().top < 420 &&
+    ['.t-h1', '#tm-thr_ops_m1', '#tm-thr_ops_m2.t-target'].every(s => inChat(document.querySelector(s)))`));
+  if (!compact) return;
+  await ev('toggle().focus()');
+  for (const expanded of [true, false, true]) {
+    await chatKey('Enter', 13);
+    await ev(`window.oldToggle = toggle(); window.__taskEvent('task_second', { updated_at: new Date().toISOString() })`);
+    await until('!oldToggle.isConnected');
+    check(`Ownership stays ${expanded ? 'expanded' : 'collapsed'} and focused after redraw`, await ev(`
+      document.activeElement === toggle() && toggle().getAttribute('aria-expanded') === '${expanded}' &&
+      details().checkVisibility() === ${expanded} && location.hash === ${JSON.stringify(thread)} &&
+      inChat(document.querySelector('#tm-thr_ops_m2.t-target'))`));
+  }
+  check('Expanded ownership includes reasons, clocks, activity qualification and freshness', await ev(`
+    ['waiting on @alice', 'Claim held for', 'Worker activity unavailable', 'Current task claims and waits'].every(s => details().innerText.includes(s))`));
+  await ev(`window.__fake.holdTask = 'task_work'; window.__taskEvent('task_work', { current_claim: {
+    ...window.__fake.tasks[0].current_claim, expires_at: new Date(Date.now() - 1000).toISOString() } })`);
+  await until("details().innerText.includes('Status unconfirmed')");
+  await ev('window.__fake.disconnected = true');
+  await until("details().innerText.includes('Last known data')");
+  check('Expanded ownership identifies stale data and expired claims', await ev(`
+    details().innerText.includes('last reported claim') && document.querySelector('.a-counts').innerText.includes('1 to confirm')`));
+  for (const route of ['?v=activity', '?ch=ops']) {
+    await go('#/b/brd_test' + route);
+    check(`Desktop ${route} shows full ownership by default`, await ev(`
+      !toggle()?.checkVisibility() && document.querySelector('.a-freshness').checkVisibility()`));
+  }
+}
+
+async function checkChatHelp(until) {
+  const thread = '#/b/brd_test?ch=ops&t=thr_ops&m=thr_ops_m2';
+  for (const width of [390, 1280]) {
+    await cmd('Emulation.setDeviceMetricsOverride', { width, height: width === 390 ? 844 : 900, deviceScaleFactor: 1, mobile: width === 390 });
+    await cmd('Page.navigate', { url: ORIGIN + '/index.html?chat-help=' + width + thread });
+    const opener = width === 390 ? '.t-close' : '.t-side .t-nav.on';
+    await until("document.querySelector('#tm-thr_ops_m2.t-target')");
+    await ev(`window.helpOpener = document.querySelector('${opener}'); helpOpener.focus()`);
+    await chatKey('ArrowDown', 40);
+    const selection = await ev("document.querySelector('.t-sel').id");
+    await chatKey('?', 191, 8);
+    const tree = (await cmd('Accessibility.getFullAXTree')).result.nodes;
+    const named = tree.some(n => n.role?.value === 'dialog' && n.name?.value === 'Keys');
+    check(`Keys opens a named dialog at ${width}px`, named);
+    if (!named) continue;
+    const closeFocused = () => ev("document.activeElement.matches('.t-help button:focus-visible') && document.activeElement.textContent === 'Close'");
+    check('Keyboard focus enters help on Close', await closeFocused());
+    await chatKey('Tab', 9);
+    await chatKey('ArrowDown', 40);
+    await chatKey('k', 75, 2);
+    await ev("window.__addTask('help_redraw', 'Help redraw')");
+    await until('!helpOpener.isConnected');
+    check('Live redraw and shortcuts keep focus on Close and preserve selection', await closeFocused() &&
+      await ev(`!document.querySelector('.jump') && document.querySelector('.t-sel').id === ${JSON.stringify(selection)}`));
+    await chatKey(width === 390 ? 'Enter' : 'Escape', width === 390 ? 13 : 27);
+    await until("!document.querySelector('.t-help')");
+    check('Dismissing help restores the replacement opener, thread and reply', await ev(`
+      document.activeElement.matches('${opener}:focus-visible') && location.hash === ${JSON.stringify(thread)} &&
+      document.querySelector('#tm-thr_ops_m2.t-target') && document.querySelector('.t-sel').id === ${JSON.stringify(selection)}`));
+  }
+  await go('#/b/brd_test?ch=ops');
+  await ev("document.querySelector('.t-title[data-control=\"thread:thr_ops\"]').focus()");
+  await chatKey('?', 191, 8);
+  await chatKey('?', 191, 8);
+  check('Toggling Keys returns to the focused thread title', await ev(`
+    !document.querySelector('.t-help') && document.activeElement.dataset.control === 'thread:thr_ops'`));
+}
+
+async function checkChatChannels(until) {
+  const thread = '#/b/brd_test?ch=ops&t=thr_ops';
+  const viewport = width => cmd('Emulation.setDeviceMetricsOverride', {
+    width, height: width === 390 ? 844 : 900, deviceScaleFactor: 1, mobile: width === 390,
+  });
+  await viewport(390);
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?chat-channels' + thread });
+  await until("document.querySelector('.t-close')");
+  await ev(`window.menu = () => document.querySelector('.t-menu');
+    window.nav = () => document.getElementById(menu().getAttribute('aria-controls'));
+    window.channel = () => nav().querySelector('a[href$="?ch=review"]');
+    window.routes = []; addEventListener('hashchange', e => routes.push(new URL(e.newURL).hash));
+    menu().focus()`);
+  await chatKey('Enter', 13);
+  const opened = await ev(`menu().getAttribute('aria-expanded') === 'true' && nav()?.matches('nav[aria-label="Channels"]') &&
+    !!nav().getClientRects().length && nav().contains(document.activeElement)`);
+  check('Phone Channels opens a named navigation region and moves keyboard focus inside', opened);
+  if (!opened) return;
+  await ev(`channel().focus(); window.oldChannel = channel(); window.__addTask('drawer_redraw', 'Channel redraw')`);
+  await until('!oldChannel.isConnected');
+  check('Live redraw keeps focus on the same channel', await ev('channel() === document.activeElement'));
+  const dismissed = () => ev(`menu().getAttribute('aria-expanded') === 'false' && !nav().getClientRects().length &&
+    (channel().focus(), document.activeElement === menu()) && routes.length === 0 && location.hash === ${JSON.stringify(thread)}`);
+  await chatKey('Escape', 27);
+  check('Escape dismisses Channels, restores its opener and leaves the thread open', await dismissed());
+  await chatKey('Enter', 13);
+  const closeFocused = await ev("document.activeElement.matches('button[data-control=close-channels]')");
+  await chatKey('Enter', 13);
+  check('The drawer close button works from the keyboard', closeFocused && await dismissed());
+  // Click over a real header action in the uncovered strip.
+  const point = await ev(`(() => { const r = document.querySelector('.t-close').getBoundingClientRect();
+    return { x: r.right - 2, y: r.top + r.height / 2 }; })()`);
+  await chatKey('Enter', 13);
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await cmd('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 });
+  }
+  check('Outside click dismisses Channels without activating the underlying close-thread link', await dismissed());
+  await chatKey('Enter', 13);
+  await ev('channel().focus()');
+  await chatKey('Enter', 13);
+  await until('routes.length > 0');
+  check('Selecting a channel closes navigation and changes route once', await ev(`routes.length === 1 &&
+    location.hash === '#/b/brd_test?ch=review' && !nav().getClientRects().length && menu().getAttribute('aria-expanded') === 'false'`));
+  await ev('menu().focus()');
+  await chatKey('Enter', 13);
+  await viewport(1280);
+  await until("nav().getClientRects().length && !document.querySelector('.t-main').inert");
+  check('Desktop keeps channel links keyboard accessible and hides the drawer controls', await ev(`
+    (channel().focus(), document.activeElement === channel()) && !menu().getClientRects().length &&
+    !nav().querySelector('[data-control="close-channels"]').getClientRects().length`));
+}
+
+async function checkClearLaneFilters(until) {
+  const hash = '#/board?b=brd_test&view=compact';
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?clear-filters' + hash });
+  await until("document.querySelectorAll('.w-card').length === 6");
+  const clear = "document.querySelector('.w-count + button')";
+  check('Unfiltered Lanes has no visible Clear filters action', await ev(`!${clear}?.getClientRects().length`));
+  await go(hash + '&ch=ops&agent=act_alice&label=unmatched');
+  check('Combined filters show zero of six tasks', await ev(`
+    document.querySelector('.w-count').textContent === 'Showing 0 of 6 tasks' &&
+    !document.querySelector('.w-card')`));
+  const offered = await ev(`${clear}?.textContent === 'Clear filters' && !!${clear}.getClientRects().length`);
+  check('Filtered Lanes offers Clear filters beside the count', offered);
+  if (!offered) return;
+  await ev(`${clear}.focus()`);
+  await cmd('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', text: '\r', windowsVirtualKeyCode: 13 });
+  await cmd('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
+  check('Enter clears all three filters and retains the board, route and unrelated parameter', await ev(`
+    location.hash === ${JSON.stringify(hash)} && document.querySelectorAll('.w-card').length === 6 &&
+    document.querySelector('.w-count').textContent === 'Showing 6 of 6 tasks' &&
+    [...document.querySelectorAll('.w-filters select, .w-filters input')].every(el => el.value === '')`));
+  check('Clearing filters returns focus to the channel control', await ev(`
+    !${clear}?.getClientRects().length && document.activeElement === document.querySelector('.w-filters select')`));
+}
+
+// Exercise the lane menu with native type-ahead and Tab, then revisit a card.
+async function checkLaneJump(until) {
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  // Start a fresh history entry after the touch test has restored a scrolled board.
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?lane-jump#/board?b=brd_test' });
+  await until("!!document.querySelector('.w-card')");
+  const menu = "document.querySelector('select[aria-label=\"Jump to lane\"]')";
+  const board = "document.querySelector('.w-cols')";
+  const visible = await ev(`!!${menu}?.getClientRects().length`);
+  check('Phone offers a named lane menu at Ready', visible && await ev(`${board}.scrollLeft === 0`));
+  if (!visible) return;
+  const countsMatch = () => ev(`(() => {
+    const lanes = [...document.querySelectorAll('.w-col h2')];
+    const options = [...${menu}.options].filter(option => option.value);
+    return options.length === 7 && lanes.length === 7 && lanes.every((h, i) =>
+      options[i].value === h.firstChild.textContent.toLowerCase() &&
+      options[i].textContent === h.firstChild.textContent + ' (' + h.lastChild.textContent + ')');
+  })()`);
+  const key = async (key, code, char) => {
+    await cmd('Input.dispatchKeyEvent', { type:'keyDown', key, windowsVirtualKeyCode:code, text:char });
+    await cmd('Input.dispatchKeyEvent', { type:'keyUp', key, windowsVirtualKeyCode:code });
+  };
+  const jump = async (name) => {
+    await ev(`${menu}.focus()`);
+    const letter = name[0];
+    await key(letter, letter.toUpperCase().charCodeAt(0), letter);
+    check('Select ' + name + ' by name and focus its visible heading', await ev(`(() => {
+      const h = document.querySelector('.w-col-${name} h2');
+      return document.activeElement === h && Math.abs(h.getBoundingClientRect().left - ${board}.getBoundingClientRect().left) <= 1;
+    })()`));
+  };
+  check('All seven destinations match headings and counts', await countsMatch());
+  await jump('blocked');
+  await ev(`const channel = document.querySelector('.w-filters select'); channel.value='activity'; channel.dispatchEvent(new Event('change'))`);
+  check('Filtered destinations include the now-empty Blocked lane', await countsMatch() &&
+    await ev(`${menu}.querySelector('[value="blocked"]').textContent === 'Blocked (0)'`));
+  await jump('waiting');
+  await ev("for(let i=0;i<18;i++) window.__addTask('jump_' + i, 'Waiting case ' + i, 'waiting')");
+  await until("document.querySelector('.w-col-waiting h2 span').textContent === '20'");
+  check('Live updates preserve the Waiting heading focus and update menu counts',
+    await countsMatch() && await ev("document.activeElement === document.querySelector('.w-col-waiting h2')"));
+  await key('Tab', 9);
+  const list = "document.querySelector('.w-col-waiting .w-list')";
+  check('Tab from the heading reaches its list without document overflow', await ev(`document.activeElement === ${list} && document.documentElement.scrollWidth === innerWidth`));
+  const link = await ev(`(() => {
+    const a = ${list}.querySelector('[data-task="jump_8"] .w-title');
+    a.scrollIntoView({block:'center', inline:'nearest'});
+    a.focus();
+    return { hash:a.hash, left:${board}.scrollLeft, top:${list}.scrollTop };
+  })()`);
+  await key('Enter', 13, '\r');
+  await until(`location.hash === ${JSON.stringify(link.hash)} && !!document.querySelector('.t-close')`);
+  await ev('history.back()');
+  await until("!!document.querySelector('.w-card')");
+  check('Back from a jumped-to card restores its filter, both offsets and exact link',
+    link.left > 0 && link.top > 0 && await ev(`document.activeElement.hash === ${JSON.stringify(link.hash)} &&
+      document.querySelector('.w-filters select').value === 'activity' && ${board}.scrollLeft === ${link.left} && ${list}.scrollTop === ${link.top}`));
+  await cmd('Emulation.setDeviceMetricsOverride', { width:1280, height:900, deviceScaleFactor:1, mobile:false });
+  check('Desktop keeps horizontal columns without the narrow-screen menu', await ev(`!${menu}.getClientRects().length &&
+    document.querySelector('.w-col-claimed').getBoundingClientRect().left > document.querySelector('.w-col-ready').getBoundingClientRect().left`));
+}
+
+// Exercise the browser's nested scroll handling with native touch input.
+async function checkBoardPicker(until) {
+  const name = 'UnbrokenBoardName'.repeat(5);
+  await ev(`window.__fake.pickerBoards = [
+    { id: 'brd_test', name: ${JSON.stringify(name)}, caller_is_board_admin: true, created_at: '2026-01-01T00:00:00Z' },
+    { id: 'brd_planning', name: 'Release planning', caller_is_board_admin: false, created_at: '2026-01-02T00:00:00Z' }
+  ]; 1`);
+  await cmd('Page.bringToFront');
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 320, height: 844, deviceScaleFactor: 1, mobile: true });
+  await go('#/boards');
+  const rows = await ev(`[...document.querySelectorAll('#board-list li')].map(row => {
+    const link = row.querySelector('a');
+    const box = link.getBoundingClientRect(), item = row.getBoundingClientRect();
+    const date = row.querySelector('.small').getBoundingClientRect();
+    const point = { x: date.left + date.width / 2, y: date.top + date.height / 2 };
+    const hit = (x, y) => document.elementFromPoint(x, y)?.closest('a') === link;
+    return { width: box.width, height: box.height, itemWidth: item.width, itemHeight: item.height,
+      fullTarget: box.width === item.width && item.height - box.height <= 1 &&
+        hit(item.left + 1, item.top + 1) && hit(item.right - 2, item.bottom - 2) && hit(point.x, point.y),
+      datePoint: point, name: row.querySelector('strong').textContent,
+      wraps: row.querySelector('strong').getClientRects().length > 1 && row.scrollWidth <= row.clientWidth,
+      admin: link.textContent.includes('board admin') };
+  })`);
+  check('picker rows include their padding and date in one full-size target at 320px',
+    rows.length === 2 && rows.every(r => r.fullTarget && r.width >= 24 && r.height >= 24), JSON.stringify(rows));
+  check('picker preserves a long wrapping name and shows admin only for the reported board',
+    rows[0].name === name && rows[0].wraps && rows[0].admin && !rows[1].admin);
+  await ev(`document.querySelector('#forget').focus()`);
+  await chatKey('Tab', 9);
+  check('Tab focuses the first board link with a visible outline', await ev(`
+    document.activeElement === document.querySelector('#board-list li:first-child a:focus-visible') &&
+    parseFloat(getComputedStyle(document.activeElement).outlineWidth) > 0`));
+  await chatKey('Tab', 9);
+  check('the next tab stop is the second board link', await ev(`
+    document.activeElement === document.querySelector('#board-list li:nth-child(2) a')`));
+  await chatKey('Enter', 13);
+  await until(`location.hash === '#/b/brd_planning' && document.querySelector('.t-foot')?.textContent.includes('Release planning')`);
+  await go('#/boards');
+  await cmd('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [rows[0].datePoint] });
+  await cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await until(`location.hash === '#/b/brd_test' && !!document.querySelector('.t-foot')`);
+  await cmd('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await ev('window.__fake.pickerBoards = []; 1');
+  await go('#/boards');
+  check('empty board picker stays inert', await ev(`
+    document.querySelector('#board-list').textContent === 'No visible boards.' &&
+    !document.querySelector('#board-list :is(a,button,input,[tabindex])')`));
+  await ev('delete window.__fake.pickerBoards');
+}
+
+async function checkLaneTouch(until) {
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await cmd('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html#/board?b=brd_test' });
+  const ready = '.w-col-ready';
+  await until(`!!document.querySelector('${ready} .w-card')`);
+  const offsets = () => ev(`[document.querySelector('.w-cols').scrollLeft, document.querySelector('${ready} .w-list').scrollTop]`);
+  const touch = (type, touchPoints) => cmd('Input.dispatchTouchEvent', { type, touchPoints });
+  async function drag(x, y, dx, dy) {
+    await touch('touchStart', [{ x, y }]);
+    for (let step = 1; step <= 6; step++) {
+      await touch('touchMove', [{ x: x + dx * step / 6, y: y + dy * step / 6 }]);
+      await sleep(24);
+    }
+    await sleep(150); // Lift after stopping so momentum cannot carry into the next trial.
+    await touch('touchEnd', []);
+    await sleep(100);
+  }
+  async function horizontal(selector, dx) {
+    const { x, y, hit } = await ev(`(() => {
+      const el = document.querySelector('${ready} ${selector}');
+      const r = el.getBoundingClientRect();
+      const x = Math.round((Math.max(0, r.left) + Math.min(innerWidth, r.right)) / 2);
+      const y = Math.round(r.top + r.height / 2);
+      return { x, y, hit: el.contains(document.elementFromPoint(x, y)) };
+    })()`);
+    if (!hit) throw new Error('Touch missed ' + selector);
+    const [before] = await offsets();
+    await drag(x, y, dx, 0);
+    const [after] = await offsets();
+    return { moved: (after - before) * Math.sign(-dx) > 0, before, after };
+  }
+
+  for (const count of [1, 30]) {
+    if (count === 30) {
+      await ev(`for (let i = 1; i < 30; i++) window.__addTask('touch_' + i, 'Touch task ' + i); 1`);
+      await until(`document.querySelectorAll('${ready} .w-card').length === 30`);
+    }
+    check('Ready list overflow matches fixture of ' + count, await ev(`(() => {
+      const list = document.querySelector('${ready} .w-list');
+      return (list.scrollHeight > list.clientHeight) === ${count === 30};
+    })()`));
+    for (let trial = 1; trial <= 3; trial++) {
+      for (const target of ['h2', '.w-card']) {
+        for (const dx of [-90, 110]) {
+          const move = await horizontal(target, dx);
+          check(`Ready (${count}), trial ${trial}, ${target} swipe ${dx < 0 ? 'left' : 'right'}`, move.moved, JSON.stringify(move));
+        }
+      }
+    }
+  }
+
+  // Keep both scroll offsets nonzero for the redraw and return-navigation checks.
+  await horizontal('h2', -60);
+  const { x, y } = await ev(`(() => {
+    const r = document.querySelector('${ready} .w-list').getBoundingClientRect();
+    return { x: 80, y: Math.round(r.top + r.height / 2) };
+  })()`);
+  const [left, top] = await offsets();
+  await drag(x, y, 0, -150);
+  const [upLeft, upTop] = await offsets();
+  await drag(x, y, 0, 70);
+  const [downLeft, downTop] = await offsets();
+  check('Vertical drags scroll the Ready list in both directions within its lane',
+    upTop > top && downTop < upTop && downTop > 0 && left > 0 && upLeft === left && downLeft === left);
+
+  const link = await ev(`(() => {
+    const list = document.querySelector('${ready} .w-list');
+    for (const el of list.querySelectorAll('.w-title')) {
+      const r = el.getBoundingClientRect();
+      const x = (Math.max(0, r.left) + Math.min(innerWidth, r.right)) / 2, y = r.top + r.height / 2;
+      if (document.elementFromPoint(x, y) !== el) continue;
+      el.focus({ preventScroll: true });
+      return { x, y, hash: el.hash, task: el.closest('[data-task]').dataset.task };
+    }
+  })()`);
+  await ev(`for (let i = 1; i <= 80; i++) window.__taskEvent('task_owner', { title: 'Update ' + i }); 1`);
+  await until(`document.querySelector('[data-task="task_owner"] .w-title')?.textContent === 'Update 80'`);
+  const retained = async () => {
+    const [newLeft, newTop] = await offsets();
+    return newLeft === left && newTop === downTop && await ev(`document.activeElement === document.querySelector('[data-task="${link.task}"] .w-title')`);
+  };
+  check('80 live updates preserve the touched lane offsets and focused link', await retained());
+  await touch('touchStart', [{ x: link.x, y: link.y }]);
+  await touch('touchEnd', []);
+  await until(`location.hash === ${JSON.stringify(link.hash)} && !!document.querySelector('.t-close')`);
+  await ev('history.back()');
+  await until(`!!document.querySelector('${ready} .w-card')`);
+  check('Tapping the exact thread and going Back restores offsets and card focus', await retained());
+}
 
 try {
   await cmd('Page.navigate', { url: `${ORIGIN}/#/` });
@@ -705,9 +1215,20 @@ try {
   await ev(`document.querySelector('#board-list a[href*="brd_planning"]').click();1`);
   await sleep(800);
   check('second board opens its own empty Chat without leaking demo tasks', await ev(`location.hash.includes('brd_planning') && document.querySelector('.t-foot').textContent.includes('Release planning') && !document.querySelector('#term').textContent.includes('Build the viewer bundle') && document.getElementById('banner').hidden`));
+  await checkBoardPicker(until);
   await go('#/forum?b=brd_test');
   await ev(`document.querySelector('#forget').click();1`);
   check('Forum Forget token restores login and stops the skin', await ev(`!document.querySelector('#login').hidden && !sessionStorage.getItem('yak-viewer-token') && !!document.querySelector('body > .top') && !document.body.dataset.skin`));
+
+  await checkLaneTouch(until);
+  await checkLaneJump(until);
+  await checkClearLaneFilters(until);
+  await checkChatJump(until);
+  await checkChatChannels(until);
+  await checkChatHelp(until);
+  await checkThreadOwnership(until);
+  await checkChatTaskIdentity(until);
+  await checkInputHints(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));

@@ -43,8 +43,8 @@ let id = 0; const pending = new Map(); const errors = [];
 browser.addEventListener('message', (m) => {
   const d = JSON.parse(m.data);
   if (d.id && pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); }
-  if (d.method === 'Runtime.exceptionThrown') errors.push(d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text);
-  if (d.method === 'Runtime.consoleAPICalled' && d.params.type === 'error') errors.push(`console.error: ${d.params.args.map((a) => a.description || a.value).join(' ')}`);
+  if (d.method === 'Runtime.exceptionThrown') errors.push('uncaught browser exception');
+  if (d.method === 'Runtime.consoleAPICalled' && d.params.type === 'error') errors.push('console.error');
 });
 let session, op17028FixtureInstallations=0;
 const cmd = (method, params = {}) => new Promise((r) => {
@@ -65,18 +65,44 @@ await cmd('Page.addScriptToEvaluateOnNewDocument', {source: `(${operatorFixture}
 let failed=0;
 const check=(name,ok,detail='')=>{console.log(`${ok?'PASS':'FAIL'} ${name}${ok?'':` ${detail}`}`);if(!ok)failed++};
 const until=async(expr)=>{for(let n=0;n<70;n++){if(await ev(expr))return;await sleep(50)}throw new Error(`condition failed: ${expr}`)};
-const click=async(name,selector='.op-workspace')=>{await ev(`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(selector+' button')})].find(b=>b.textContent===${JSON.stringify(name)});if(!b)throw new Error('missing button '+${JSON.stringify(name)});b.click();})()`);await sleep(100)};
+async function discloseWorkspace() {
+ await ev("document.querySelectorAll('.op-workspace details:not([open]) > summary').forEach(summary => summary.click())");
+}
+const click=async(name,selector='.op-workspace')=>{
+ await ev(`(() => {
+  const b = [...document.querySelectorAll(${JSON.stringify(selector+' button')})].find(b=>b.textContent===${JSON.stringify(name)});
+  if (!b) throw new Error('missing button ' + ${JSON.stringify(name)});
+  b.closest('details:not([open])')?.querySelector('summary').click();
+  if (!b.checkVisibility()) throw new Error('button is hidden: ' + b.textContent);
+  b.focus();
+  b.click();
+ })()`);
+ await sleep(100);
+};
 const count=()=>ev('window.__op.writes.length');
-const open=async()=>{await ev("document.querySelector('#operator-tools').click()");await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");await ev("{const sel=document.querySelector('.op-workspace select[aria-label=Thread]');sel.value='th';sel.dispatchEvent(new Event('change'));}");await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')")};
+const open=async(expand=true)=>{
+ await ev("document.querySelector('#operator-tools').click()");
+ await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");
+ await ev(`{
+  const sel=document.querySelector('.op-workspace select[aria-label=Thread]');
+  if (sel.value!=='th') {
+   sel.closest('details:not([open])')?.querySelector('summary').click();
+   sel.value='th';sel.dispatchEvent(new Event('change'));
+  }
+ }`);
+ await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
+ if (expand) await discloseWorkspace();
+};
 const confirm=async(name)=>{await until("!!document.querySelector('.op-confirm[open]')");await ev(`(()=>{const b=[...document.querySelectorAll('.op-confirm button')].find(b=>b.textContent===${JSON.stringify(name)});if(!b)throw new Error('missing named confirm');b.click();b.click();})()`);await sleep(150)};
 const cancel=async()=>click('Cancel','.op-confirm');
 async function matrix(action,named=action,setup='',report=check,reject=false){
  const check=report;
+ await discloseWorkspace();
  if(setup)await ev(setup);
  const n=await count();
  await op17027TextFields('.op-workspace',action,check);check(`${action}: Enter in text fields sends nothing`,await count()===n);
  const details=await op17030ExpectedDetails(action);
- const inspect=async()=>{const actual=await ev("document.querySelector('.op-confirm pre').textContent");check(`${action}: exact confirmed read values`,actual===details,JSON.stringify({expected:details,actual}));};
+ const inspect=async()=>{const actual=await ev("document.querySelector('.op-confirm pre').textContent");check(`${action}: exact confirmed read values`,actual===details);};
  await click(action);await until("!!document.querySelector('.op-confirm[open]')");
  check(`${action}: no write on open`,await count()===n);
  await inspect();
@@ -101,40 +127,81 @@ async function matrix(action,named=action,setup='',report=check,reject=false){
  check(`${action}: explicit confirmation writes exact ordered intent`,await op17026Matches(n,reject?expected.slice(0,1):expected));
  check(`${action}: one receipt after settlement`,await ev(`document.querySelectorAll('.op-pending').length===${receipts+1}`));
 }
+async function conflictReadVariants(assert) {
+ for (const variant of ['changed', 'unchanged', 'unavailable', 'switched']) {
+  await freshIdentityFixture("window.__op.enableConfirmationDelay();window.__op.task.revision=JSON.rawJSON('9007199254740993');");
+  try {
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-review-token';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body?.dataset.operator==='true'");
+   await open(false);
+   await ev("document.querySelector('.op-review textarea').value='Keep this note';window.__op.delayConfirmation=true;window.__op.rejectConfirmation=true;");
+   await click('Approve and unblock');
+   await confirm('Approve and unblock');
+   await until("typeof window.__op.resolveConfirmation==='function'");
+   if (variant==='changed') await ev("Object.assign(window.__op.task,{revision:JSON.rawJSON('9007199254740995'),assignee_actor_id:'bot',state:'ready',direct_action_required:false});window.__op.thread.labels.gate='changes_requested'");
+   if (variant==='unavailable') await ev("const original=window.fetch;window.fetch=(url,opts)=>new URL(url,location.href).pathname.endsWith('/tasks/t') ? new Response(JSON.stringify({code:'not_found',reason:'private error detail'}),{status:404}) : original(url,opts)");
+   if (variant==='switched') {
+    await ev("const sel=document.querySelector('.op-thread select');sel.value='';sel.dispatchEvent(new Event('change'))");
+    await until("!!document.querySelector('input[aria-label^=Title]')");
+   }
+   await ev("window.__op.resolveConfirmation()");
+   const selector=variant==='switched' ? '.op-receipts .op-conflict' : '.op-review .op-conflict';
+   await until(`document.querySelector(${JSON.stringify(selector)})?.innerText.toLowerCase().includes('rejected') && !document.querySelector(${JSON.stringify(selector)}).innerText.includes('Reading updated')`);
+   const summary=await ev(`document.querySelector(${JSON.stringify(selector)}).innerText`);
+   if (variant==='changed') {
+    assert('changed task facts have readable before and after values',['Assignee: Unassigned → @bot','State: blocked → ready','Approval required: Yes → No','Gate label: pending → changes_requested'].every(s=>summary.includes(s)));
+    const details=await ev("JSON.parse(document.querySelector('.op-conflict pre').textContent)");
+    assert('details retain both exact large revisions',details.before.revision==='9007199254740993' && details.current.revision==='9007199254740995');
+   } else if (variant==='unchanged') assert('unchanged facts are explicit',summary.includes('facts are unchanged'));
+   else if (variant==='unavailable') assert('failed read offers review without server error details',summary.includes('could not be read') && !summary.includes('private error detail') && summary.includes('Review updated task'));
+   else assert('changed destination shows only safe guidance',summary.includes('original destination') && !summary.includes('gate') && !await ev("document.querySelector('.op-conflict button, .op-conflict pre')!==null"));
+   if (variant!=='switched') assert(variant+' preserves the note',await ev("document.querySelector('.op-review textarea').value==='Keep this note'"));
+   assert(variant+' sends exactly one action',await count()===1);
+  } finally {
+   await ev("document.querySelector('#operator-logout')?.click()");
+  }
+ }
+}
 async function op17033ConflictCase() {
  let assertions=0;
  const assert=(name,ok,detail='')=>{assertions++;check(`OP17-033: ${name}`,ok,detail)};
  await freshIdentityFixture("Object.assign(window.__op.task,{revision:833,brief_revision:33,assignee_actor_id:'a'});window.__op.conflict=true;");
  try {
   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-conflict-token';document.querySelector('#login-form').requestSubmit()");
-  await until("!!document.body && document.body.dataset.operator==='true'");await open();
+  await until("!!document.body && document.body.dataset.operator==='true'");await open(false);
   await ev("window.__op.enableConflictClock()");
   const before=await count(),details=await op17030ExpectedDetails('Approve and unblock');
   await click('Approve and unblock');await until("!!document.querySelector('.op-confirm[open]')");
   assert('initial confirmation displays exact original read',await ev("document.querySelector('.op-confirm pre').textContent")===details);
   assert('initial review sends no writes',await count()===before);
   await confirm('Approve and unblock');
-  await until("!!document.querySelector('.op-receipts pre')");
+  await until("!!document.querySelector('[aria-label=\"Task actions\"] .op-conflict details pre')");
   const capture=await ev('window.__op.conflictCapture');
   assert('412 captures exactly one rejected unblock',capture.writeCount===before+1 && capture.intent.method==='POST' && capture.intent.path==='/v1/boards/brd_test/tasks/t/unblock' && JSON.stringify(capture.intent.body)==='{"reason":"gate approved"}');
   assert('rejected intent uses exact original revision and an intent key',capture.intent.headers['If-Match']==='"833"' && /^[a-f0-9]{32}$/.test(capture.intent.headers['Idempotency-Key']));
-  assert('legacy no-retry receipt wording is present',await ev("document.querySelector('.op-receipts').textContent.includes('Previously read:') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')"));
-  const shown=await ev("document.querySelector('.op-receipts pre').textContent");
+  const receipt=await ev(`(() => {
+   const node=document.querySelector('.op-conflict');
+   return {summary:node.innerText, buttons:[...node.querySelectorAll('button')].map(b=>b.textContent), details:JSON.parse(node.querySelector('details pre').textContent), closed:!node.querySelector('details').open};
+  })()`);
+  assert('inline rejection names the attempted action, destination and readable change',receipt.closed && receipt.buttons.length===1 && receipt.buttons[0]==='Review updated task' && receipt.summary.includes('Approve and unblock') && receipt.summary.includes(capture.before.title) && /Assignee.*@alice.*@bot/.test(receipt.summary) && /rejected/i.test(receipt.summary) && !/retry sends/i.test(receipt.summary));
   const values=t=>({state:t.state,assignee:t.assignee_actor_id,claim:t.current_claim?.actor_id||null,brief_revision:String(t.brief_revision),revision:String(t.revision),direct_action_required:t.direct_action_required});
-  assert('receipt shows actual old and new assignee and revision',shown===`Previously read: ${JSON.stringify(values(capture.before))}\nNow: ${JSON.stringify(values(capture.after))}\nLabels previously: {"gate":"pending"}\nLabels now: {"gate":"pending"}` && capture.before.assignee_actor_id==='a' && capture.after.assignee_actor_id==='bot' && capture.before.revision===833 && capture.after.revision===834,shown);
+  const matches=(shown,task)=>Object.entries(values(task)).every(([k,v])=>shown[k]===v);
+  assert('details match independent before/after wire captures',matches(receipt.details.before,capture.before) && matches(receipt.details.current,capture.after) && receipt.details.previous_labels.gate==='pending' && receipt.details.current_labels.gate==='pending' && capture.before.assignee_actor_id==='a' && capture.after.assignee_actor_id==='bot' && capture.before.revision===833 && capture.after.revision===834);
   const actionWrites=()=>ev(`window.__op.writes.slice(${before}).filter(w=>!(w.method==='POST' && w.path==='/v1/boards/brd_test/tasks/t/claims/q/renew'))`);
   const noRepeat=async phase=>{
    await ev("window.__op.clockProbe=false;setTimeout(()=>window.__op.clockProbe=true,30000)");
    const drained=await ev('window.__op.drainConflictClock()');
    assert(`${phase}: controlled timers and refresh completions drained`,drained.fired>0 && drained.reads===0 && await ev('window.__op.clockProbe'));
    const writes=await actionWrites();
-   assert(`${phase}: zero further action writes`,writes.length===1,JSON.stringify(writes));
+   assert(`${phase}: zero further action writes`,writes.length===1,`writes=${writes.length}`);
    assert(`${phase}: rejected request headers and body remain unchanged`,JSON.stringify(writes[0])===JSON.stringify(capture.intent));
   };
   await noRepeat('after 412');
-  await click('Review current state');
+  await ev("document.querySelector('.op-review textarea').value='Review note'");
+  await click('Review updated task');
   await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]')");
   await noRepeat('after explicit read refresh');
+  assert('review retains the edited gate note',await ev("document.querySelector('.op-review textarea').value==='Review note'"));
   const latest=await op17030ExpectedDetails('Approve and unblock');
   assert('freshly displayed read uses changed assignee and exact revision',latest.includes('Assignee: @bot (agent)') && latest.includes('Revision: 834; brief: 33'));
   await click('Approve and unblock');await until("!!document.querySelector('.op-confirm[open]')");
@@ -151,16 +218,17 @@ async function op17033ConflictCase() {
   await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
   await ev('window.__op.drainConflictClock()');
   const writes=await actionWrites(),unblocks=writes.filter(w=>w.path.endsWith('/unblock'));
-  assert('fresh confirmation adds exactly one new state-changing intent',writes.length===3 && unblocks.length===2 && writes[2].method==='PATCH' && writes[2].path==='/v1/boards/brd_test/messages/root/labels' && writes[2].body.operations[0].value==='approved',JSON.stringify(writes));
+  assert('fresh confirmation adds exactly one new state-changing intent',writes.length===3 && unblocks.length===2 && writes[2].method==='PATCH' && writes[2].path==='/v1/boards/brd_test/messages/root/labels' && writes[2].body.operations[0].value==='approved',`writes=${writes.length}`);
   assert('new explicit unblock uses latest exact revision and a new key',unblocks[1]?.headers['If-Match']==='"834"' && /^[a-f0-9]{32}$/.test(unblocks[1]?.headers['Idempotency-Key']) && unblocks[1]?.headers['Idempotency-Key']!==capture.intent.headers['Idempotency-Key']);
   assert('original rejected If-Match never changes',unblocks[0]?.headers['If-Match']==='"833"' && JSON.stringify(unblocks[0])===JSON.stringify(capture.intent));
   assert('new intent succeeds against changed task',await ev("window.__op.task.state==='ready' && window.__op.task.assignee_actor_id==='bot' && window.__op.task.revision===835"));
  } finally {
   await ev("window.__op.disposeConflictClock?.();document.querySelector('#operator-logout')?.click()");
  }
+ await conflictReadVariants(assert);
  assert('no browser exceptions',errors.length===0,errors.join(' | '));
- if(assertions!==30)throw new Error(`OP17-033 expected 30 assertions, executed ${assertions}`);
- console.log(`OP17-033 executed ${assertions} assertions across one fresh fixture`);
+ if(assertions!==43)throw new Error(`OP17-033 expected 43 assertions, executed ${assertions}`);
+ console.log(`OP17-033 executed ${assertions} assertions across five fresh fixtures`);
 }
 // OP17-030: the oracle uses API fixture reads and form inputs, never dialog labels.
 async function op17030ExpectedDetails(action) {
@@ -281,7 +349,7 @@ async function op17026Matches(before,expected) {
  const actual=writes.map(w=>({...w,headers:Object.fromEntries(Object.entries(w.headers || {}).filter(([k])=>/^if-/i.test(k) || k.toLowerCase()==='yak-claim-proof'))}));
  const canonical=value=>JSON.stringify(value,(_key,v)=>v && !Array.isArray(v) && typeof v==='object'?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
  const ok=canonical(actual)===canonical(expected) && keys.every(k=>typeof k==='string' && k.length>=22) && new Set(keys).size===expected.length;
- if(!ok)console.log('OP17-026 wire mismatch',JSON.stringify({actual,expected,keyCount:keys.length,uniqueKeys:new Set(keys).size}));
+ if(!ok)console.log('OP17-026 wire mismatch',JSON.stringify({writes:writes.length,expected:expected.map(({method,path})=>({method,path})),uniqueKeys:new Set(keys).size}));
  return ok;
 }
 async function op17026ConfirmationCase() {
@@ -320,12 +388,385 @@ async function freshIdentityFixture(setup = '') {
   await until("!!window.__op && !!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden && !!document.body && ['login','boards'].includes(document.body.dataset.view)");
  } finally { await cmd('Page.removeScriptToEvaluateOnNewDocument', {identifier}); }
 }
+async function tokenFeedbackCase() {
+ const neutral = "document.querySelector('#token').getAttribute('aria-invalid') !== 'true' && !document.querySelector('#token').hasAttribute('aria-describedby')";
+ await freshIdentityFixture("window.__op.scope=['read'];window.__op.expired=true");
+ check('initial Token has no rejection', await ev(neutral));
+ await ev(`document.querySelector('#login-form').addEventListener('submit', () => {
+   window.__feedbackCleared = (${neutral}) && !document.querySelector('#login-error').textContent;
+ })`);
+ const marker = 'synthetic-token-feedback';
+ const priorPreferences = await ev('JSON.stringify(localStorage)');
+ let echoed = false;
+ const watchConsole = ({data}) => {
+  const event = JSON.parse(data);
+  if (event.method === 'Runtime.consoleAPICalled' && JSON.stringify(event.params.args).includes(marker)) echoed = true;
+ };
+ browser.addEventListener('message', watchConsole);
+ try {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+   await cmd('Input.insertText', {text: marker});
+   await op17027Enter();
+   await until("!document.querySelector('#connect').disabled && document.querySelector('#login-error').textContent.includes('401')");
+   check(`attempt ${attempt} clears earlier feedback on submit`, await ev('window.__feedbackCleared'));
+   const message = await ev("document.querySelector('#login-error').innerText");
+   const tree = (await cmd('Accessibility.getFullAXTree')).result.nodes;
+   const field = tree.find(node => node.role.value === 'textbox' && node.name?.value === 'Token');
+   check(`attempt ${attempt} describes the focused invalid Token`, !!message && field?.description?.value === message &&
+     await ev("document.activeElement.id==='token' && document.activeElement.getAttribute('aria-invalid')==='true'"));
+   check(`attempt ${attempt} announces the visible rejection`, await ev("!!document.querySelector('#login-error').closest('[role=status],[role=alert],[aria-live=polite],[aria-live=assertive]')"));
+   check(`attempt ${attempt} clears the password without echo or persistence`, !echoed && await ev(`!document.querySelector('#token').value && !document.body.innerText.includes(${JSON.stringify(marker)}) && !sessionStorage.length`) && await ev('JSON.stringify(localStorage)') === priorPreferences);
+  }
+ } finally { browser.removeEventListener('message', watchConsole); }
+ await ev("window.__op.expired=false");
+ await cmd('Input.insertText', {text: 'synthetic-valid'});
+ await op17027Enter();
+ await until("document.body.dataset.view==='boards'");
+ check('valid reconnect clears rejection', await ev(neutral + " && !document.querySelector('#login-error').textContent"));
+ await ev("document.querySelector('#forget').click()");
+ check('intentional forget leaves Token neutral', await ev(neutral + " && document.querySelector('#login [role=status]').innerText.includes('forgotten')"));
+ await freshIdentityFixture("window.__op.expired=true;sessionStorage.setItem('yak-viewer-token','synthetic-restored')");
+ check('rejected restored session reports 401 with a neutral Token field', await ev(neutral + " && document.querySelector('#login-error').textContent.includes('401')"));
+}
+async function sessionFeedbackCase() {
+ const clearHeader = "document.querySelector('#status').hidden && !document.querySelector('#status').textContent";
+ const neutral = "document.querySelector('#login-error').hidden && !document.querySelector('#token').hasAttribute('aria-invalid')";
+ await freshIdentityFixture("window.__op.scope=['read'];sessionStorage.setItem('yak-viewer-token','synthetic-session')");
+ await ev("location.hash='#/b/brd_test'");
+ await until("document.querySelector('#status').textContent==='live'");
+ // Hold an actual poll beyond logout, even if the fixture receives an abort.
+ await ev(`{ const previous=window.fetch;
+  window.fetch=(url,opts)=>{
+   if(!window.__lateRead && new URL(url,location.href).pathname.endsWith('/events')) {
+    return new Promise(resolve=>{window.__lateRead=()=>resolve(new Response(null,{status:401}))});
+   }
+   return previous(url,opts);
+  };
+ }`);
+ await until("typeof window.__lateRead==='function'");
+ await until("document.querySelector('[data-control=forget]')?.checkVisibility()");
+ await ev("document.querySelector('[data-control=forget]').focus()");
+ check('Chat Forget receives keyboard focus', await ev("document.activeElement.dataset.control==='forget'"));
+ await op17027Enter();
+ await until("document.body.dataset.view==='login'");
+ check('Forget clears the live header and stored token without writes', await ev(clearHeader + " && !sessionStorage.length") && await count()===0);
+ check('Forget announces neutral feedback', await ev(neutral + " && document.querySelector('#login [role=status]').innerText.includes('forgotten')"));
+ await cmd('Input.insertText', {text:'synthetic-reconnect'});
+ await op17027Enter();
+ await until("document.body.dataset.view==='term' && document.querySelector('#status').textContent==='live'");
+ await ev("window.__lateRead()");
+ await sleep(100);
+ check('obsolete poll rejection preserves the replacement session', await ev("document.body.dataset.view==='term' && !!sessionStorage.getItem('yak-viewer-token') && !document.querySelector('#login-error').textContent"));
+ check('reconnect reports the new live connection', await ev("!document.querySelector('#status').hidden && !document.querySelector('#login [role=status]').textContent.trim()"));
+ for (const outcome of ['confirmed', '401', 'uncertain', 'expired']) {
+  await freshIdentityFixture();
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-session';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  if (outcome==='expired') {
+   await ev(`{
+    window.__announcements=[];
+    new MutationObserver(records=>{
+     for(const record of records) for(const node of record.addedNodes) {
+      if(node.textContent.trim()) window.__announcements.push(node.textContent);
+     }
+    }).observe(document.querySelector('#login [role=status]'),{subtree:true,childList:true});
+    window.__op.expired=true;
+    location.hash='#/b/brd_test';
+   }`);
+  } else {
+   await ev(`{ const original = window.fetch; window.__revokeCount=0;
+    window.fetch = (url, opts) => {
+     if(opts?.method==='DELETE' && String(url)==='/v1/credentials/cred_test') {
+      window.__revokeCount++;
+      if (${JSON.stringify(outcome)}==='401') return Promise.resolve(new Response(null,{status:401}));
+      if (${JSON.stringify(outcome)}==='uncertain') return Promise.reject(new Error('lost response'));
+     }
+     return original(url,opts);
+    };
+    document.querySelector('#operator-logout').focus();
+   }`);
+   await op17027Enter();
+  }
+  await until("document.body.dataset.view==='login'");
+  const message = await ev("document.querySelector('#login [role=status]').innerText");
+  if (outcome==='confirmed') check('confirmed revocation is neutral', await ev(neutral) && /revoked everywhere/i.test(message));
+  else if (outcome==='expired') check('fresh 401 ends operator session with a single visible error and zero writes', await count()===0 && /401/.test(message) && await ev(clearHeader + " && window.__announcements.length===1 && window.__announcements[0]===document.querySelector('#login-error').innerText"));
+  else check(`${outcome} revocation is unconfirmed`, /unconfirmed|could not confirm|may remain valid/i.test(message) && !/revoked everywhere/i.test(message));
+  if(outcome!=='expired') check(`${outcome} makes exactly one revoke attempt`, await ev("window.__revokeCount===1"));
+ }
+}
+async function sessionDirectoryCase() {
+ const route = '#/b/brd_test?ch=ops&t=th';
+ const login = async () => {
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-directory';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true' && !!document.querySelector('#term .t-app') && !document.querySelector('#connect').disabled");
+ };
+ const broad = "JSON.stringify(Array.from(document.querySelectorAll('.t-boardsel option'), o => [o.value, o.textContent])) === JSON.stringify([['brd_test','test'],['brd_other','other']])";
+ const narrow = "document.querySelector('.t-boardname')?.textContent==='test' && !document.querySelector('.t-boardsel')";
+ for (const exit of ['logout', 'unmounted logout', '401']) for (const startsBroad of [true, false]) {
+  const label = `${exit}, ${startsBroad ? 'narrower' : 'broader'} directory`;
+  await freshIdentityFixture("window.__singleBoardFetch=window.fetch;");
+  if (startsBroad) await ev("window.__op.enableBoardSwitch()");
+  await ev(`location.hash=${JSON.stringify(route)}`);
+  await login();
+  await until(startsBroad ? broad : narrow);
+  // Logout from a different view exercises teardown after ordinary Chat unmount.
+  if (exit === 'unmounted logout') {
+   await ev("location.hash='#/boards'");
+   await until("document.body.dataset.view==='boards' && !!document.querySelector('#board-list a')");
+  }
+  if (exit === '401') await ev("window.__op.expired=true");
+  else await ev("document.querySelector('#operator-logout').click()");
+  await until("document.body.dataset.view==='login'");
+  check(`${label} clears the previous Chat DOM at teardown`, await ev("!document.querySelector('#term').childElementCount"));
+  await ev(`window.__op.expired=false;window.__op.revoked=false;location.hash=${JSON.stringify(route)}`);
+  if (startsBroad) await ev("window.fetch=window.__singleBoardFetch");
+  else await ev("window.__op.enableBoardSwitch()");
+  await login();
+  check(`${label} reflects this session's directory on the retained route`,
+   await ev(startsBroad ? narrow : broad) && await ev('location.hash') === route);
+ }
+
+ // Release the old second page after a new credential has loaded its directory.
+ for (const path of ['#/', '#/boards']) {
+  await freshIdentityFixture();
+  await ev(`location.hash=${JSON.stringify(route)}`);
+  await login();
+  await until(narrow);
+  await ev(`{
+   const original = window.fetch;
+   window.fetch = async (url, opts) => {
+    const u = new URL(url, location.href);
+    if (u.pathname !== '/v1/boards') return original(url, opts);
+    if (!u.searchParams.has('page_token')) return Response.json({boards:[{id:'old',name:'Old board'}],next_page_token:'later'});
+    window.fetch = original;
+    const page = Response.json({boards:[{id:'stale',name:'Stale board'}],next_page_token:'unexpected'});
+    const body = page.text.bind(page);
+    page.text = async () => {
+     await new Promise(resolve => { window.__releaseDirectory = resolve; });
+     return body();
+    };
+    return page;
+   };
+   location.hash=${JSON.stringify(path)};
+  }`);
+  await until("typeof window.__releaseDirectory==='function'");
+  await ev("document.querySelector('#operator-logout').click()");
+  await until("document.body.dataset.view==='login'");
+  await ev(`window.__op.revoked=false;window.__op.enableBoardSwitch();location.hash=${JSON.stringify(route)}`);
+  await login();
+  await until(broad);
+  await ev("window.__releaseDirectory();new Promise(resolve => setTimeout(resolve, 0))");
+  await ev("document.querySelector('[data-control=theme]').click()");
+  check(`late directory completion from ${path} preserves the replacement selection and URL`,
+   await ev(broad) && await ev("document.querySelector('.t-boardsel').value==='brd_test' && !document.querySelector('#board-list a')") && await ev('location.hash') === route);
+ }
+ for (const board of ['brd_other', 'brd_test']) {
+  await ev(`{
+   const select = document.querySelector('.t-boardsel');
+   select.value = ${JSON.stringify(board)};
+   select.dispatchEvent(new Event('change'));
+  }`);
+  await until(`location.hash==='#/b/${board}?v=activity' && document.querySelector('.t-boardsel')?.value==='${board}' && !!document.querySelector('.t-agent-activity')`);
+  check(`Chat retains both choices when switching to ${board} within a session`, await ev(broad));
+ }
+}
+// Settle the initial snapshot requests one at a time, independently of fetch timing.
+async function boardResponseOrderCase() {
+ await freshIdentityFixture();
+ for (const [first, status] of [['board',404], ['actors',404], ['channels',404], ['me',503]]) {
+  const result = await ev(`(async () => {
+   const {createStore} = await import('/skin-kit.js');
+   const requests = {};
+   let recoveries = 0, boardReads = 0;
+   const store = createStore({
+    boardId:'selected',
+    api:(_method,path) => new Promise((_resolve,reject) => {
+     const name = path.split('/').pop();
+     if (name === 'selected') boardReads++;
+     requests[name === 'selected' ? 'board' : name] = code => reject(Object.assign(new Error('fixture'), {status:code}));
+    }),
+    onBoardUnavailable:() => { recoveries++; },
+   });
+   const tick = () => new Promise(resolve => setTimeout(resolve,0));
+   try {
+    for (let n=0; n<100 && Object.keys(requests).length<4; n++) await tick();
+    if (Object.keys(requests).length !== 4) throw new Error('Snapshot reads did not start');
+    requests[${JSON.stringify(first)}](${status});
+    await tick();
+    const firstRecoveries = recoveries;
+    for (const name of Object.keys(requests)) if (name !== ${JSON.stringify(first)}) requests[name](404);
+    await tick();
+    return {firstRecoveries,recoveries,boardReads};
+   } finally { store.stop(); }
+  })()`);
+  check(`${first} ${status} first: only the board denial recovers, exactly once`,
+   result.firstRecoveries === (first === 'board' ? 1 : 0) && result.recoveries === 1 && result.boardReads === 1);
+ }
+}
+async function boardAccessRecoveryCase() {
+ const route = '#/b/brd_other?ch=other&t=th_other';
+ const login = operator => ev(`document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-recovery';document.querySelector('#login-form').requestSubmit()`);
+ const tabTo = async selector => {
+  for (let n=0; n<20; n++) {
+   if (await ev(`document.activeElement.matches(${JSON.stringify(selector)}) && document.activeElement.checkVisibility()`)) return true;
+   for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent', {type, key:'Tab', code:'Tab', windowsVirtualKeyCode:9});
+  }
+  return false;
+ };
+ for (const scenario of ['logout', '401', 'empty', 'later page', 'page failure', 'missing entry', 'transient', 'channel retry']) {
+  await freshIdentityFixture("window.__firstBoard=window.fetch;window.__op.enableBoardSwitch()");
+  await ev(`location.hash=${JSON.stringify(route)}`);
+  await login(true);
+  await until("document.querySelector('.t-boardsel')?.value==='brd_other' && !!document.querySelector('.t-task-blocked')");
+  if (scenario==='401') await ev('window.__op.expired=true');
+  else await ev("document.querySelector('#operator-logout').click()");
+  await until("document.body.dataset.view==='login'");
+  const readable = ['later page','page failure','missing entry','transient','channel retry'].includes(scenario);
+  await ev(`{
+   window.__op.revoked=false;window.__op.expired=false;window.__boardReads=0;window.__channelReads=0;
+   const scenario=${JSON.stringify(scenario)}, readable=${readable};
+   if (!readable) window.__op.scope=['read'];
+   const original=readable ? window.fetch : window.__firstBoard;
+   window.fetch=async (url,opts)=>{
+    const u=new URL(url,location.href);
+    if (u.pathname==='/v1/boards' && scenario==='empty') return Response.json({boards:[],next_page_token:null});
+    if (u.pathname==='/v1/boards' && ['page failure','missing entry'].includes(scenario)) {
+     if (u.searchParams.has('page_token')) return window.__retryDirectory
+      ? Response.json({boards:[{id:'brd_other',name:'test'}],next_page_token:null})
+      : Response.json({detail:'Directory unavailable'},{status:503});
+     return Response.json({boards:[{id:'archive',name:'Archive'},{id:'notes',name:'Notes'}],next_page_token:scenario==='page failure'?'later':null});
+    }
+    if (u.pathname==='/v1/boards' && scenario==='later page') {
+     if (Number(u.searchParams.get('limit')) > 2) return Response.json({detail:'Maximum page size is two'},{status:400});
+     switch (u.searchParams.get('page_token')) {
+      case null: return Response.json({boards:[{id:'archive',name:'Archive'},{id:'notes',name:'Notes'}],next_page_token:'2+/=&'});
+      case '2+/=&': return Response.json({boards:[{id:'brd_other',name:'Review board'}],next_page_token:'3 %25'});
+      case '3 %25': return Response.json({boards:[{id:'brd_test',name:'test'}],next_page_token:null});
+      default: return Response.json({detail:'Incorrect continuation'},{status:400});
+     }
+    }
+    if (u.pathname==='/v1/boards/brd_other/channels') {
+     window.__channelReads++;
+     if (scenario==='channel retry' && window.__channelReads===1) return Response.json({code:'not_found'},{status:404});
+    }
+    if (u.pathname==='/v1/boards/brd_other') {
+     window.__boardReads++;
+     if (scenario==='later page') return Response.json({id:'brd_other',name:'Review board'});
+     if (scenario==='logout') await new Promise(resolve=>{window.__denyCurrentBoard=resolve});
+     if (scenario==='transient' && window.__boardReads===1) return Response.json({code:'unavailable'},{status:503});
+    }
+    if (!readable && u.pathname.startsWith('/v1/boards/brd_other')) return Response.json({code:'not_found'},{status:404});
+    return original(url,opts);
+   };
+  }`);
+  await login(readable);
+  await until('window.__boardReads>0');
+  if (scenario==='logout') {
+   await until("typeof window.__denyCurrentBoard==='function' && window.__channelReads>0");
+   await ev("window.__denyCurrentBoard()");
+  }
+  if (readable) {
+   await until("!!document.querySelector('.t-task-blocked')");
+   check(`${scenario} keeps the readable selected board`, await ev('location.hash')===route && await ev('window.__boardReads') >= (['later page','page failure','missing entry'].includes(scenario)?1:2));
+   if (scenario==='page failure' || scenario==='missing entry') {
+    check(`${scenario} identifies the readable board from its direct read`, await ev("document.querySelector('.t-boardname')?.textContent==='test' && !document.querySelector('.t-boardsel')"));
+    if (scenario==='page failure') {
+     await ev("document.querySelector('[data-control=switch-board]').click()");
+     await until("document.querySelector('#board-list').innerText.includes('Could not load boards')");
+     check('failed continuation exposes no partial picker links', await ev("!document.querySelector('#board-list a')"));
+     await ev("window.__retryDirectory=true;document.querySelector('#board-list button').focus()");
+     await op17027Enter();
+     await until("document.querySelectorAll('#board-list a').length===3");
+    }
+   }
+   if (scenario==='later page') {
+    check('retained thread, selected board and footer identify the same destination', await ev(`
+     document.querySelector('.t-boardsel')?.value==='brd_other' &&
+     document.querySelector('.t-boardsel option:checked')?.textContent==='Review board' &&
+     document.querySelector('.t-foot').textContent.includes('on Review board') &&
+     document.querySelector('.t-boardsel option[value=brd_test]')?.textContent==='test' &&
+     document.querySelector('.t-close')?.hash==='#/b/brd_other?ch=other' &&
+     !!document.querySelector('#tm-root_other')`));
+    await ev("document.querySelector('[data-control=switch-board]').click()");
+    await until("document.querySelector('#board-list a')?.checkVisibility()");
+    const link = `document.querySelector('#board-list a[href="#/b/brd_other"]')`;
+    check('picker links the page-two board by ID and name', await ev(link + "?.querySelector('strong').textContent==='Review board'"));
+    const last = `document.querySelector('#board-list a[href="#/b/brd_test"]')`;
+    check('picker includes the final page', await ev(last + "?.querySelector('strong').textContent==='test'"));
+    await ev(last+'.focus()');
+    await op17027Enter();
+    await until("location.hash==='#/b/brd_test' && document.querySelector('.t-boardsel')?.value==='brd_test'");
+    await ev("document.querySelector('[data-control=switch-board]').click()");
+    await until(link + "?.checkVisibility()");
+    await ev(link+'.focus()');
+    await op17027Enter();
+    await until("location.hash==='#/b/brd_other' && document.querySelector('.t-foot')?.textContent.includes('on Review board')");
+    await ev("const select=document.querySelector('.t-boardsel');select.value='brd_test';select.dispatchEvent(new Event('change'))");
+    await until("location.hash==='#/b/brd_test?v=activity' && document.querySelector('.t-foot')?.textContent.includes('on test')");
+   }
+   continue;
+  }
+  await until("document.querySelector('#boards').checkVisibility() && document.querySelector('#forget').checkVisibility()");
+  check(`${scenario} explains the board change`, await ev("document.querySelector('#banner').innerText.includes('Board not found or not visible.')"));
+  check(`${scenario} hides previous Chat content`, await ev("!document.querySelector('#term .t-task-blocked')"));
+  if (scenario==='empty') {
+   await until("document.querySelector('#board-list').innerText.includes('No visible boards.')");
+   check('empty directory exposes no previous choices', await ev("!document.querySelector('#board-list a')"));
+   check('empty directory has keyboard session exit', await tabTo('#forget'));
+   await op17027Enter();
+   await until("document.body.dataset.view==='login'");
+  } else {
+   await until("document.querySelector('#board-list a')?.checkVisibility()");
+   check(`${scenario} offers only the readable board`, await ev("document.querySelectorAll('#board-list a').length===1 && document.querySelector('#board-list a').hash==='#/b/brd_test'"));
+   check(`${scenario} can choose the readable board with the keyboard`, await tabTo('#board-list a'));
+   await op17027Enter();
+   await until("document.querySelector('.t-boardname')?.textContent==='test'");
+   check(`${scenario} clears the unavailable notice on the readable board`, await ev("document.querySelector('#banner').hidden"));
+  }
+ }
+
+ // The direct read may also finish after navigation within the same session.
+ for (const replacement of ['route','session']) {
+  await freshIdentityFixture("window.__op.enableBoardSwitch()");
+  await ev("location.hash='#/b/brd_test'");
+  await login(true);
+  await until("!!document.querySelector('#term .t-boardsel')");
+  await ev(`{
+   const original=window.fetch;
+   window.fetch=async (url,opts)=>{
+    if (new URL(url,location.href).pathname==='/v1/boards/brd_other') {
+     window.fetch=original;
+     await new Promise(resolve=>{window.__releaseOldBoard=resolve});
+     return Response.json({code:'not_found'},{status:404});
+    }
+    return original(url,opts);
+   };
+   location.hash=${JSON.stringify(route)};
+  }`);
+  await until("typeof window.__releaseOldBoard==='function'");
+  if (replacement==='session') {
+   await ev("document.querySelector('#operator-logout').click()");
+   await until("document.body.dataset.view==='login'");
+   await ev("window.__op.revoked=false");
+   await login(true);
+  } else {
+   await ev("location.hash='#/b/brd_test'");
+  }
+  await until("!!document.querySelector('.t-task-blocked')");
+  await ev("window.__releaseOldBoard();new Promise(resolve=>setTimeout(resolve,0))");
+  const selected = replacement==='session' ? 'brd_other' : 'brd_test';
+  check(`late board denial leaves the new ${replacement} on its readable board`,
+   await ev('location.hash')===(replacement==='session' ? route : '#/b/brd_test') &&
+   await ev("document.querySelector('.t-boardsel')?.value")===selected);
+ }
+}
 async function identityNavigationCase() {
  let assertions = 0;
  const assert = (name, ok, detail = '') => { assertions++; check(`OP17-003: ${name}`, ok, detail); };
- const header = async (name, label) => {
+ const header = async (name, selector, label) => {
   assert(`${name} shows @alice`, await ev("document.querySelector('#me').textContent==='@alice'"));
-  assert(`${name} shows ${label}`, await ev(`!document.querySelector('#forget').hidden && document.querySelector('#forget').textContent===${JSON.stringify(label)} && !document.querySelector('#nav').hidden`));
+  assert(`${name} shows ${label}`, await ev(`document.querySelector(${JSON.stringify(selector)}).checkVisibility() && document.querySelector(${JSON.stringify(selector)}).textContent===${JSON.stringify(label)} && !document.querySelector('#nav').hidden`));
  };
  const cleared = async (name) => {
   await until("!!document.querySelector('#login') && !document.querySelector('#login').hidden");
@@ -337,33 +778,58 @@ async function identityNavigationCase() {
  };
  await freshIdentityFixture("window.__op.scope=['read'];");
  await login(false);
- await header('fresh read-only login', 'Forget token');
+ await header('fresh read-only login', '#forget', 'Forget token');
  assert('read-only login persists only its tab token', await ev("sessionStorage.getItem('yak-viewer-token')==='synthetic-identity-token' && window.__op.writes.length===0"));
  await ev("document.querySelector('#forget').click()");
  await cleared('read-only forget');
  assert('read-only forget sends no writes', await count()===0);
  await freshIdentityFixture("window.__op.scope=['read'];sessionStorage.setItem('yak-viewer-token','synthetic-restored-token');");
  await until("!!document.body && document.body.dataset.view==='boards'");
- await header('restored read-only token', 'Forget token');
+ await header('restored read-only token', '#forget', 'Forget token');
  assert('restoration retains read-only tab token without writes', await ev("sessionStorage.getItem('yak-viewer-token')==='synthetic-restored-token' && window.__op.writes.length===0"));
- for (const selector of ['#forget', '#operator-logout']) {
-  await freshIdentityFixture();
-  await login(true);
-  await header(`operator login via ${selector}`, 'Logout (revokes token everywhere)');
-  assert(`operator login via ${selector} shows session identity`, await ev("!document.querySelector('#operator-session').hidden && document.querySelector('#operator-identity').textContent.includes('@alice (human)') && !sessionStorage.length"));
-  await ev(`document.querySelector(${JSON.stringify(selector)}).click()`);
-  await cleared(`logout via ${selector}`);
-  assert(`logout via ${selector} revokes only its credential`, await ev("window.__op.revoked && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
- }
+ await freshIdentityFixture();
+ await login(true);
+ await header('operator login', '#operator-logout', 'Logout (revokes token everywhere)');
+ assert('operator login shows session identity', await ev("!document.querySelector('#operator-session').hidden && document.querySelector('#operator-identity').textContent.includes('@alice (human)') && !sessionStorage.length"));
+ await cmd('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:false});
+ try {
+  for (const [view, route, ready] of [['boards', '#/boards', '#board-list a'], ['Lanes', '#/board?b=brd_test', '.w-card'], ['Forum', '#/forum?b=brd_test', '.skin-forum'], ['Chat', '#/b/brd_test', '.t-menu']]) {
+   await ev(`location.hash=${JSON.stringify(route)}`);
+   await until(`document.querySelector(${JSON.stringify(ready)})?.checkVisibility()`);
+   if (view==='Chat') {
+    await ev("document.querySelector('.t-menu').focus()");
+    await op17027Enter();
+    await until("document.activeElement.matches('.t-side-close')");
+   }
+   const controls = await ev(`Array.from(document.querySelectorAll('button'))
+    .filter(b => b.checkVisibility() && /logout|revoke.*token|forget token/i.test(b.textContent))
+    .map(b => b.id || b.dataset.control)`);
+   assert(`${view} exposes one session exit`, JSON.stringify(controls)==='["operator-logout"]', `controls=${controls.length}`);
+   await ev("document.querySelector('#operator-tools').focus()");
+   await cmd('Input.dispatchKeyEvent', {type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+   await cmd('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+   assert(`${view} logout is unobstructed`, await ev(`(() => {
+    const button = document.querySelector('#operator-logout');
+    const {left, top, width, height} = button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(left + width / 2, top + height / 2));
+   })()`));
+   assert(`${view} logout receives Tab focus`, await ev("document.activeElement.id==='operator-logout'"));
+  }
+  await op17027Enter();
+  await cleared('operator logout');
+  assert('intentional logout leaves the empty Token field neutral', await ev("!document.querySelector('#token').hasAttribute('aria-invalid') && !document.querySelector('#token').hasAttribute('aria-describedby')"));
+  assert('logout revokes only its credential', await ev("window.__op.revoked && window.__op.writes.length===1 && window.__op.writes[0].method==='DELETE' && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
+ } finally { await cmd('Emulation.clearDeviceMetricsOverride'); }
  for (const [name, setup, operator] of [['rejected read-only credential', 'window.__op.expired=true', false], ['refused operator credential', "window.__op.kind='agent'", true]]) {
   await freshIdentityFixture();
   await ev(`${setup};document.querySelector('#operator-login').checked=${operator};document.querySelector('#token').value='synthetic-invalid-token';document.querySelector('#login-form').requestSubmit()`);
   await until("!!document.querySelector('#login-error') && !document.querySelector('#login-error').hidden && !!document.querySelector('#connect') && !document.querySelector('#connect').disabled");
   await cleared(name);
+  assert(`${name} explains the field rejection`, await ev("document.querySelector('#token').getAttribute('aria-invalid')==='true' && document.querySelector('#token').getAttribute('aria-describedby')==='login-error'"));
   assert(`${name} sends no writes`, await count()===0);
  }
  assert('browser has no exceptions', errors.length===0, errors.join(' | '));
- console.log(`OP17-003 executed ${assertions} assertions across fresh login, restoration, two logout entries and two rejected credentials`);
+ console.log(`OP17-003 executed ${assertions} assertions across fresh login, restoration, four operator views and two rejected credentials`);
 }
 async function responseBodyFailureCase() {
  let assertions = 0;
@@ -380,7 +846,7 @@ async function responseBodyFailureCase() {
     assert('malformed 401 ends without release/revoke/retry', await count() === 1);
     assert('malformed 401 clears session UI', await ev("!document.querySelector('.op-workspace') && !sessionStorage.length"));
    } else if (fault === 'broken412') {
-    await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')");
+    await until("!!document.querySelector('.op-conflict button')");
     assert('malformed 412 is a known rejection', await ev("!document.querySelector('.op-receipts').textContent.includes('Retry same intent') && !document.querySelector('.op-receipts').textContent.includes('Saved.') && window.__op.writes.length===1"));
    } else if (fault === 'empty204') {
     await until("!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.')");
@@ -516,11 +982,15 @@ async function renewalClaimViewCase() {
 async function boardSwitchCase() {
  let assertions = 0;
  const assert = (name, ok, detail='') => { assertions++; check(`OP17-005: ${name}`, ok, detail); };
- const selectBoard = async id => ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ const selectBoard = async id => {
+  await discloseWorkspace();
+  await ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ };
  const selectThread = async id => {
   await until("!!document.querySelector('.op-workspace select[aria-label=Thread]')");
   await ev(`{const s=document.querySelector('.op-workspace select[aria-label=Thread]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
   await until("!!document.querySelector('[aria-label=\"Task actions\"]')");
+  await discloseWorkspace();
  };
  for (const fail of [false,true]) for (const reply of [false,true]) {
   const variant = `${fail?'failed':'deferred'} discovery, ${reply?'reply':'new thread'}`;
@@ -569,12 +1039,14 @@ async function boardSwitchCase() {
     ['Create task','/tasks','Create task']
    ]) {
     await until("!!document.querySelector('.op-workspace [aria-label=\"Task actions\"]') && !document.querySelector('.op-pending')?.textContent.includes('Sending')");
+    await discloseWorkspace();
     await ev("for(const n of document.querySelectorAll('.op-workspace input,.op-workspace textarea'))n.value=n.getAttribute('aria-label').startsWith('Label key')?'tag':n.getAttribute('aria-label').startsWith('Reaction')?'like':'B values'");
     const n = await count(); await click(name); if(named) await confirm(named);
     await until(`window.__op.writes.length>${n}`);
     assert(`new B ${name} uses B destination`,await ev(`window.__op.writes.at(-1).path===${JSON.stringify('/v1/boards/brd_other'+suffix)}`));
-    if(name==='Create task') assert('new B task uses B channel',await ev("window.__op.writes.at(-1).body.thread.channel==='other'"),JSON.stringify(await ev('window.__op.writes.at(-1)')));
+    if(name==='Create task') assert('new B task uses B channel',await ev("window.__op.writes.at(-1).body.thread.channel==='other'"));
    }
+   await discloseWorkspace();
    await ev("{const s=document.querySelector('.op-workspace select[aria-label=Thread]');s.value='';s.dispatchEvent(new Event('change'));}");
    await until("!!document.querySelector('.op-workspace input[aria-label^=Title]')");
    await ev("document.querySelector('textarea[aria-label^=Message]').value='B new';document.querySelector('.op-workspace input[aria-label^=Title]').value='B title'");
@@ -639,6 +1111,57 @@ async function boardSwitchCase() {
  assert('required variants executed nonzero assertions',assertions>=40);
  console.log(`OP17-005 executed ${assertions} assertions across four fresh board transitions and six fresh pending-recovery fixtures`);
 }
+async function staleGateCase() {
+ for (const variant of ['ready', 'reduced', 'navigate', 'logout']) {
+  await freshIdentityFixture();
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-stale-gate';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  await open();
+  await ev(`{
+   window.__op.task.state='ready';
+   document.querySelector('[aria-label="Gate note t"]').value='Keep this gate note';
+   document.querySelector('textarea[aria-label^="Message"]').value='Keep this reply';
+   const approve=[...document.querySelectorAll('.op-review button')].find(b=>b.textContent==='Approve and unblock');
+   approve.focus();
+   const base=window.fetch;
+   window.fetch=async(url,opts={})=>{
+    const response=await base(url,opts);
+    if (!window.__op.releaseRead && new URL(url,location.href).pathname==='/v1/boards/brd_test/tasks/t') {
+     await new Promise(resolve=>window.__op.releaseRead=resolve);
+    }
+    return response;
+   };
+  }`);
+  const before=await count();
+  await op17027Enter();
+  await until("!!window.__op.releaseRead");
+  if (variant==='reduced') await ev("window.__op.permissions=['read']");
+  if (variant==='navigate') {
+   await ev(`window.__op.permissions=['read'];const select=document.querySelector('select[aria-label=Thread]');select.value='';select.dispatchEvent(new Event('change'));`);
+   await until("document.querySelector('select[aria-label=Thread]')?.value===''");
+  } else if (variant==='logout') {
+   await ev("document.querySelector('#operator-logout').click()");
+   await until("!document.body.dataset.operator");
+  }
+  const expectedWrites=before+(variant==='logout' ? 1 : 0);
+  await ev("window.__op.releaseRead()");
+  await sleep(150);
+  check(`stale gate ${variant}: no confirmation or write`,!await ev("!!document.querySelector('.op-confirm')") && await count()===expectedWrites);
+  if (variant==='ready') {
+   check('stale gate: fresh state and obsolete actions removed',await ev("document.querySelector('.op-workspace h3')?.textContent.endsWith(' · ready') && !document.querySelector('.op-review button')"));
+   check('stale gate: explanation has keyboard focus',await ev("document.activeElement.matches('.op-workspace [role=status]') && document.activeElement.textContent.includes('no longer a gate')"));
+   check('stale gate: reply draft retained',await ev("document.querySelector('textarea[aria-label^=Message]').value==='Keep this reply'"));
+   await ev("window.__op.task.state='blocked'");
+   await click('Refresh permissions and state');
+   check('stale gate: original gate note retained on return',await ev("document.querySelector('textarea[aria-label^=Gate]')?.value==='Keep this gate note'"));
+  } else if (variant==='reduced') {
+   check('stale gate: reload honors latest channel grants',await ev("document.querySelector('.op-workspace h3')?.textContent.endsWith(' · ready') && !document.querySelector('.op-workspace [data-op-write]')"));
+  } else if (variant==='navigate') {
+   check('stale gate: reduced destination remains selected without stale feedback or writes',await ev("document.querySelector('select[aria-label=Thread]')?.value==='' && !document.querySelector('.op-workspace [data-op-write]') && document.querySelector('.op-workspace [role=status]').textContent===''"));
+  } else check('stale gate: ended session stays closed',!await ev("!!document.querySelector('.op-workspace, [data-op-write]')"));
+  if (variant!=='logout') await ev("document.querySelector('#operator-logout').click()");
+ }
+}
 // Hold the automatic post-write refresh while manual refreshes supersede it.
 async function refreshSelectionCase() {
  await freshIdentityFixture();
@@ -680,7 +1203,10 @@ async function refreshSelectionCase() {
 async function refreshDiscoveryCase() {
  let assertions = 0;
  const assert = (name, ok) => { assertions++; check(`OP17-007: ${name}`, ok); };
- const selectBoard = async id => ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ const selectBoard = async id => {
+  await discloseWorkspace();
+  await ev(`{const s=document.querySelector('.op-workspace select[aria-label=Board]');s.value=${JSON.stringify(id)};s.dispatchEvent(new Event('change'));}`);
+ };
  for (const variant of ['initial', 'switch', 'failed', 'empty']) {
   await freshIdentityFixture('window.__op.enableBoardSwitch();');
   try {
@@ -830,7 +1356,7 @@ async function delayedDraftCase() {
      await until(`!!document.querySelector(${JSON.stringify(text)})`);
     } else {
      await ev('window.__op.resolveDraft()');
-     await until(variant === 'network' ? "!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Retry same intent')" : variant === 'conflict' ? "!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')" : "!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.') && !document.querySelector('.op-pending')?.textContent.includes('Sending')");
+     await until(variant === 'network' ? "!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Retry same intent')" : variant === 'conflict' ? "!!document.querySelector('.op-conflict button')" : "!!document.querySelector('.op-receipts') && document.querySelector('.op-receipts').textContent.includes('Saved.') && !document.querySelector('.op-pending')?.textContent.includes('Sending')");
      if (!['network','conflict'].includes(variant)) {
       if (!['text','both','restore'].includes(variant)) expectedText='';
       if (!['title','both','title-restore'].includes(variant)) expectedTitle='';
@@ -911,6 +1437,93 @@ async function cosmeticReceiptCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-019 executed ${assertions} assertions across ${fixtures} fresh cosmetic receipt fixtures`);
 }
+async function gateProjectionCase() {
+ const route = '#/b/brd_test?ch=ops&t=th';
+ const readProjection=()=>ev(`(async()=>{
+   const base='/v1/boards/brd_test';
+   const read=async path=>(await fetch(base+path)).json();
+   const [task,{thread},{messages:[root]}]=await Promise.all([read('/tasks/t'),read('/threads/th'),read('/threads/th/messages')]);
+   return {state:task.state,revision:task.revision,block:task.block,flag:task.direct_action_required,
+    rootGate:root.labels.gate,rootRevision:root.revision,threadGate:thread.labels.gate,threadRevision:thread.revision,
+    events:window.__op.events.map(({type,resource,payload,thread_id})=>({type,thread_id,revision:resource?.revision,
+     reason:payload.reason,before:payload.labels_before,after:payload.labels_after,taskState:payload.task?.state,
+     taskBlock:payload.task?.block,threadGate:payload.thread?.labels.gate,messageGate:payload.message?.labels.gate})),snapshots:window.__op.snapshots};
+  })()`);
+ for (const variant of ['success','label rejected','response dropped']) {
+  const waiting = variant === 'response dropped';
+  const state = waiting ? 'waiting' : 'ready';
+  const gate = variant === 'label rejected' ? 'pending' : 'approved';
+  await freshIdentityFixture(`window.__op.task.dependencies=[{task_id:'prerequisite',state:'${waiting?'ready':'completed'}'}];
+   window.__op.thread.labels.team=window.__op.root.labels.team='Review <A>';
+   window.__op.failLabel=${variant==='label rejected'?1:0};window.__op.dropUnblock=${waiting};`);
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-gate';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  await ev(`location.hash=${JSON.stringify(route)}`);
+  await until("document.querySelector('.t-task-blocked')?.textContent.includes('waiting for review')");
+  const initial=await readProjection();
+  const generation=initial.snapshots;
+  console.log('Gate before confirmation',variant,JSON.stringify(initial));
+  check(variant+' blocked task, root and thread before confirmation',initial.state==='blocked' && initial.revision===3 &&
+   initial.block?.reason==='waiting for review' && initial.flag===true && initial.rootGate==='pending' && initial.threadGate==='pending');
+
+  await open();
+  await click('Approve and unblock');
+  await until("document.querySelector('.op-confirm[open]')?.textContent.includes('waiting for review')");
+  await confirm('Approve and unblock');
+  if (waiting) {
+   await click('Retry same intent');
+   check('dropped response replays identical guarded request',await ev(`(() => {
+    const [first,retry]=window.__op.writes;
+    return first.path.endsWith('/unblock') && first.headers['If-Match']==='"3"' &&
+     !!first.headers['Idempotency-Key'] && JSON.stringify(first)===JSON.stringify(retry);
+   })()`));
+  }
+  const receipt=variant==='label rejected'?'Approved; label not updated':'Saved.';
+  await until(`document.querySelector('.op-receipts')?.textContent.includes(${JSON.stringify(receipt)})`);
+  const trace=await readProjection();
+  console.log('Gate projection',variant,JSON.stringify(trace));
+  check(variant+' task projection',trace.state===state && trace.revision===4 && trace.block===null && trace.flag===true);
+  if (variant==='label rejected') {
+   const refreshed = `document.querySelector('[aria-label="Task actions"] h3')?.textContent.endsWith(' · ready')`;
+   await until(refreshed);
+   check('partial approval reconciles the open workspace and keeps label recovery',
+    await ev(`document.querySelector('.op-thread select').value==='th' &&
+     !document.querySelector('.op-review').textContent.includes('waiting for review') &&
+     ![...document.querySelectorAll('.op-workspace button')].some(b=>['Approve and unblock','Request changes'].includes(b.textContent)) &&
+     document.querySelector('.op-receipts button')?.textContent==='Retry label only'`) && await count()===2);
+  }
+  const changed=gate==='approved';
+  check(variant+' conditional root and thread projections',trace.rootGate===gate && trace.threadGate===gate &&
+   trace.rootRevision===(changed?2:1) && trace.threadRevision===trace.rootRevision);
+  const expected=['task.unblocked','thread.view_invalidated',...(changed?['message.labels_changed','thread.view_invalidated']:[])];
+  const [unblock,stateInvalidation,message,labelInvalidation]=trace.events;
+  check(variant+' event payloads reflect the state at each write',
+   unblock?.reason==='gate approved' && unblock.taskState===state && unblock.taskBlock===null &&
+   stateInvalidation?.reason==='task_state_changed' && stateInvalidation.threadGate==='pending' &&
+   stateInvalidation.before['yak.task.state']==='blocked' && stateInvalidation.after['yak.task.state']===state &&
+   (!changed || (message?.messageGate==='approved' && labelInvalidation?.reason==='root_labels_changed' &&
+    labelInvalidation.threadGate==='approved' && labelInvalidation.before.gate==='pending' && labelInvalidation.after.gate==='approved')));
+  check(variant+' one logical unblock and ordered invalidations',trace.events.every(e=>e.thread_id==='th') && JSON.stringify(trace.events.map(e=>e.type))===JSON.stringify(expected));
+  await click('Close');
+  const rendered=`document.querySelector('.t-task-${state}') && !document.querySelector('.t-task').textContent.includes('waiting for review') &&
+   document.querySelector('.a-heading')?.textContent.includes('${waiting?'1 waiting task':'0 waiting tasks'}') &&
+   document.querySelector('.t-labels')?.textContent.includes('gate=${gate}') &&
+   document.querySelector('.t-labels').textContent.includes('team=Review <A>') &&
+   document.querySelector('.t-text')?.textContent==='<script>window.pwned=1</script>'`;
+  await until(rendered);
+  check(variant+' returned Chat updated from events',await ev('window.__op.snapshots')===generation);
+  await ev("document.querySelector('a[aria-label=\"Close thread\"]').click()");
+  await until(`document.querySelector('.t-title') && (${rendered})`);
+  await ev("document.querySelector('.t-title').click();window.__op.resync=true");
+  await until(`window.__op.snapshots===${generation+1} && !!document.querySelector('.t-h1') && (${rendered})`);
+  const resnapshot=await readProjection();
+  console.log('Gate after resnapshot',variant,resnapshot.snapshots);
+  check(variant+' channel summary and resnapshot preserve approval and user content',
+   JSON.stringify({...resnapshot,snapshots:generation})===JSON.stringify(trace));
+  await ev("document.querySelector('#operator-logout').click()");
+ }
+}
+
 async function op17031ConditionalLabelsCase() {
  let assertions=0, fixtures=0;
  const assert=(name,ok)=>{assertions++;check(`OP17-031: ${name}`,ok);};
@@ -1002,7 +1615,6 @@ async function labelOpcodeCase() {
    assert(`${c.name}: original expectation`, JSON.stringify(op.expect)===JSON.stringify(c.old===undefined?{absent:true}:{value:c.old}));
    assert(`${c.name}: value only for set`, c.action==='Set label'?op.value==='low':!Object.hasOwn(op,'value'));
    assert(`${c.name}: fixture applies supported operation`, await ev(c.action==='Set label'?"window.__op.root.labels.priority==='low'":"!Object.hasOwn(window.__op.root.labels,'priority')"));
-   console.log(`OP17-035 WIRE ${JSON.stringify(writes[0].body)}`);
   } finally {
    await ev("document.querySelector('#operator-logout')?.click()");
    await until('!!document.body && !document.body.dataset.operator');
@@ -1032,12 +1644,12 @@ async function gateEvidenceCase() {
    await open();
    await until("!!document.querySelector('.op-workspace') && document.querySelector('.op-workspace').textContent.includes('Task event history')");
    const workspace = await ev("document.querySelector('.op-workspace').textContent");
-   assert(`${c.name}: workspace approval`, workspace.includes('Approved by ')===c.approved, workspace);
+   assert(`${c.name}: workspace approval`, workspace.includes('Approved by ')===c.approved);
    if (c.candidate.type==='task.unblocked') {
     const eventApproval = gate.name===c.name || c.name.startsWith('latest ') || c.name.startsWith('approval after ');
     const feed = await ev("[...document.querySelectorAll('#feed li')].find(li=>li.querySelector('.type')?.textContent==='task.unblocked')?.querySelector('.snippet')?.textContent");
-    assert(`${c.name}: feed gate evidence`, !!feed && feed.includes("not a person's approval")===!eventApproval, feed);
-    assert(`${c.name}: timeline gate evidence`, workspace.includes("not a person's approval")===!eventApproval, workspace);
+    assert(`${c.name}: feed gate evidence`, !!feed && feed.includes("not a person's approval")===!eventApproval);
+    assert(`${c.name}: timeline gate evidence`, workspace.includes("not a person's approval")===!eventApproval);
    } else {
     assert(`${c.name}: completion never shows approval in feed`, await ev("![...document.querySelectorAll('#feed .snippet')].some(el=>el.textContent.includes('Approved by '))"));
    }
@@ -1064,8 +1676,8 @@ async function briefGenerationCase() {
    await open();
    await until("!!document.querySelector('.op-workspace') && document.querySelector('.op-workspace').textContent.includes('Task event history')");
    const workspace = await ev("document.querySelector('.op-workspace').textContent");
-   assert(`${c.name}: current approval`, workspace.includes('Approved by ')===!!c.approval, workspace);
-   if (!c.approval) assert(`${c.name}: explicitly not approved`, workspace.includes('not approved'), workspace);
+   assert(`${c.name}: current approval`, workspace.includes('Approved by ')===!!c.approval);
+   if (!c.approval) assert(`${c.name}: explicitly not approved`, workspace.includes('not approved'));
    assert(`${c.name}: rendering sends no writes`, await count()===0);
   } finally {
    await ev("document.querySelector('#operator-logout')?.click()");
@@ -1111,12 +1723,12 @@ async function op17009ActorPaginationCase() {
     await sleep(100);
     const text=await ev("[...document.querySelectorAll('#feed li')].find(li=>li.querySelector('.actor')?.textContent.startsWith("+JSON.stringify(variant==='unknown'?'missing-hu':'@alice')+"))?.textContent || ''");
     if (variant==='page two human') {
-     assert('page two human: handle and kind',text.includes('@alice (human)'),text);
-     assert('page two human: direct gate approval',!!text && !text.includes("not a person's approval"),text);
-     assert('page two human: credential time and reason', ['synthetic-page-credential','2026-11-20T00:00:00Z','page two approval'].every(v=>text.includes(v)),text);
+     assert('page two human: handle and kind',text.includes('@alice (human)'));
+     assert('page two human: direct gate approval',!!text && !text.includes("not a person's approval"));
+     assert('page two human: credential time and reason', ['synthetic-page-credential','2026-11-20T00:00:00Z','page two approval'].every(v=>text.includes(v)));
     } else if (variant==='unknown') {
-     assert('unknown: short ID stays unknown',!!text && !text.includes('@alice') && !text.includes('(human)'),text);
-     assert('unknown: never inferred human approval',text.includes("not a person's approval"),text);
+     assert('unknown: short ID stays unknown',!!text && !text.includes('@alice') && !text.includes('(human)'));
+     assert('unknown: never inferred human approval',text.includes("not a person's approval"));
     } else assert('empty terminal: absent human remains unknown',await ev("[...document.querySelectorAll('#feed .actor')].some(el=>el.textContent==='a') && document.querySelector('#feed').textContent.includes(\"not a person's approval\")"));
     assert(`${variant}: all requests use same active signal and max page size`,await ev('window.__op.actorReads.length===2 && window.__op.actorReads.every(r=>r.signal===window.__op.feedReads[0].signal && !r.signal.aborted && r.params.limit===200)'));
     assert(`${variant}: terminal page stops pagination`,await ev('window.__op.actorReads.length===2'));
@@ -1200,13 +1812,13 @@ async function op17010StoreActorsCase() {
    await until(skin==='forum' ? "!!document.querySelector('.f-author')" : "!!document.querySelector('.t-who')");
    await sleep(150);
    const rows = await ev(`Array.from(document.querySelectorAll(${JSON.stringify(skin==='forum'?'.f-author':'.t-who')}),e=>e.textContent)`);
-   assert(`${skin}: page two human message shows handle and kind`,rows.some(t=>t.includes('pageHuman') && t.includes('human')),JSON.stringify(rows));
-   assert(`${skin}: delegated message shows both handles and kinds`,rows.some(t=>t.includes('bot') && t.includes('agent') && t.includes('pagePrincipal') && t.includes('human')),JSON.stringify(rows));
+   assert(`${skin}: page two human message shows handle and kind`,rows.some(t=>t.includes('pageHuman') && t.includes('human')),`rows=${rows.length}`);
+   assert(`${skin}: delegated message shows both handles and kinds`,rows.some(t=>t.includes('bot') && t.includes('agent') && t.includes('pagePrincipal') && t.includes('human')),`rows=${rows.length}`);
    if (skin==='terminal') {
     await ev("location.hash='#/'"); await until("!!document.querySelector('#feed') && document.querySelector('#feed').textContent.includes('page human event')");
     const text = await ev("document.querySelector('#feed').textContent");
-    assert(`${skin}: human task event resolves page two kind`,text.includes('pageHuman (human)'),text);
-    assert(`${skin}: delegated task event resolves both handles`,text.includes('bot (agent) for @pagePrincipal'),text);
+    assert(`${skin}: human task event resolves page two kind`,text.includes('pageHuman (human)'));
+    assert(`${skin}: delegated task event resolves both handles`,text.includes('bot (agent) for @pagePrincipal'));
    } else {
     assert('Forum preserves the delegated opening post', await ev("document.querySelector('.f-opening .f-author').textContent==='@bot (agent) for @pagePrincipal (human)'"));
    }
@@ -1391,6 +2003,229 @@ async function op17024ProjectionRetryCase() {
  assert('no browser exceptions',errors.length===0);
  console.log(`OP17-024 executed ${assertions} assertions across ${fixtures} fresh fixtures`);
 }
+async function recoveryRacesCase() {
+ const login = async () => {
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value=crypto.randomUUID();document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  await open(false);
+ };
+ for (const variant of ['failed read','later read']) {
+  await freshIdentityFixture("window.__op.task.state='ready';window.__op.task.block=null");
+  await login();
+  await click('Work on this now (while this tab is open)');
+  await until("!!document.querySelector('.op-confirm[open]')");
+  await ev(`{
+   const base=window.fetch, fixture=window.__op;
+   fixture.claimAttempts=0;
+   window.fetch=async (url,opts={})=>{
+    const path=new URL(url,location.href).pathname;
+    if (opts.method==='POST' && path==='/v1/boards/brd_test/tasks/t/claims') {
+     fixture.claimAttempts++;
+     return Response.json({code:'invalid_transition',current_state:'waiting'},{status:409});
+    }
+    if (opts.method==='GET' && path==='/v1/boards/brd_test/tasks/t' && ${variant==='failed read'})
+     return Response.json({code:'unavailable'},{status:503});
+    return base(url,opts);
+   };
+  }`);
+  await confirm('Claim');
+  await until("document.querySelector('.op-conflict') && !document.querySelector('.op-conflict').innerText.includes('Reading updated')");
+  const summary=await ev("document.querySelector('.op-conflict').innerText");
+  check(variant+' preserves the state reported at rejection',summary.includes('State at rejection: waiting'));
+  check(variant+' distinguishes the later read',variant==='failed read' ? summary.includes('could not be read') && !summary.includes('State on reread') : summary.includes('State on reread: ready') && summary.includes('facts are unchanged'));
+  check(variant+' sends one claim attempt',await ev('window.__op.claimAttempts===1 && window.__op.writes.length===0'));
+  await ev("document.querySelector('#operator-logout').click()");
+ }
+ for (const variant of ['refresh','navigate','replace session']) {
+  await freshIdentityFixture("window.__op.enableConfirmationDelay();window.__op.failLabel=1");
+  await login();
+  await ev('window.__op.delayConfirmation=true');
+  await click('Approve and unblock');
+  await confirm('Approve and unblock');
+  await until("typeof window.__op.resolveConfirmation==='function'");
+  await click('Refresh permissions and state');
+  await until("!!document.querySelector('.op-review textarea')");
+  check(variant+' refreshed while unblock still pending',await ev("window.__op.task.state==='blocked' && window.__op.writes.length===1"));
+  if (variant==='navigate') {
+   await ev("const sel=document.querySelector('.op-thread select');sel.value='';sel.dispatchEvent(new Event('change'))");
+   await until("!!document.querySelector('input[aria-label^=Title]')");
+   await ev("document.querySelector('input[aria-label^=Title]').focus()");
+  } else if (variant==='replace session') {
+   await ev("document.querySelector('#operator-logout').click()");
+   await until("document.body.dataset.view==='login'");
+   // The replacement login uses a fresh synthetic credential.
+   await ev("window.__op.revoked=false");
+   await login();
+  }
+  await ev("window.__op.permissions=['read','post','label'];window.__op.resolveConfirmation()");
+  await until("window.__op.task.state==='ready'");
+  if (variant==='replace session') {
+   check('new session receives no old receipt or label write',await ev("!document.querySelector('.op-pending') && window.__op.writes.length===2 && !window.__op.writes.some(w=>w.path.endsWith('/labels'))"));
+  } else {
+   await until("document.querySelector('.op-pending')?.textContent.includes('Retry label only')");
+   check(variant+' sends exactly unblock and conditional label',await ev(`(() => {
+    const [unblock,label]=window.__op.writes;
+    return window.__op.writes.length===2 && unblock.path.endsWith('/tasks/t/unblock') &&
+     unblock.headers['If-Match']==='"3"' && label.path.endsWith('/messages/root/labels') &&
+     label.body.operations[0].expect.value==='pending';
+   })()`));
+   if (variant==='navigate') {
+    check('late partial receipt respects destination and focus',await ev("document.querySelector('.op-thread select').value==='' && document.activeElement.matches('input[aria-label^=Title]')"));
+   } else {
+    await until("!!document.querySelector('[aria-label=\"Task actions\"] h3')");
+    check('same destination reconciles task, grants, receipt and focus',await ev(`(() => {
+     const actions=document.querySelector('[aria-label="Task actions"]');
+     return actions.querySelector('h3').textContent.endsWith(' · ready') && actions.contains(document.activeElement) &&
+      document.activeElement.matches('.op-pending') && !document.querySelector('.op-review textarea,[aria-label="New assignee"]');
+    })()`));
+    await click('Retry label only');
+    await until("document.querySelector('.op-pending')?.textContent.includes('Saved.')");
+    check('same destination retries only original label request',await ev("window.__op.writes.length===3 && JSON.stringify(window.__op.writes[1])===JSON.stringify(window.__op.writes[2])"));
+   }
+  }
+  await ev("document.querySelector('#operator-logout').click()");
+ }
+}
+
+async function partialApprovalFocusCase() {
+ const ready = "document.querySelector('[aria-label=\"Task actions\"] h3')?.textContent.endsWith(' · ready')";
+ const receipt = "document.querySelector('.op-pending')";
+ try {
+  for (const mode of ['manager','reduced','navigate','revisit']) for (const width of [320,390,1280]) for (const media of ['light','dark']) {
+   const navigated = mode==='navigate' || mode==='revisit';
+   if (navigated && (width!==390 || media!=='light')) continue;
+   const name = `partial approval ${mode} ${width} ${media}`;
+   await cmd('Emulation.setDeviceMetricsOverride',{width,height:width<=390?844:900,deviceScaleFactor:1,mobile:width<=390});
+   await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:media}]});
+   await freshIdentityFixture("window.__op.labelFault={status:403};window.__op.deferLabel=true");
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-focus';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");
+   await ev("location.hash='#/forum?b=brd_test&ch=ops&t=th'");
+   await until("!!document.querySelector('.f-meta button')");
+   await ev("document.querySelector('.f-meta button').click()");
+   await until("!!document.querySelector('.op-review button')");
+   await click('Approve and unblock');
+   await ev("document.querySelector('.op-confirm button:last-child').focus()");
+   await op17027Enter();
+   await until("typeof window.__op.resolveLabel==='function'");
+   if (mode==='reduced') await ev("window.__op.permissions=['read','post','label']");
+   if (navigated) {
+    await ev("document.querySelector('.op-workspace details > summary').click();const thread=document.querySelector('select[aria-label=Thread]');thread.value='';thread.dispatchEvent(new Event('change'))");
+    await until("!!document.querySelector('input[aria-label^=Title]')");
+    if (mode==='revisit') {
+     await ev("const select=document.querySelector('select[aria-label=Thread]');select.value='th';select.dispatchEvent(new Event('change'))");
+     await until(ready);
+     await ev("document.querySelector('textarea[aria-label^=Message]').focus()");
+    } else await ev("document.querySelector('input[aria-label^=Title]').focus()");
+   }
+   await ev("window.__op.deferLabel=false;window.__op.resolveLabel()");
+   await until(receipt+"?.textContent.includes('Approved; label not updated')");
+   if (navigated) {
+    const retained = mode==='revisit'
+     ? ready+" && document.querySelector('select[aria-label=Thread]').value==='th' && document.activeElement.matches('textarea[aria-label^=Message]')"
+     : "document.querySelector('select[aria-label=Thread]')?.value==='' && document.activeElement.matches('input[aria-label^=Title]') && !document.querySelector('[aria-label=\"Task actions\"]')";
+    check(name+' preserves selection and focus',await ev(retained) && await count()===2);
+    continue;
+   }
+   await until(ready);
+   // Observe the browser's return position before sending any more input.
+   const state = await ev(`(() => {
+    const box=${receipt}, panel=box.closest('.op-workspace');
+    const range=document.createRange(); range.selectNodeContents(box.firstChild);
+    const text=range.getBoundingClientRect(), clip=panel.getBoundingClientRect();
+    const destination=box.querySelector('p'), bounds=box.getBoundingClientRect();
+    range.selectNodeContents(destination);
+    const lines=[...range.getClientRects()];
+    return {
+     destination:destination.textContent,
+     textFits:lines.length>0 && lines.every(line=>line.left>=bounds.left && line.right<=bounds.right),
+     workspaceWidth:[panel.clientWidth,panel.scrollWidth], receiptWidth:[box.clientWidth,box.scrollWidth],
+     documentWidth:document.documentElement.scrollWidth,
+     visible:text.height>0 && text.top>=Math.max(0,clip.top) && text.bottom<=Math.min(innerHeight,clip.bottom) &&
+      text.left>=Math.max(0,clip.left) && text.right<=Math.min(innerWidth,clip.right),
+     focused:document.activeElement===box && getComputedStyle(box).outlineStyle!=='none',
+     selected:panel.querySelector('select[aria-label=Thread]').value, manager:!!panel.querySelector('[aria-label="New assignee"]'),
+     obsolete:[...panel.querySelectorAll('button')].some(b=>['Approve and unblock','Request changes'].includes(b.textContent)),
+     oldReason:panel.querySelector('.op-review').textContent.includes('waiting for review')
+    };
+   })()`);
+   check(name+' fresh selected task, current grants, visible explanation and receipt focus',
+    state.selected==='th' && state.manager===(mode==='manager') && !state.obsolete && !state.oldReason &&
+    state.visible && state.focused && await count()===2);
+   check(name+' complete destination fits the receipt and workspace',
+    state.destination==='Pending destination: PATCH /v1/boards/brd_test/messages/root/labels. Retry sends the original values.' &&
+    state.documentWidth===width && state.workspaceWidth[0]===state.workspaceWidth[1] &&
+    state.receiptWidth[0]===state.receiptWidth[1] && state.textFits, JSON.stringify({workspaceWidth:state.workspaceWidth,receiptWidth:state.receiptWidth,documentWidth:state.documentWidth}));
+   for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent',{type,key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+   const canRetry=await ev("document.activeElement.matches('.op-pending button') && document.activeElement.textContent==='Retry label only'");
+   check(name+' direct keyboard path to label recovery',canRetry);
+   if (!canRetry) continue;
+   await ev('window.__op.labelFault=null');
+   await op17027Enter();
+   await until(receipt+"?.textContent.includes('Saved.')");
+   check(name+' one guarded unblock and identical label-only retry',await ev(`(() => {
+    const [unblock,label,retry]=window.__op.writes;
+    return window.__op.writes.length===3 && unblock.path==='/v1/boards/brd_test/tasks/t/unblock' &&
+     unblock.headers['If-Match']==='"3"' && label.path==='/v1/boards/brd_test/messages/root/labels' &&
+     label.body.operations[0].expect.value==='pending' && label.body.operations[0].value==='approved' &&
+     JSON.stringify(label)===JSON.stringify(retry);
+   })()`));
+  }
+ } finally {
+  await ev("document.querySelector('#operator-logout')?.click()");
+  await cmd('Emulation.clearDeviceMetricsOverride');
+  await cmd('Emulation.setEmulatedMedia',{features:[]});
+ }
+}
+
+async function gateWorkspaceCase() {
+ const key = async (key, code) => {
+  for (const type of ['keyDown', 'keyUp']) await cmd('Input.dispatchKeyEvent', {type, key, code: key, windowsVirtualKeyCode: code});
+ };
+ await cmd('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:false});
+ try {
+  for (const [permissions, approve, changes] of [
+   [null, true, true], [['read','post','label'], false, true],
+   [['read','label','task_admin'], true, false], [['read','post','task_admin'], false, false],
+  ]) {
+   await freshIdentityFixture(`window.__op.permissions=${JSON.stringify(permissions)}`);
+   await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-workspace';document.querySelector('#login-form').requestSubmit()");
+   await until("document.body.dataset.operator==='true'");
+   await ev("location.hash='#/forum?b=brd_test&ch=ops&t=th'");
+   await until("!!document.querySelector('.f-meta button')");
+   await open(false);
+   const review = '.op-workspace [aria-label="Task actions"]';
+   const buttons = await ev(`Array.from(document.querySelectorAll('${review} button')).filter(b=>b.checkVisibility()).map(b=>b.textContent)`);
+   check('gate workspace shows eligible decisions first', JSON.stringify(buttons)===JSON.stringify([...(approve?['Approve and unblock']:[]),...(changes?['Request changes']:[])]));
+   check('gate workspace identifies the selected destination', await ev("document.querySelector('.op-review')?.innerText.includes('Board: test · Channel: ops · Thread: '+window.__op.thread.title)"));
+   check('gate workspace shows the reason', await ev(`document.querySelector('${review}').innerText.includes(window.__op.task.block.reason)`));
+   if (approve || changes) {
+    check('Close has initial focus', await ev("document.activeElement.textContent==='Close'"));
+    await key('Tab',9);
+    check('Tab from Close reaches gate note',await ev("document.activeElement.getAttribute('aria-label')==='Gate note t'"));
+    await key('Tab',9);
+    const first=approve?'Approve and unblock':'Request changes';
+    check('next Tab reaches visible eligible action', await ev(`document.activeElement.textContent===${JSON.stringify(first)} && document.activeElement.getBoundingClientRect().bottom<=innerHeight`));
+   }
+   if (changes) {
+    await click('Request changes');
+    await until("document.querySelector('.op-workspace [role=status]').textContent.includes('Describe the requested changes')");
+   }
+   if (approve) {
+    await ev(`[...document.querySelectorAll('${review} button')].find(b=>b.textContent==='Approve and unblock').focus()`);
+    await op17027Enter();
+    await until("document.activeElement.textContent==='Cancel'");
+    for (const type of ['mousePressed','mouseReleased']) await cmd('Input.dispatchMouseEvent',{type,x:1,y:1,button:'left',clickCount:1});
+    check('outside click leaves confirmation open',await ev("!!document.querySelector('.op-confirm[open]')"));
+    await key('Escape',27);
+    await until("!document.querySelector('.op-confirm') && document.activeElement.textContent==='Approve and unblock'");
+   }
+   check('gate disclosures start closed',await ev("document.querySelectorAll('.op-workspace details').length>=3 && !document.querySelector('.op-workspace details[open]')"));
+   await ev("document.querySelectorAll('.op-workspace details > summary').forEach(summary=>summary.click())");
+   check('opening and disclosing send no writes',await count()===0);
+  }
+ } finally { await cmd('Emulation.clearDeviceMetricsOverride'); }
+}
 async function forumOperatorCase() {
  await freshIdentityFixture();
  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-forum';document.querySelector('#login-form').requestSubmit()");
@@ -1403,10 +2238,22 @@ async function forumOperatorCase() {
  check('Forum opens task and reply tools for the selected thread', await ev("!!document.querySelector('.op-workspace textarea') && document.querySelector('.op-workspace').textContent.includes(window.__op.thread.title)"));
  check('Forum navigation sends no operator writes',await count()===0);
  await click('Close');
+ await ev("location.hash='#/board?b=brd_test'");
+ await until("!!document.querySelector('.w-card .w-title')");
+ check('Lanes identifies separate operator tools', await ev("document.querySelector('.w-head span').textContent==='Read-only view · Operator tools available' && document.querySelector('#operator-tools').checkVisibility()"));
+ await ev("document.querySelector('.w-card .w-title').focus()");
+ await op17027Enter();
+ await until("location.hash.includes('t=th') && !document.querySelector('.w-head')");
+ check('Opening a Lanes card sends no operator writes', await count()===0);
+ await ev("location.hash='#/board?b=brd_test'");
+ await until("!!document.querySelector('.w-head')");
  await ev("document.querySelector('#operator-logout').click()");
  await until("!document.querySelector('#login').hidden");
  check('Forum logout revokes own credential', await ev("window.__op.writes.length===1 && window.__op.writes[0].path==='/v1/credentials/cred_test'"));
  await ev("window.__op.revoked=false;window.__op.scope=['read'];document.querySelector('#operator-login').checked=false;document.querySelector('#token').value='synthetic-forum-read';document.querySelector('#login-form').requestSubmit()");
+ await until("!!document.querySelector('.w-card')");
+ check('Read-only Lanes clears the operator label and hides tools', await ev("document.querySelector('.w-head span').textContent==='Read-only' && !document.querySelector('#operator-tools').checkVisibility()"));
+ await ev("location.hash='#/forum?b=brd_test&ch=ops&t=th'");
  await until("!!document.querySelector('.f-opening')");
  check('Forum header identifies a read-only session',await ev("document.querySelector('.f-head').textContent.includes('Read-only view') && !document.querySelector('.f-head').textContent.includes('Operator tools')"));
  check('Read-only Forum has no write actions',await ev("!document.querySelector('.f-meta button') && !document.querySelector('#operator-tools').offsetWidth"));
@@ -1449,18 +2296,18 @@ async function op17028PreviewCase() {
  assert('fixture endpoint is 404 outside preview',(await fetch(ORIGIN+'/fixture.js')).status===404);
  const normalSession=session;
  const preview=spawn(process.execPath,[fileURLToPath(import.meta.url)],{
-  env:{...process.env,VIEWER_PREVIEW:'1'},stdio:['ignore','pipe','pipe'],
+  env:{...process.env,VIEWER_PREVIEW:'1'},stdio:['ignore','pipe','ignore'],
  });
  const exited=new Promise(resolve=>preview.once('exit',(code,signal)=>resolve({code,signal})));
- let stdout='',stderr='',timer,target;
- preview.stdout.on('data',d=>{stdout+=d});preview.stderr.on('data',d=>{stderr+=d});
+ let stdout='',timer,target;
+ preview.stdout.on('data',d=>{stdout+=d});
  // This is an external deadline; never await the preview module itself.
  const deadline=setTimeout(()=>preview.kill('SIGKILL'),15000);
  try {
   const origin=await new Promise((resolve,reject)=>{
    const poll=()=>{const match=/Synthetic viewer: (http:\/\/127\.0\.0\.1:\d+)/.exec(stdout);
     if(match){resolve(match[1]);return}
-    if(preview.exitCode!==null || preview.signalCode!==null){reject(new Error(`preview exited before startup: ${stderr}`));return}
+    if(preview.exitCode!==null || preview.signalCode!==null){reject(new Error('preview exited before startup'));return}
     timer=setTimeout(poll,25);
    };poll();
   });
@@ -1489,7 +2336,7 @@ async function op17028PreviewCase() {
   preview.kill('SIGTERM');
   const stopped=await exited;
   clearTimeout(deadline);
-  assert('external smoke process terminates and is reaped',stopped.signal==='SIGTERM' && preview.signalCode==='SIGTERM',JSON.stringify({stopped,stderr}));
+  assert('external smoke process terminates and is reaped',stopped.signal==='SIGTERM' && preview.signalCode==='SIGTERM',JSON.stringify(stopped));
  }
  assert('normal persistent CDP installation remains exactly once',op17028FixtureInstallations===1);
  assert('all preview and normal assertions execute',assertions===13);
@@ -1533,6 +2380,7 @@ async function op17004PagehideCase() {
     await ev('window.__op004.waiting.shift()()');await until('!window.__op004.session.active');
    } else {
     await until('!window.__op004.session.active');
+    assert('release401 reports both outcomes',await ev("/revocation is unconfirmed/.test(document.querySelector('#login-error').innerText) && /Claim release failed/.test(document.querySelector('#login-error').innerText)"));
     assert('release401 sends no subsequent credential request',await ev('window.__op004.calls.length===1'));
    }
    assert(`${variant}: renewal loops stopped`,await ev('window.__op004.timers.length>=2'));
@@ -1546,7 +2394,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['board-response-order', boardResponseOrderCase], ['board-access-recovery', boardAccessRecoveryCase], ['session-directory', sessionDirectoryCase], ['recovery-races', recoveryRacesCase], ['partial-approval-focus', partialApprovalFocusCase], ['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
@@ -1574,9 +2422,9 @@ try {
   check(`agent unblock is never approval (principal ${principal})`,await ev("document.querySelector('.op-workspace').textContent.includes('not approved')"));
   if(principal)check('delegated provenance shows both actors',await ev("document.querySelector('.op-workspace').textContent.includes('@bot (agent) for @alice (human)')"));
  }
- await ev("window.__op.task.state='blocked';window.__op.events=[];window.__op.thread.labels.gate='approved'");await click('Refresh permissions and state');await sleep(100);
+ await ev("window.__op.task.state='blocked';window.__op.events=[];window.__op.root.labels.gate=window.__op.thread.labels.gate='approved'");await click('Refresh permissions and state');await sleep(100);
  check('display approval cannot hide a blocked gate',await ev("document.querySelector('.op-workspace').textContent.includes('label says approved; task is still blocked')"));
- await ev("window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(100);
+ await ev("window.__op.root.labels.gate=window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(100);
 
  await matrix('Remove approval requirement');check('A13 clear sends only gate flag and If-Match',await ev("JSON.stringify(window.__op.writes.at(-1).body)===''+JSON.stringify({direct_action_required:false}) && !!window.__op.writes.at(-1).headers['If-Match']"));
  await matrix('Require my approval');
@@ -1593,9 +2441,9 @@ try {
  for(const gate of [false,true])await matrix('Create task','Create task',`document.querySelector('input[aria-label^="Task title"]').value='new task';document.querySelector('input[type=checkbox][aria-label^="Needs my approval"]').checked=${gate}`);
  check('A11 no dependencies',await ev("!('depends_on' in window.__op.writes.at(-1).body) && window.__op.writes.at(-1).body.direct_action_required===true"));
  // Reopen the synthetic gate to exercise conflict and ambiguous transport paths.
- await ev("window.__op.task.state='blocked';window.__op.task.current_claim=null;window.__op.task.assignee_actor_id=null;window.__op.conflict=true;window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(150);await click('Approve and unblock');await confirm('Approve and unblock');
- check('412 displays conflict review guidance',await ev("document.querySelector('.op-receipts').textContent.includes('Previously read:') && document.querySelector('.op-receipts').textContent.includes('No retry was sent')"));
- await click('Review current state');await sleep(150);await ev("window.__op.dropUnblock=true");await click('Approve and unblock');await confirm('Approve and unblock');check('uncertain intent disables every new write button',await ev("[...document.querySelectorAll('.op-workspace button')].filter(b=>['Send reply','Set label','Create task'].includes(b.textContent)).every(b=>b.disabled)"));await click('Retry same intent');await sleep(150);
+ await ev("window.__op.task.state='blocked';window.__op.task.block={reason:'waiting for review'};window.__op.task.current_claim=null;window.__op.task.assignee_actor_id=null;window.__op.conflict=true;window.__op.root.labels.gate=window.__op.thread.labels.gate='pending'");await click('Refresh permissions and state');await sleep(150);await click('Approve and unblock');await confirm('Approve and unblock');
+ check('412 displays conflict review guidance',await ev("/Assignee.*Unassigned.*@bot/.test(document.querySelector('.op-conflict').innerText)"));
+ await click('Review updated task');await sleep(150);await ev("window.__op.dropUnblock=true");await click('Approve and unblock');await confirm('Approve and unblock');check('uncertain intent disables every new write button',await ev("[...document.querySelectorAll('.op-workspace button')].filter(b=>['Send reply','Set label','Create task'].includes(b.textContent)).every(b=>b.disabled)"));await click('Retry same intent');await sleep(150);
  check('ambiguous unblock retry reuses receipt',await ev("window.__op.seenKeys.at(-1)===window.__op.seenKeys.at(-2)"));
  // A store resync must leave the pending draft and panel intact.
  const snapshots=await ev('window.__op.snapshots');
@@ -1624,6 +2472,10 @@ try {
  check('no browser exceptions',errors.length===0,errors.join(' | '));
  }
  for (const [name, run] of operatorCases) if (!selectedCase || name===selectedCase) await run();
-} catch(e) {check('operator browser run',false,[e.message,...errors,await ev("document.querySelector('.op-workspace')?.textContent")].join(' | '));}
+} catch(e) {
+ // Report the harness location without dumping browser errors, DOM text or evaluated expressions.
+ const locations=Array.from((e.stack || '').matchAll(/^\s+at .*operator-browser\.mjs:(\d+:\d+)\)?$/gm),match=>match[1]);
+ check('operator browser run',false,`operator-browser.mjs:${locations.join(' <- ') || 'unknown'}, browser errors=${errors.length}`);
+}
 finally {browser.close();chrome.kill();server.close();await sleep(300);await rm(profile,{recursive:true,force:true}).catch(()=>{});}
 process.exit(failed?1:0);

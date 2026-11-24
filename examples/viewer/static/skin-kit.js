@@ -65,34 +65,70 @@ export function avatar(actor, id) {
 }
 
 // Ctrl-K / Cmd-K jump palette over a list of { label, hint, go }.
-export function jumpPalette(getItems, placeholder = 'Jump to…') {
-  let box = null;
-  const close = () => { box?.remove(); box = null; };
-  function open() {
+export function jumpPalette(getItems, placeholder, rememberFocus) {
+  let box = null, restoreFocus = null;
+  function close() {
+    if (!box) return;
+    box.close();
+    box.remove();
+    box = null;
+    restoreFocus();
+    restoreFocus = null;
+  }
+  function open(opener = document.activeElement) {
     if (box) return close();
-    const input = h('input', { type: 'text', placeholder, 'aria-label': placeholder, spellcheck: 'false' });
-    const list = h('ul', {});
+    restoreFocus = rememberFocus(opener);
+    const list = h('ul', { id: 'jump-results', role: 'listbox', 'aria-label': 'Destinations' });
+    const input = h('input', { type: 'text', placeholder, 'aria-label': placeholder, spellcheck: 'false',
+      role: 'combobox', 'aria-autocomplete': 'list', 'aria-controls': list.id, 'aria-expanded': 'true' });
     let sel = 0, items = [];
-    const draw = () => {
+    function select(index) {
+      sel = Math.max(0, Math.min(index, items.length - 1));
+      for (const [i, option] of Array.from(list.children).entries()) {
+        option.setAttribute('aria-selected', String(i === sel));
+      }
+      if (items.length) {
+        const option = list.children[sel];
+        input.setAttribute('aria-activedescendant', option.id);
+        option.scrollIntoView({ block: 'nearest' });
+      } else input.removeAttribute('aria-activedescendant');
+    }
+    function draw() {
       const q = input.value.toLowerCase();
       items = getItems().filter((x) => x.label.toLowerCase().includes(q)).slice(0, 12);
-      sel = Math.min(sel, Math.max(0, items.length - 1));
-      list.replaceChildren(...items.map((x, i) => h('li', { class: i === sel ? 'sel' : '', onclick: () => { close(); x.go(); } },
+      list.replaceChildren(...items.map((x, i) => h('li', { role: 'option', id: `jump-option-${i}`, onclick: () => { close(); x.go(); } },
         x.label, x.hint ? h('span', { class: 'hint' }, x.hint) : null)));
-    };
-    input.addEventListener('input', () => { sel = 0; draw(); });
+      select(0);
+    }
+    input.addEventListener('input', draw);
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown') { sel++; draw(); e.preventDefault(); }
-      else if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); draw(); e.preventDefault(); }
-      else if (e.key === 'Enter' && items[sel]) { const x = items[sel]; close(); x.go(); }
-      else if (e.key === 'Escape') close();
+      if (e.key === 'ArrowDown') select(sel + 1);
+      else if (e.key === 'ArrowUp') select(sel - 1);
+      else if (e.key === 'Enter') {
+        const item = items[sel];
+        if (item) { close(); item.go(); }
+      } else if (e.key !== 'Tab') return;
+      // The input is the dialog's only tab stop, in either direction.
+      e.preventDefault();
+      e.stopPropagation();
     });
-    box = h('div', { class: 'jump', role: 'dialog' }, input, list);
+    box = h('dialog', { class: 'jump', 'aria-label': placeholder,
+      oncancel: (e) => { e.preventDefault(); close(); },
+      onclick: (e) => {
+        if (e.target !== box) return;
+        const r = box.getBoundingClientRect();
+        if (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) close();
+      } }, input, list);
     document.body.append(box);
+    box.showModal();
     draw();
-    input.focus();
   }
-  const onKey = (e) => { if (e.key.toLowerCase() === 'k' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); open(); } };
+  const onKey = (e) => {
+    if (e.key.toLowerCase() === 'k' && (e.ctrlKey || e.metaKey) && (box || !document.querySelector(':modal'))) {
+      e.preventDefault();
+      open();
+    }
+  };
   document.addEventListener('keydown', onKey);
   return { open, close, dispose: () => { close(); document.removeEventListener('keydown', onKey); } };
 }
@@ -102,7 +138,7 @@ export function jumpPalette(getItems, placeholder = 'Jump to…') {
 // continuation cursor (EVT-008..011) with the viewer's recovery rules:
 // dedupe by id; 409 resync_required / 410 / 400 → new snapshot; 401 → stop;
 // network errors → backoff, keep the cursor.
-export function createStore({ api, boardId, onChange: change, onEvent: event, onStatus: status, onUnauthorized }) {
+export function createStore({ api, boardId, onChange: change, onEvent: event, onStatus: status, onUnauthorized, onBoardUnavailable }) {
   // View callbacks are guarded: a drawing error is reported once and never
   // reaches the poll loop, where it would look like a network error.
   let drawFailed = false;
@@ -215,7 +251,24 @@ export function createStore({ api, boardId, onChange: change, onEvent: event, on
 
   async function snapshot() {
     invalidateRefresh();
-    const [board, actors, channels, me] = await Promise.all([get(B), all(`${B}/actors`, 'actors'), get(`${B}/channels`), get('/v1/me')]);
+    // Only the board read can establish that the selected destination is gone.
+    // A missing channel, snapshot, or page of directory entries cannot.
+    const generation = refresh;
+    const boardRead = get(B).catch(e => {
+      if (currentRefresh(generation) && onBoardUnavailable && (e.status === 403 || e.status === 404)) {
+        stopStore();
+        onBoardUnavailable();
+      }
+      throw e;
+    });
+    const [board, actors, channels, me] = await Promise.all([
+      boardRead, all(`${B}/actors`, 'actors'), get(`${B}/channels`), get('/v1/me'),
+    ]).catch(async e => {
+      // Before retrying a sibling failure, let the board read decide access
+      // while its generation is still current. Authentication failures exit immediately.
+      if (onBoardUnavailable && e.status !== 401) await boardRead;
+      throw e;
+    });
     if (abort.signal.aborted) throw new DOMException('Store stopped', 'AbortError');
     Object.assign(S, { board, me: me.actor, channels: channels.channels, actors: new Map(actors.map((a) => [a.id, a])),
       threads: new Map(), msgs: new Map(), tasks: new Map(), order: [] });

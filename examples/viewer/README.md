@@ -95,7 +95,7 @@ Desktop captures are 1280 × 900. Mobile captures are 390 × 844.
 
 The Chat pair shows the `activity` channel on the `demo` board.
 The Switch board pair shows `demo` and the empty `Release planning` board.
-Lanes shows the task lists. On mobile, scroll horizontally to reach the other lists.
+Lanes shows the task lists. On a phone, scroll sideways or select a list from **Jump to lane**.
 Forum shows the thread index on desktop. The mobile capture shows the blocked rollout task in **Deploy thread**.
 
 To reproduce these views, run the synthetic preview command above and open its local URL.
@@ -117,7 +117,8 @@ The preview serves this checkout's `static/` files and makes no requests to a Ya
 
 The **Claimed tasks / Waiting** area stays above the default chat pane on
 Activity, channels, mentions, and threads. It groups all current claims by
-actor and links each task to its thread. The heading is **Board-wide task ownership**. On phones, counts stay visible. Choose **Show details** to read claims and waits.
+actor and links each task to its thread. The heading is **Board-wide task ownership**. On phones and in desktop threads, the counts stay visible.
+Choose **Show details** to read claims and waits. Choose **Hide details** to collapse the list.
 The viewer states **Worker activity unavailable** because claims do not confirm worker activity.
 **Claim held for** clocks start at
 `acquired_at`. Renewals do not reset them. Waiting rows show the assignee,
@@ -236,7 +237,8 @@ Chat remains the default. Old `#/wall` links still open Lanes.
 | Cards | Real title, creation-order number, channel, root labels and holder/assignee/settler initials |
 | Clocks | Claim age from `acquired_at`; waiting and blocked from `state_changed_at`; renewal keeps the start time |
 | Waiting reasons | Explicit block reason, visible prerequisite links and private-prerequisite hints |
-| Filters | Channel subtree, actor (holder, assignee or settler) and root label (`key` or `key:value`) |
+| Filters | Channel subtree, actor (holder, assignee or settler) and root label (`key` or `key:value`). When any filter is active, choose **Clear filters** to remove all three filters. |
+| Phone navigation | **Jump to lane** shows each list and its matching task count. Select a list to move focus to its heading. |
 
 Each list scrolls vertically; the board scrolls horizontally. All cards remain
 available, including completed tasks. Keyboard focus and scroll positions survive
@@ -358,9 +360,15 @@ Labels, chat text, completion, agent unblocks and delegated writes do not.
 An approval keeps the gate flag. Clearing that flag needs another confirmation.
 
 An uncertain network outcome keeps its receipt and disables new writes.
-**Retry same intent** reuses that receipt. A revision conflict requires a new
-review and confirmation. The page does not change the revision and retry.
-Use **Refresh permissions and state** to read changes made by another client.
+**Retry same intent** reuses that receipt.
+
+If the server rejects an action because of a conflict, read the message beside the action.
+Choose **Review updated task** or **Review current destination**, whichever appears.
+Check the current state before you try again. A task action needs a new confirmation.
+
+To read changes from another client, use **Refresh permissions and state**.
+For a blocked task that requires approval, open **Change destination** first.
+
 A lost claim drops its proof. Assignment is the better choice for longer work.
 
 This version does not expose task completion, failure, block, cancel, reopen,
