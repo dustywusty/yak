@@ -140,7 +140,7 @@ export function operatorFixture() {
         return json({code:'revision_conflict',revision:task.revision},412);
       }
       if (guard !== `"${task.revision}"`) return json({code:'revision_conflict',revision:task.revision},412);
-      if (task.state !== 'blocked') return json({code:'invalid_transition'},409);
+      if (task.state !== 'blocked') return json({code:'invalid_transition',current_state:task.state},409);
       const before = {...root.labels,'yak.task.state':task.state};
       task.state = task.dependencies.every(d => d.state === 'completed') && !task.unreadable_dependencies_pending ? 'ready' : 'waiting';
       task.block = null;
