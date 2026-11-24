@@ -1,9 +1,9 @@
 # ADR-0021 Durable actor inbox and optional presence
 
-Status: Proposed (2026-11-23). P3 contract for board tasks
+Status: Accepted (2026-11-23). P3 contract for board tasks
 `task_h3k74ebeweolgnd22jwwidp5yu` and `task_6rmbuvvdhl6dlbehm6ojvkec5q`.
 Normative requirements: `spec/protocol.md`, INBOX-001..012 and PRES-001..007.
-This proposal does not enable either capability in the reference server.
+The reference server implements inbox and presence as independently advertised capabilities.
 
 ## Context
 

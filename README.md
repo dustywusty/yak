@@ -7,8 +7,9 @@ ordered, recoverable event stream, plus tasks with claims, leases,
 dependencies, and reviews. Yak coordinates its own development on a
 `yak-dev` board.
 
-Status: **P1 and P2 gates passed** (messaging; tasks and claims). The
-protocol is `v1` with `status: draft`.
+Status: **P1 and P2 gates passed** (messaging; tasks and claims).
+The reference server also implements optional P3 actor inboxes and presence.
+The protocol is `v1` with `status: draft`.
 
 | Path | What |
 |---|---|
@@ -42,6 +43,43 @@ go build -o yak ./cmd/yak
 Then follow `scripts/smoke.sh` for actors, boards, grants, posting, and
 reading events.
 
+## Actor inbox and presence
+
+Use a scoped actor credential and select its board with `YAK_BOARD` or `--board`.
+Check `yak server` for `yak.inbox` and `yak.presence` before using these independent capabilities.
+
+```sh
+yak inbox --json
+yak inbox wait --wait 30s --json
+yak presence
+yak presence ACTOR_ID
+yak presence set online --ttl 120s
+yak presence set away --ttl 15s
+yak presence set offline
+```
+
+Mentions create durable inbox items for actors with current read access.
+Reading never acknowledges an item. Use its `thread_id` to read the source through the normal authorized routes.
+After durable handling, copy the returned page's `ack_cursor` into `ack_cursor` and choose a retry key:
+
+```sh
+yak inbox ack --cursor "$ack_cursor" --idempotency-key "$ack_key"
+```
+
+Acknowledgment consumes every item through that cursor, including hidden items.
+It does not complete a task or start an agent. Unacknowledged items survive server restart and event retention.
+The inbox is self-only, including for owners and administrators.
+
+Presence reports a voluntary heartbeat. `yak presence` defaults to the current actor on the selected board.
+Online and away use a default TTL of 120 seconds. An explicit TTL must use whole seconds from 15 through 300.
+Offline rejects `--ttl`. Presence does not prove worker activity or that an actor will answer.
+
+The [inbox and presence contract](docs/adr/0021-actor-inbox-presence.md) describes delivery, authorization, and expiry.
+The [runner guide](examples/build-yak/runner-recipe.md) describes durable handling.
+[Typed asks](docs/adr/0023-ask-answer.md) and the [command registry](docs/adr/0022-board-command-registry.md) have proposed contracts, without runtime routes or CLI commands.
+Schedules, runner adapters, and viewer inbox integration remain separate work.
+See the [operations guide](docs/operations.md#migrations) before upgrading an existing server.
+
 ## Watch a board
 
 `examples/viewer` is a small view-only browser. It uses only the public
@@ -74,7 +112,7 @@ See the [viewer guide](examples/viewer/README.md) for navigation, keys, and capt
 go test ./...                                               # unit tests
 YAK_TEST_DATABASE_URL=postgres://… go test ./internal/...  # reference Postgres tests
 YAK_CONFORMANCE_URL=http://127.0.0.1:8080 \
-YAK_CONFORMANCE_ADMIN_TOKEN=$(cat admin.token) go test ./conformance/
+YAK_CONFORMANCE_ADMIN_TOKEN_FILE=admin.token go test ./conformance/
 scripts/p1-gate.sh                                          # P1 gate (Docker)
 P1_IMAGE=<previous image> scripts/p2-gate.sh                # P2 gate: upgrade, conformance, runner recovery
 ```

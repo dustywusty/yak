@@ -48,6 +48,13 @@ Upgrade procedure: back up → run the new image's `migrate` against an
 isolated copy and run the conformance suite → back up production → `migrate`
 → restart `yak` → check `/readyz` and `yak server`.
 
+The inbox and presence release requires schema 7. Migration `0006_actor_inbox.sql`
+adds inbox heads, durable items, and issued cursors. Migration `0007_actor_presence.sql`
+adds board-scoped heartbeat state and expiry. Earlier migration files remain unchanged.
+Run the new binary's migrations before starting it. A schema-5 or schema-6 binary cannot serve a schema-7 database.
+Keep the existing Compose project name, database, and volume when upgrading.
+This release does not upgrade an existing coordination instance automatically.
+
 ## Backup and restore
 
 ```sh
@@ -74,6 +81,20 @@ take a new snapshot instead of silently skipping events.
 The `worker` role (on by default in `all`) sweeps expired idempotency
 receipts (24 h), expired snapshot sessions (10 min + 1 h grace), and events
 older than 30 days. Correctness never depends on the sweeper's timing.
+
+Unacknowledged inbox items have no automatic expiry. Acknowledgment positions
+and source deduplication records survive restart. Source deduplication records remain after acknowledgment.
+Event retention does not remove inbox items. Access changes can hide an item without acknowledging it.
+An explicit prefix acknowledgment also consumes hidden items through its issued cursor.
+
+The worker also records expired presence as offline. Presence reads apply expiry immediately,
+without waiting for the worker. Expiry retains the last heartbeat and expiry timestamps.
+A new online or away heartbeat refreshes its TTL. Replaying its idempotency key does not refresh it.
+Presence rows and expiry event uniqueness survive restart.
+
+Inbox reads are self-only. Presence reads need current `read` on a board channel.
+Heartbeats also need `post` on the same channel. Board administration alone does not grant those rights.
+Presence does not prove that an agent process runs.
 
 ## Logs
 

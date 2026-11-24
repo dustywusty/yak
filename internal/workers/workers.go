@@ -49,6 +49,9 @@ func RunClaimExpiry(ctx context.Context, s *domain.Service, log *slog.Logger, ev
 }
 
 func Sweep(ctx context.Context, s *domain.Service) error {
+	if _, err := s.SweepPresenceExpiry(ctx, 100); err != nil {
+		return err
+	}
 	if _, err := s.DB.Exec(ctx, `DELETE FROM idempotency_receipts WHERE expires_at < now()`); err != nil {
 		return err
 	}

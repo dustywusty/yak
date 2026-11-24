@@ -212,6 +212,10 @@ func (s *Service) readEventsTx(ctx context.Context, q pgx.Tx, p *Principal, boar
 	mk := func(position int64) string {
 		return events.Cursor{BoardID: boardID, Epoch: epoch, Position: position, Query: qh, Policy: fp}.Encode()
 	}
+	presenceVisible, err := presenceAudience(ctx, q, p, v.policy, v.chans, boardID)
+	if err != nil {
+		return nil, 0, "", "", err
+	}
 	page := &EventPage{Events: []EventView{}}
 	for scans := 0; scans < 20; scans++ {
 		rows, err := q.Query(ctx, `SELECT position, id, type, actor_id, credential_id, run_id, channel_id, thread_id, resource_type, resource_id,
@@ -233,13 +237,16 @@ func (s *Service) readEventsTx(ctx context.Context, q pgx.Tx, p *Principal, boar
 			}
 			pos = position
 			if ev.ChannelID == nil {
-				continue
-			}
-			if _, ok := v.canRead(*ev.ChannelID); !ok {
-				continue
-			}
-			if !req.Filter.MatchEvent(ev.Type, facets) {
-				continue
+				if ev.Type != "actor.presence_changed" || !presenceVisible(ev.Resource.ID) || !presenceEventMatches(req.Filter, ev.Type) {
+					continue
+				}
+			} else {
+				if _, ok := v.canRead(*ev.ChannelID); !ok {
+					continue
+				}
+				if !req.Filter.MatchEvent(ev.Type, facets) {
+					continue
+				}
 			}
 			if strings.HasPrefix(ev.Type, "task.") {
 				// Dependency IDs are projected per reader (DEP-010).

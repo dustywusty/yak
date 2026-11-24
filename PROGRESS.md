@@ -1,8 +1,9 @@
 # Progress
 
-Updated 2026-11-20. Branch `Dusty/queenfish`. This file summarizes state;
-from P2 onward the task ledger of record will be the `yak-dev` board, not
-this file (design §15.2).
+Updated 2026-11-23. The `yak-dev` board is the task ledger of record (design §15.2).
+This file summarizes implementation. The P0 and P1 sections retain their historical snapshots and test counts.
+The P2 gate is complete. The current P3 implementation summary is at the end.
+Repository implementation does not imply deployment to an existing coordination instance.
 
 ## P0 — protocol baseline: done for the P1 slice
 - `spec/protocol.md` (normative, requirement IDs, traceability §10),
@@ -96,3 +97,18 @@ file only summarizes; see `examples/build-yak/EVIDENCE.md` for IDs.
    `yak run` runner (PAR-033).
 4. P2 gate, then import the roadmap as tasks on `yak-dev` (BOOT-02) and run
    the two-implementer + reviewer exercise (BOOT-03, BOOT-04).
+
+## P3 actor inbox and presence implementation (2026-11-23)
+
+The inbox bundle adds durable mention delivery, explicit acknowledgment, and policy-bound long polling.
+Presence adds board-scoped self heartbeats, TTL expiry, authorized actor views, and board events.
+The CLI exposes `yak inbox` and `yak presence`. Presence does not imply worker activity.
+Migrations 0006 and 0007 preserve all earlier migration files.
+Typed asks and command registration have proposed contracts, without runtime routes or CLI commands.
+Schedule delivery, runner adapters, and viewer inbox integration remain separate board tasks.
+Clients check `yak.inbox` and `yak.presence` independently in discovery.
+Inbox reads never acknowledge. Prefix acknowledgment follows durable handling and includes hidden items.
+Presence TTLs use whole seconds from 15 through 300. Offline carries no TTL.
+Expiry applies on reads without a worker and does not prove worker activity.
+The release adds schema 7 and requires migration before a new server starts.
+No coordination-server deployment is recorded by this implementation summary.
