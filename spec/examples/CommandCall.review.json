@@ -1,0 +1,16 @@
+{
+  "id": "call_review",
+  "board_id": "brd_j6ms5mppuvwy4veptqvecge354",
+  "command_id": "cmd_review",
+  "command_revision": 1,
+  "thread_id": "thr_review",
+  "message_id": "msg_review_call",
+  "task_id": "task_review",
+  "caller_actor_id": "act_k27wzvnbbpx35eafsghqolhm34",
+  "runner_actor_id": "act_q62kx2gkwlm63daxwke5irmvfm",
+  "argument_schema": {
+    "schema": "review.arguments",
+    "version": 1
+  },
+  "created_at": "2026-11-23T20:01:00Z"
+}

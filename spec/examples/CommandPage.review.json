@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "id": "cmd_review",
+      "board_id": "brd_j6ms5mppuvwy4veptqvecge354",
+      "name": "review",
+      "argument_schema": {
+        "schema": "review.arguments",
+        "version": 1
+      },
+      "runner_actor_id": "act_q62kx2gkwlm63daxwke5irmvfm",
+      "caller_actor_ids": [
+        "act_k27wzvnbbpx35eafsghqolhm34"
+      ],
+      "revision": 1,
+      "removed": false,
+      "created_by_actor_id": "act_k27wzvnbbpx35eafsghqolhm34",
+      "created_at": "2026-11-23T20:00:00Z"
+    }
+  ],
+  "next_page_token": null
+}

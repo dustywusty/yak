@@ -71,8 +71,10 @@
       "enum": [
         "new_thread",
         "converted",
-        "batch"
-      ]
+        "batch",
+        "command"
+      ],
+      "description": "The command value is a proposed P3 extension, gated by yak.commands (CMD-008)."
     },
     "state": {
       "$ref": "TaskState.schema.json"
