@@ -14,7 +14,11 @@ info:
     the P2 operations only if it lists `yak.p2.tasks` in
     `protocol.profiles`.
 
-    It describes what the reference server implements. Object schemas live in
+    P1 and P2 describe implemented behavior. ADR-0021 adds proposed P3 inbox
+    and presence operations, gated by `yak.inbox` and `yak.presence`. The
+    reference server does not yet advertise those capabilities.
+
+    Object schemas live in
     `spec/schemas/*.schema.json` (JSON Schema 2020-12) and are the single
     source of truth; `components.schemas` only re-exports them by `$ref`.
     Examples live in `spec/examples/<Schema>.<variant>.json`.
@@ -2475,6 +2479,157 @@ paths:
           "404 not_found": a prerequisite is unknown, on another board, or unreadable (task_id)
           "413 limit_exceeded": more than limits.max_dependencies_per_task prerequisites in total
 
+  /v1/boards/{board_id}/inbox:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: readActorInbox
+      tags: [identity]
+      summary: Proposed P3 durable self inbox (yak.inbox).
+      description: |
+        INBOX-001..011. Without a cursor, start at the saved acknowledgment.
+        A read never acknowledges. Both returned cursors cover examined hidden
+        items too. unread_count counts only currently visible unacknowledged items.
+        Recheck credentials and policy on every long-poll wake and final projection.
+      parameters:
+        - name: cursor
+          in: query
+          description: Opaque inbox cursor bound to actor, board, history epoch and effective policy.
+          schema: { type: string, minLength: 1 }
+        - $ref: "#/components/parameters/Limit"
+        - name: wait_ms
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 30000, default: 0 }
+      responses:
+        "200":
+          description: Visible items and explicit acknowledgment boundary. Timeout is successful.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxPage" }
+              examples:
+                unacked: { externalValue: ./examples/InboxPage.unacked.json }
+                timeout: { externalValue: ./examples/InboxPage.timeout.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+      x-yak:
+        capability: yak.inbox
+        status: proposed
+        authorization: Self only, board visible and read scope; current source read policy and ceiling apply per item and count.
+        errors:
+          "400 validation_failed": malformed cursor or wrong board or actor
+          "409 resync_required": policy_changed or history_reset; restart without cursor from saved acknowledgment
+
+  /v1/boards/{board_id}/inbox/ack:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: acknowledgeActorInbox
+      tags: [identity]
+      summary: Proposed P3 acknowledgment through an issued boundary (yak.inbox).
+      description: |
+        INBOX-008. Acknowledges every item through the cursor, including hidden
+        items. The saved position never moves backward. No If-Match is needed.
+        Replay returns the current authorized acknowledgment projection.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InboxAckRequest" }
+            examples:
+              page: { externalValue: ./examples/InboxAckRequest.page.json }
+      responses:
+        "200":
+          description: Saved acknowledgment metadata without a reusable scan position.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxAck" }
+              examples:
+                saved: { externalValue: ./examples/InboxAck.saved.json }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+      x-yak:
+        capability: yak.inbox
+        status: proposed
+        idempotency: required
+        precondition: none
+        authorization: Self only, board visible and read scope; cursor policy and epoch must remain current.
+        events: []
+
+  /v1/boards/{board_id}/actors/{actor_id}/presence:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/ActorIdPath"
+      - $ref: "#/components/parameters/XRequestId"
+    get:
+      operationId: readActorPresence
+      tags: [identity]
+      summary: Proposed P3 actor presence view in a board (yak.presence).
+      description: PRES-001..007. Expired states read as offline. No heartbeat means offline with null timestamps and revision zero.
+      responses:
+        "200":
+          description: Effective presence without content or inbox data.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActorPresence" }
+              examples:
+                online: { externalValue: ./examples/ActorPresence.online.json }
+                unseen: { externalValue: ./examples/ActorPresence.unseen.json }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+      x-yak:
+        capability: yak.presence
+        status: proposed
+        authorization: Current read on a board channel; target has a board allow grant or is self. No extra presence right.
+
+  /v1/boards/{board_id}/presence:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/XRequestId"
+    post:
+      operationId: heartbeatActorPresence
+      tags: [identity]
+      summary: Proposed P3 self heartbeat (yak.presence).
+      description: |
+        PRES-003..006. Online and away default to 120 seconds (15..300).
+        Offline rejects a TTL. A replay never refreshes the expiry.
+        Expiry and a new heartbeat serialize. The latest revision wins.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PresenceHeartbeatRequest" }
+            examples:
+              online: { externalValue: ./examples/PresenceHeartbeatRequest.online.json }
+              offline: { externalValue: ./examples/PresenceHeartbeatRequest.offline.json }
+      responses:
+        "200":
+          description: Effective self presence. Every new heartbeat advances the revision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActorPresence" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+      x-yak:
+        capability: yak.presence
+        status: proposed
+        idempotency: required
+        precondition: none
+        authorization: Self only; current read and post on at least one board channel, bounded by credential scopes.
+        events: [actor.presence_changed]
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2486,6 +2641,12 @@ components:
         expired or revoked token, or a disabled actor, is 401 unauthenticated.
 
   schemas:
+    InboxItem: { $ref: ./schemas/InboxItem.schema.json }
+    InboxPage: { $ref: ./schemas/InboxPage.schema.json }
+    InboxAckRequest: { $ref: ./schemas/InboxAckRequest.schema.json }
+    InboxAck: { $ref: ./schemas/InboxAck.schema.json }
+    ActorPresence: { $ref: ./schemas/ActorPresence.schema.json }
+    PresenceHeartbeatRequest: { $ref: ./schemas/PresenceHeartbeatRequest.schema.json }
     Timestamp: { $ref: ./schemas/Timestamp.schema.json }
     ChannelPath: { $ref: ./schemas/ChannelPath.schema.json }
     Capability: { $ref: ./schemas/Capability.schema.json }
