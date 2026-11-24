@@ -1742,11 +1742,11 @@ async function partialApprovalFocusCase() {
  const ready = "document.querySelector('[aria-label=\"Task actions\"] h3')?.textContent.endsWith(' · ready')";
  const receipt = "document.querySelector('.op-pending')";
  try {
-  for (const mode of ['manager','reduced','navigate','revisit']) for (const width of [390,1280]) for (const media of ['light','dark']) {
+  for (const mode of ['manager','reduced','navigate','revisit']) for (const width of [320,390,1280]) for (const media of ['light','dark']) {
    const navigated = mode==='navigate' || mode==='revisit';
    if (navigated && (width!==390 || media!=='light')) continue;
    const name = `partial approval ${mode} ${width} ${media}`;
-   await cmd('Emulation.setDeviceMetricsOverride',{width,height:width===390?844:900,deviceScaleFactor:1,mobile:width===390});
+   await cmd('Emulation.setDeviceMetricsOverride',{width,height:width<=390?844:900,deviceScaleFactor:1,mobile:width<=390});
    await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:media}]});
    await freshIdentityFixture("window.__op.labelFault={status:403};window.__op.deferLabel=true");
    await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-focus';document.querySelector('#login-form').requestSubmit()");
@@ -1781,13 +1781,20 @@ async function partialApprovalFocusCase() {
    await until(ready);
    // Observe the browser's return position before sending any more input.
    const state = await ev(`(() => {
-    const box=${receipt}, button=box.querySelector('button'), panel=box.closest('.op-workspace');
+    const box=${receipt}, panel=box.closest('.op-workspace');
     const range=document.createRange(); range.selectNodeContents(box.firstChild);
     const text=range.getBoundingClientRect(), clip=panel.getBoundingClientRect();
+    const destination=box.querySelector('p'), bounds=box.getBoundingClientRect();
+    range.selectNodeContents(destination);
+    const lines=[...range.getClientRects()];
     return {
+     destination:destination.textContent,
+     textFits:lines.length>0 && lines.every(line=>line.left>=bounds.left && line.right<=bounds.right),
+     workspaceWidth:[panel.clientWidth,panel.scrollWidth], receiptWidth:[box.clientWidth,box.scrollWidth],
+     documentWidth:document.documentElement.scrollWidth,
      visible:text.height>0 && text.top>=Math.max(0,clip.top) && text.bottom<=Math.min(innerHeight,clip.bottom) &&
       text.left>=Math.max(0,clip.left) && text.right<=Math.min(innerWidth,clip.right),
-     focused:box.contains(document.activeElement), retryFocused:document.activeElement===button,
+     focused:document.activeElement===box && getComputedStyle(box).outlineStyle!=='none',
      selected:panel.querySelector('select[aria-label=Thread]').value, manager:!!panel.querySelector('[aria-label="New assignee"]'),
      obsolete:[...panel.querySelectorAll('button')].some(b=>['Approve and unblock','Request changes'].includes(b.textContent)),
      oldReason:panel.querySelector('.op-review').textContent.includes('waiting for review')
@@ -1796,9 +1803,11 @@ async function partialApprovalFocusCase() {
    check(name+' fresh selected task, current grants, visible explanation and receipt focus',
     state.selected==='th' && state.manager===(mode==='manager') && !state.obsolete && !state.oldReason &&
     state.visible && state.focused && await count()===2, JSON.stringify(state));
-   if (!state.retryFocused) {
-    for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent',{type,key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
-   }
+   check(name+' complete destination fits the receipt and workspace',
+    state.destination==='Pending destination: PATCH /v1/boards/brd_test/messages/root/labels. Retry sends the original values.' &&
+    state.documentWidth===width && state.workspaceWidth[0]===state.workspaceWidth[1] &&
+    state.receiptWidth[0]===state.receiptWidth[1] && state.textFits, JSON.stringify(state));
+   for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent',{type,key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
    const canRetry=await ev("document.activeElement.matches('.op-pending button') && document.activeElement.textContent==='Retry label only'");
    check(name+' direct keyboard path to label recovery',canRetry);
    if (!canRetry) continue;

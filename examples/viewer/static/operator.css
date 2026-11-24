@@ -18,6 +18,7 @@ body[data-operator] .t-sideopen { contain: layout; }
 #operator-identity { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .op-workspace, .op-confirm, #operator-session { color-scheme: light; --panel: #f4f4f4; --line: #888; }
 .op-review, .op-workspace details { overflow-wrap: anywhere; }
+.op-pending > p { overflow-wrap: anywhere; }
 .op-workspace details { margin-block: .7rem; border-top: 1px solid #aaa; }
 .op-workspace summary { padding: .45rem 0; cursor: pointer; font-weight: 600; }
 .op-conflict { overflow-wrap: anywhere; }
