@@ -21,7 +21,7 @@ const TOKEN_KEY = 'yak-viewer-token';
 const UNAUTHORIZED = 'The server rejected the token (401). Paste a valid token.';
 const $ = (id) => document.getElementById(id);
 const S = { token: null, me: null, abort: new AbortController(), operatorEnabled: false, serverDate: NaN, serverMono: 0 };
-let session, operatorUI;
+let session, operatorUI, logoutOutcome;
 
 // ---------- HTTP ----------
 
@@ -44,6 +44,7 @@ async function api(method, path, params = {}, signal = S.abort.signal) {
     if (v == null || v === '') continue;
     for (const x of [].concat(v)) url.searchParams.append(k, x);
   }
+  const authSession = S.abort;
   let res;
   const started = performance.now();
   try {
@@ -58,17 +59,17 @@ async function api(method, path, params = {}, signal = S.abort.signal) {
     if (e.name === 'AbortError') throw e;
     throw new ApiError(0, { code: 'network', detail: 'network error' });
   }
-  if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
+  if (signal.aborted || authSession !== S.abort) throw new DOMException('Request canceled', 'AbortError');
   if (path === '/v1/server') { S.serverDate = Date.parse(res.headers.get('Date')); S.serverMono = started; }
   if (res.status === 204) return null;
   const body = await res.text().then(parseWireJSON).catch((e) => { if (res.ok) throw e; return {}; });
   // Cancellation can outlive fetch while the response body is being read.
   // An old 401 must not forget the token for a replacement view.
-  if (signal.aborted) throw new DOMException('Request canceled', 'AbortError');
+  if (signal.aborted || authSession !== S.abort) throw new DOMException('Request canceled', 'AbortError');
   if (!res.ok) {
     const err = new ApiError(res.status, body);
     // Connect handles its own rejection and associates it with the submitted field.
-    if (res.status === 401 && document.body.dataset.view !== 'login') needToken(UNAUTHORIZED);
+    if (res.status === 401 && S.me) needToken(UNAUTHORIZED);
     throw err;
   }
   return body;
@@ -80,9 +81,9 @@ function loadToken() {
   try { S.token = sessionStorage.getItem(TOKEN_KEY); } catch { S.token = null; }
 }
 
-function needToken(message, invalidToken = false) {
+function needToken(message, kind = 'error') {
   if (session?.ending) return;
-  if (session?.active) { session.end({ unauthorized: true }).finally(() => needToken(message, invalidToken)); return; }
+  if (session?.active) { session.end({ unauthorized: true }); return; }
   operatorUI?.clear();
   document.body.removeAttribute('data-operator');
   feed.stop();
@@ -93,26 +94,31 @@ function needToken(message, invalidToken = false) {
   S.token = null; S.me = null;
   $('board-list').replaceChildren();
   try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* storage blocked */ }
-  showLogin(message, invalidToken);
+  showLogin(message, kind);
 }
 
-function setLoginFeedback(message, invalidToken = false) {
+function setLoginFeedback(message, kind) {
   const token = $('token');
-  if (invalidToken) {
+  if (kind === 'invalid') {
     token.setAttribute('aria-invalid', 'true');
     token.setAttribute('aria-describedby', 'login-error');
   } else {
     token.removeAttribute('aria-invalid');
     token.removeAttribute('aria-describedby');
   }
-  $('login-error').hidden = !message;
-  $('login-error').textContent = message || '';
+  for (const id of ['login-error', 'login-status']) {
+    const visible = message && id === (kind === 'status' ? 'login-status' : 'login-error');
+    $(id).hidden = !visible;
+    $(id).textContent = visible ? message : '';
+  }
 }
 
-function showLogin(message, invalidToken) {
+function showLogin(message, kind) {
   show('login');
   renderTop();
-  setLoginFeedback(message, invalidToken);
+  setStatus(null);
+  $('banner').hidden = true;
+  setLoginFeedback(message, kind);
   $('token').focus();
 }
 
@@ -152,7 +158,10 @@ function href(r) {
 }
 
 async function onRoute() {
-  if (!S.token) return showLogin();
+  if (!S.token) {
+    if (document.body.dataset.view !== 'login') showLogin();
+    return;
+  }
   try {
     if (!S.me) { S.me = await api('GET', '/v1/me'); renderTop(); }
     feed.start();
@@ -192,6 +201,7 @@ function renderTop() {
 }
 
 function setStatus(state) {
+  if (!S.me || document.body.dataset.view === 'login') state = null;
   const el = $('status');
   el.hidden = !state;
   el.dataset.state = state || '';
@@ -222,25 +232,30 @@ $('login-form').addEventListener('submit', async (ev) => {
     const [me, server] = await Promise.all([api('GET', '/v1/me'), api('GET', '/v1/server')]);
     if ($('operator-login').checked && S.operatorEnabled) {
       const why = credentialRefusal(me, server, S.serverDate);
-      if (why) return needToken(why, true);
+      if (why) return needToken(why, 'invalid');
       try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* unavailable */ }
       S.me = me; session.start(me, server, S.serverDate, S.serverMono);
       document.body.dataset.operator = 'true';
       if (!server.capabilities?.includes('yak.credentials.restrictions')) banner("Warning: a stolen token could issue and revoke your credentials. This server has no credential restrictions.");
     } else {
-      if (!me.credential.scopes.every((s) => s === 'read')) return needToken('A write credential requires operator mode. Use a read-only credential here.', true);
+      if (!me.credential.scopes.every((s) => s === 'read')) return needToken('A write credential requires operator mode. Use a read-only credential here.', 'invalid');
       S.me = me;
       try { sessionStorage.setItem(TOKEN_KEY, v); } catch { /* memory only */ }
     }
     renderTop();
     await onRoute();
-  } catch (e) { needToken(e.status === 401 ? UNAUTHORIZED : e.message, e.status === 401); }
+  } catch (e) { needToken(e.status === 401 ? UNAUTHORIZED : e.message, e.status === 401 ? 'invalid' : 'error'); }
   finally { $('connect').disabled = false; }
 });
 
 function forget() {
-  if (session?.active) { session.end().finally(() => needToken(session.notice || 'Logged out; token revoked everywhere.')); return; }
-  needToken('Token forgotten.');
+  if (session?.ending) return;
+  if (session?.active) {
+    logoutOutcome = { revoked: false, releaseFailed: false };
+    session.end();
+    return;
+  }
+  needToken('Token forgotten from this tab.', 'status');
   history.replaceState(null, '', location.pathname);
 }
 $('forget').addEventListener('click', forget);
@@ -277,20 +292,50 @@ async function write(method, path, body, headers = {}, options = {}) {
     throw new ApiError(0, { code: 'network', detail: 'Request outcome unknown. Retry this same intent.' });
   } finally { clearTimeout(timeout); }
 }
-session = new OperatorSession({ send: write, changed: () => {
+// Only a completed self-revoke confirms global logout. Release and revoke
+// have independent outcomes, including when the server rejects the credential.
+async function sendOperatorRequest(method, path, ...args) {
+  const outcome = session.ending && logoutOutcome;
+  const revoke = outcome && method === 'DELETE' && path === `/v1/credentials/${session.me.credential.id}`;
+  try {
+    const result = await write(method, path, ...args);
+    if (revoke) outcome.revoked = true;
+    return result;
+  } catch (error) {
+    if (outcome && path.endsWith('/release')) outcome.releaseFailed = true;
+    throw error;
+  }
+}
+
+session = new OperatorSession({ send: sendOperatorRequest, changed: () => {
   operatorUI?.update();
   const el = $('operator-session'); el.hidden = !session.active;
   if (session.active) {
     const c = session.me.credential;
     $('operator-identity').textContent = `@${session.me.actor.handle} (${session.me.actor.kind}) · boards ${c.board_ids.join(', ')} · scopes ${c.scopes.join(', ')} · expires in ${Math.max(0, Math.ceil(session.lifeLeft() / 60000))} min · idle ${Math.max(0, Math.ceil(session.idleLeft() / 1000))} s${session.idleLeft() <= 60000 ? ' · idle logout in less than 60 seconds' : ''}${session.notice ? ` · ${session.notice}` : ''}`;
-  } else if (S.me && document.body.dataset.operator) needToken(session.notice || 'Operator session ended.');
+  } else if (S.me && document.body.dataset.operator) {
+    if (logoutOutcome) {
+      const { revoked, releaseFailed } = logoutOutcome;
+      logoutOutcome = null;
+      let message = revoked ? 'Logged out. Token revoked everywhere.' : 'Logged out of this tab. Token revocation is unconfirmed.';
+      if (releaseFailed) message += ' Claim release failed. Its lease will lapse.';
+      needToken(message, revoked && !releaseFailed ? 'status' : 'error');
+    } else {
+      const expired = session.lifeLeft() <= 0 || session.idleLeft() <= 0;
+      needToken(expired ? ['Operator session timed out.', session.notice].filter(Boolean).join(' ') : UNAUTHORIZED);
+    }
+  }
 } });
 operatorUI = createOperatorUI({ session, read: api, route: parseRoute });
 $('operator-tools').addEventListener('click', () => operatorUI.open());
 $('operator-logout').addEventListener('click', forget);
 for (const event of ['keydown', 'pointerdown', 'touchstart']) document.addEventListener(event, () => session.input(), { passive: true, capture: true });
 // end's keepalive path dispatches synchronously before clearing the token.
-window.addEventListener('pagehide', () => { if (session.active) session.end({ keepalive: true }); });
+window.addEventListener('pagehide', () => {
+  if (!session.active || session.ending) return;
+  logoutOutcome = { revoked: false, releaseFailed: false };
+  session.end({ keepalive: true });
+});
 window.addEventListener('yak-operator-open', (e) => operatorUI.open(e.detail || parseRoute()));
 async function boot() {
   try { S.operatorEnabled = (await (await fetch('/viewer-config', { cache: 'no-store' })).json()).operator === true; } catch { /* default read-only */ }

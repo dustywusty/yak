@@ -424,9 +424,76 @@ async function tokenFeedbackCase() {
  await until("document.body.dataset.view==='boards'");
  check('valid reconnect clears rejection', await ev(neutral + " && !document.querySelector('#login-error').textContent"));
  await ev("document.querySelector('#forget').click()");
- check('intentional forget leaves Token neutral', await ev(neutral + " && document.querySelector('#login-error').textContent.includes('forgotten')"));
+ check('intentional forget leaves Token neutral', await ev(neutral + " && document.querySelector('#login [role=status]').innerText.includes('forgotten')"));
  await freshIdentityFixture("window.__op.expired=true;sessionStorage.setItem('yak-viewer-token','synthetic-restored')");
  check('rejected restored session reports 401 with a neutral Token field', await ev(neutral + " && document.querySelector('#login-error').textContent.includes('401')"));
+}
+async function sessionFeedbackCase() {
+ const clearHeader = "document.querySelector('#status').hidden && !document.querySelector('#status').textContent";
+ const neutral = "document.querySelector('#login-error').hidden && !document.querySelector('#token').hasAttribute('aria-invalid')";
+ await freshIdentityFixture("window.__op.scope=['read'];sessionStorage.setItem('yak-viewer-token','synthetic-session')");
+ await ev("location.hash='#/b/brd_test'");
+ await until("document.querySelector('#status').textContent==='live'");
+ // Hold an actual poll beyond logout, even if the fixture receives an abort.
+ await ev(`{ const previous=window.fetch;
+  window.fetch=(url,opts)=>{
+   if(!window.__lateRead && new URL(url,location.href).pathname.endsWith('/events')) {
+    return new Promise(resolve=>{window.__lateRead=()=>resolve(new Response(null,{status:401}))});
+   }
+   return previous(url,opts);
+  };
+ }`);
+ await until("typeof window.__lateRead==='function'");
+ await until("document.querySelector('[data-control=forget]')?.checkVisibility()");
+ await ev("document.querySelector('[data-control=forget]').focus()");
+ check('Chat Forget receives keyboard focus', await ev("document.activeElement.dataset.control==='forget'"));
+ await op17027Enter();
+ await until("document.body.dataset.view==='login'");
+ check('Forget clears the live header and stored token without writes', await ev(clearHeader + " && !sessionStorage.length") && await count()===0);
+ check('Forget announces neutral feedback', await ev(neutral + " && document.querySelector('#login [role=status]').innerText.includes('forgotten')"));
+ await cmd('Input.insertText', {text:'synthetic-reconnect'});
+ await op17027Enter();
+ await until("document.body.dataset.view==='term' && document.querySelector('#status').textContent==='live'");
+ await ev("window.__lateRead()");
+ await sleep(100);
+ check('obsolete poll rejection preserves the replacement session', await ev("document.body.dataset.view==='term' && !!sessionStorage.getItem('yak-viewer-token') && !document.querySelector('#login-error').textContent"));
+ check('reconnect reports the new live connection', await ev("!document.querySelector('#status').hidden && !document.querySelector('#login [role=status]').textContent.trim()"));
+ for (const outcome of ['confirmed', '401', 'uncertain', 'expired']) {
+  await freshIdentityFixture();
+  await ev("document.querySelector('#operator-login').checked=true;document.querySelector('#token').value='synthetic-session';document.querySelector('#login-form').requestSubmit()");
+  await until("document.body.dataset.operator==='true'");
+  if (outcome==='expired') {
+   await ev(`{
+    window.__announcements=[];
+    new MutationObserver(records=>{
+     for(const record of records) for(const node of record.addedNodes) {
+      if(node.textContent.trim()) window.__announcements.push(node.textContent);
+     }
+    }).observe(document.querySelector('#login [role=status]'),{subtree:true,childList:true});
+    window.__op.expired=true;
+    location.hash='#/b/brd_test';
+   }`);
+  } else {
+   await ev(`{ const original = window.fetch; window.__revokeCount=0;
+    window.fetch = (url, opts) => {
+     if(opts?.method==='DELETE' && String(url)==='/v1/credentials/cred_test') {
+      window.__revokeCount++;
+      if (${JSON.stringify(outcome)}==='401') return Promise.resolve(new Response(null,{status:401}));
+      if (${JSON.stringify(outcome)}==='uncertain') return Promise.reject(new Error('lost response'));
+     }
+     return original(url,opts);
+    };
+    document.querySelector('#operator-logout').focus();
+   }`);
+   await op17027Enter();
+  }
+  await until("document.body.dataset.view==='login'");
+  const message = await ev("document.querySelector('#login [role=status]').innerText");
+  if (outcome==='confirmed') check('confirmed revocation is neutral', await ev(neutral) && /revoked everywhere/i.test(message));
+  else if (outcome==='expired') check('fresh 401 ends operator session with a single visible error and zero writes', await count()===0 && /401/.test(message) && await ev(clearHeader + " && window.__announcements.length===1 && window.__announcements[0]===document.querySelector('#login-error').innerText"));
+  else check(`${outcome} revocation is unconfirmed`, /unconfirmed|could not confirm|may remain valid/i.test(message) && !/revoked everywhere/i.test(message));
+  if(outcome!=='expired') check(`${outcome} makes exactly one revoke attempt`, await ev("window.__revokeCount===1"));
+ }
 }
 async function identityNavigationCase() {
  let assertions = 0;
@@ -1829,6 +1896,7 @@ async function op17004PagehideCase() {
     await ev('window.__op004.waiting.shift()()');await until('!window.__op004.session.active');
    } else {
     await until('!window.__op004.session.active');
+    assert('release401 reports both outcomes',await ev("/revocation is unconfirmed/.test(document.querySelector('#login-error').innerText) && /Claim release failed/.test(document.querySelector('#login-error').innerText)"));
     assert('release401 sends no subsequent credential request',await ev('window.__op004.calls.length===1'));
    }
    assert(`${variant}: renewal loops stopped`,await ev('window.__op004.timers.length>=2'));
@@ -1842,7 +1910,7 @@ async function op17004PagehideCase() {
  assert('required variants executed',assertions>=18);assert('no unhandled browser exceptions',errors.length===0);
  console.log(`OP17-004 executed ${assertions} assertions across 4 fresh fixtures`);
 }
-const operatorCases = new Map([['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
+const operatorCases = new Map([['session-feedback', sessionFeedbackCase], ['token-feedback', tokenFeedbackCase], ['stale-gate', staleGateCase], ['gate-workspace', gateWorkspaceCase], ['gate-projection', gateProjectionCase], ['refresh-selection', refreshSelectionCase], ['OP17-004', op17004PagehideCase], ['OP17-028', op17028PreviewCase], ['OP17-032', op17032AutomaticRenewalCase], ['OP17-033', op17033ConflictCase], ['OP17-030', op17030ConfirmationValuesCase], ['OP17-027', op17027NativeEnterCase], ['OP17-026', op17026ConfirmationCase], ['OP17-031', op17031ConditionalLabelsCase], ['OP17-044', op17044WireCase], ['forum-operator', forumOperatorCase], ['OP17-024', op17024ProjectionRetryCase], ['OP17-013', op17013ProjectionCase], ['OP17-010', op17010StoreActorsCase], ['OP17-021', op17021ActorRetryCase], ['OP17-009', op17009ActorPaginationCase], ['OP17-036', briefGenerationCase], ['OP17-020', gateEvidenceCase], ['OP17-035', labelOpcodeCase], ['OP17-019', cosmeticReceiptCase], ['OP17-018', delayedDraftCase], ['OP17-007', refreshDiscoveryCase], ['OP17-006', openRaceCase], ['OP17-005', boardSwitchCase], ['OP17-003', identityNavigationCase], ['OP17-029', responseBodyFailureCase], ['OP17-042', renewalClaimViewCase]]);
 const selectedCase = process.env.OPERATOR_CASE;
 try {
  await cmd('Page.navigate',{url:ORIGIN+'/#/b/brd_test?ch=ops&t=th'});await until("!!document.querySelector('#operator-option') && !document.querySelector('#operator-option').hidden");
