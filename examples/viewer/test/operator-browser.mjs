@@ -1217,6 +1217,15 @@ async function gateProjectionCase() {
   const trace=await readProjection();
   console.log('Gate projection',variant,JSON.stringify(trace));
   check(variant+' task projection',trace.state===state && trace.revision===4 && trace.block===null && trace.flag===true);
+  if (variant==='label rejected') {
+   const refreshed = `document.querySelector('[aria-label="Task actions"] h3')?.textContent.endsWith(' · ready')`;
+   await until(refreshed);
+   check('partial approval reconciles the open workspace and keeps label recovery',
+    await ev(`document.querySelector('.op-thread select').value==='th' &&
+     !document.querySelector('.op-review').textContent.includes('waiting for review') &&
+     ![...document.querySelectorAll('.op-workspace button')].some(b=>['Approve and unblock','Request changes'].includes(b.textContent)) &&
+     document.querySelector('.op-receipts button')?.textContent==='Retry label only'`) && await count()===2);
+  }
   const changed=gate==='approved';
   check(variant+' conditional root and thread projections',trace.rootGate===gate && trace.threadGate===gate &&
    trace.rootRevision===(changed?2:1) && trace.threadRevision===trace.rootRevision);

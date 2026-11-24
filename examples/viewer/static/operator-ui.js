@@ -110,18 +110,26 @@ export function createOperatorUI({ session, read, route }) {
   }
   function pendingButtons(i, source, done) {
     const snapshot = current, version = sequence;
+    // The receipt survives navigation. Refresh only its own destination.
+    const refreshApprovedTask = () => {
+      if (i.kind === 'approve' && current?.B === snapshot.B &&
+          current.channel === snapshot.channel && current.threadId === snapshot.threadId && !session.ending)
+        return loadChannel(snapshot.channel, snapshot.threadId);
+    };
     source.disabled = true;
     const box = h('div', { class: 'op-pending', role: 'status' }); receipts.append(box);
     const execute = async () => {
       // A receipt owns an existing intent, independently of the visible view.
       if (!session.active || session.ending || i.generation !== session.generation || i.busy || i.done) return;
       if (!session.pending.has(i) && (!i.continuation || session.pending.size)) return;
+      const startingStep = i.index;
       box.replaceChildren('Sending…');
       try {
         await session.perform(i, { requeue: true });
         if (!session.active || session.ending || i.generation !== session.generation || !i.done) return;
         box.replaceChildren('Saved.');
         if (valid(snapshot, version)) { source.disabled = false; done?.(); await loadChannel(snapshot.channel, snapshot.thread?.id); }
+        else await refreshApprovedTask();
       } catch (e) {
         if (!session.active || i.generation !== session.generation) return;
         const cosmetic = i.index > 0;
@@ -138,6 +146,7 @@ export function createOperatorUI({ session, read, route }) {
         else {
           session.pending.delete(i); source.disabled = false;
         }
+        if (cosmetic && startingStep === 0) await refreshApprovedTask();
       }
     };
     execute();
