@@ -11,13 +11,15 @@ const TOASTS = { 'task.claimed': 'claimed', 'task.completed': 'completed', 'task
 export function wall(root, { boardId, route, threadHref }) {
   const filters = r => ({ ch: r.ch, agent: r.agent, label: r.label });
   let f = filters(route), restore = history.state?.lanes;
-  function setFilter(key, value, st) {
-    f[key] = value;
-    const [path, search] = location.hash.split('?');
-    const query = new URLSearchParams(search);
+  function setFilters(changes, st) {
+    const [path] = location.hash.split('?', 1);
+    const query = new URLSearchParams(location.hash.slice(path.length + 1));
     query.set('b', boardId);
-    if (value) query.set(key, value);
-    else query.delete(key);
+    for (const [key, value] of Object.entries(changes)) {
+      f[key] = value;
+      if (value) query.set(key, value);
+      else query.delete(key);
+    }
     history.replaceState({ ...history.state, lanes: null }, '', path + '?' + query);
     render(st);
   }
@@ -49,7 +51,7 @@ export function wall(root, { boardId, route, threadHref }) {
 
   function controls(st) {
     const sel = (key, first, options) => {
-      const s = h('select', { 'aria-label': first, onchange: e => setFilter(key, e.target.value, st) },
+      const s = h('select', { 'aria-label': first, onchange: e => setFilters({ [key]: e.target.value }, st) },
         h('option', { value: '' }, first), options.map(([v, l]) => h('option', { value: v }, l)));
       s.value = f[key];
       return s;
@@ -58,7 +60,7 @@ export function wall(root, { boardId, route, threadHref }) {
       sel('ch', 'All channels', st.S.channels.map((c) => [c.path, `${c.path}/`])),
       sel('agent', 'All agents', [...st.S.actors.values()].map((a) => [a.id, a.handle])),
       h('input', { type: 'search', placeholder: 'Label filter', title: 'Filter by label key or key:value', 'aria-label': 'Label filter', value: f.label,
-        oninput: e => setFilter('label', e.target.value.trim(), st) }));
+        oninput: e => setFilters({ label: e.target.value.trim() }, st) }));
   }
 
   function keep(st, t) {
@@ -117,7 +119,12 @@ export function wall(root, { boardId, route, threadHref }) {
   function render(st) {
     if (!st.S.board) return;
     if (!frame) {
-      frame = { head: h('header', { class: 'w-head' }), summary: h('div', { class: 'w-summary' }), bar: h('div', { class: 'w-bar' }), jump: laneMenu(), count: h('span', { class: 'w-count' }), cols: h('div', { class: 'w-cols', onclick: rememberCard, tabindex: '0', 'aria-label': 'Task lists; scroll horizontally for more states' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
+      const clear = h('button', { type: 'button', '--panel': '#fff', '--line': 'var(--w-line)', onclick: () => {
+        filterKey = '';
+        setFilters({ ch: '', agent: '', label: '' }, st);
+        frame.bar.querySelector('.w-filters select').focus({ preventScroll: true });
+      } }, 'Clear filters');
+      frame = { clear, head: h('header', { class: 'w-head' }), summary: h('div', { class: 'w-summary' }), bar: h('div', { class: 'w-bar' }), jump: laneMenu(), count: h('span', { class: 'w-count' }), cols: h('div', { class: 'w-cols', onclick: rememberCard, tabindex: '0', 'aria-label': 'Task lists; scroll horizontally for more states' }), toasts: h('div', { class: 'w-toasts', 'aria-live': 'polite' }) };
       root.replaceChildren(h('div', { class: 'w-wrap' }, frame.head, frame.summary, frame.bar, frame.cols), frame.toasts);
     }
     const active = document.activeElement;
@@ -136,12 +143,13 @@ export function wall(root, { boardId, route, threadHref }) {
     const key = `${st.S.channels.map((c) => c.path).join(',')}|${[...st.S.actors.keys()].join(',')}`;
     if (key !== filterKey) {
       filterKey = key;
-      frame.bar.replaceChildren(controls(st), frame.count, frame.jump);
-      if (active === frame.jump) frame.jump.focus({ preventScroll: true });
+      frame.bar.replaceChildren(controls(st), frame.count, frame.clear, frame.jump);
+      if (active === frame.jump || active === frame.clear) active.focus({ preventScroll: true });
     }
     const all = st.tasks(), shown = all.filter((t) => keep(st, t));
     frame.head.replaceChildren(h('h1', {}, `${st.S.board.name} · Lanes`), h('span', {}, 'Read-only'));
     frame.count.textContent = `Showing ${shown.length} of ${all.length} tasks`;
+    frame.clear.hidden = !(f.ch || f.agent || f.label);
     activity = createAgentActivity(st, ({ t }) => threadHref(t), status);
     frame.summary.replaceChildren(activity.root);
     activity.root.scrollTop = summaryTop;

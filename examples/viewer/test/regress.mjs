@@ -266,6 +266,30 @@ const state = () => ev(`JSON.stringify({ hash: location.hash, liveInDoc: documen
   rows: [...window.__live.querySelectorAll('#feed li')].map((l) => l.textContent), banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent,
   term: !document.getElementById('term').hidden, calls: window.__fake.calls })`).then(JSON.parse);
 
+async function checkClearLaneFilters(until) {
+  const hash = '#/board?b=brd_test&view=compact';
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?clear-filters' + hash });
+  await until("document.querySelectorAll('.w-card').length === 6");
+  const clear = "document.querySelector('.w-count + button')";
+  check('Unfiltered Lanes has no visible Clear filters action', await ev(`!${clear}?.getClientRects().length`));
+  await go(hash + '&ch=ops&agent=act_alice&label=unmatched');
+  check('Combined filters show zero of six tasks', await ev(`
+    document.querySelector('.w-count').textContent === 'Showing 0 of 6 tasks' &&
+    !document.querySelector('.w-card')`));
+  const offered = await ev(`${clear}?.textContent === 'Clear filters' && !!${clear}.getClientRects().length`);
+  check('Filtered Lanes offers Clear filters beside the count', offered);
+  if (!offered) return;
+  await ev(`${clear}.focus()`);
+  await cmd('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', text: '\r', windowsVirtualKeyCode: 13 });
+  await cmd('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13 });
+  check('Enter clears all three filters and retains the board, route and unrelated parameter', await ev(`
+    location.hash === ${JSON.stringify(hash)} && document.querySelectorAll('.w-card').length === 6 &&
+    document.querySelector('.w-count').textContent === 'Showing 6 of 6 tasks' &&
+    [...document.querySelectorAll('.w-filters select, .w-filters input')].every(el => el.value === '')`));
+  check('Clearing filters returns focus to the channel control', await ev(`
+    !${clear}?.getClientRects().length && document.activeElement === document.querySelector('.w-filters select')`));
+}
+
 // Exercise the lane menu with native type-ahead and Tab, then revisit a card.
 async function checkLaneJump(until) {
   await cmd('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -865,6 +889,7 @@ try {
 
   await checkLaneTouch(until);
   await checkLaneJump(until);
+  await checkClearLaneFilters(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));
