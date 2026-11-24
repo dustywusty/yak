@@ -12,6 +12,13 @@ export function createOperatorUI({ session, read, route }) {
   const drafts = new Map();
   const draftEdits = new WeakMap();
   const receipts = h('div', { class: 'op-receipts' });
+  const selectedReceipt = h('div', { class: 'op-receipts' });
+  // Keep its place in the persistent receipt list while the selected task shows it.
+  const receiptPosition = document.createComment('selected receipt');
+  function returnReceipt() {
+    if (selectedReceipt.firstChild) receiptPosition.replaceWith(selectedReceipt.firstChild);
+    selectedReceipt.remove();
+  }
   const guards = new WeakMap();
   const valid = (snapshot, version) => current === snapshot && sequence === version && snapshot?.generation === session.generation && session.active && !session.ending;
   function dismissConfirmations() { document.querySelectorAll('.op-confirm').forEach((d) => { d.close(); d.remove(); }); }
@@ -22,7 +29,7 @@ export function createOperatorUI({ session, read, route }) {
     b.disabled = session.pending.size > 0 || session.ending; return b;
   }
   function say(text) { if (status) status.textContent = text; }
-  function close() { sequence++; dismissConfirmations(); panel?.remove(); panel = null; current = null; opener?.focus(); }
+  function close() { sequence++; dismissConfirmations(); returnReceipt(); panel?.remove(); panel = null; current = null; opener?.focus(); }
   async function all(path, key, params = {}) {
     const out = []; let page_token;
     do { const p = await read('GET', path, { ...params, page_token, limit: 200 }); out.push(...(p[key] || [])); page_token = p.next_page_token; } while (page_token);
@@ -111,10 +118,10 @@ export function createOperatorUI({ session, read, route }) {
   function pendingButtons(i, source, done) {
     const snapshot = current, version = sequence;
     // The receipt survives navigation. Refresh only its own destination.
-    const refreshApprovedTask = () => {
+    const refreshApprovedTask = (partialReceipt) => {
       if (i.kind === 'approve' && current?.B === snapshot.B &&
           current.channel === snapshot.channel && current.threadId === snapshot.threadId && !session.ending)
-        return loadChannel(snapshot.channel, snapshot.threadId);
+        return loadChannel(snapshot.channel, snapshot.threadId, '', partialReceipt);
     };
     source.disabled = true;
     const box = h('div', { class: 'op-pending', role: 'status' }); receipts.append(box);
@@ -146,7 +153,7 @@ export function createOperatorUI({ session, read, route }) {
         else {
           session.pending.delete(i); source.disabled = false;
         }
-        if (cosmetic && startingStep === 0) await refreshApprovedTask();
+        if (cosmetic && startingStep === 0 && valid(snapshot, version)) await refreshApprovedTask(box);
       }
     };
     execute();
@@ -290,12 +297,13 @@ export function createOperatorUI({ session, read, route }) {
     return box;
   }
   function resetDestination() {
+    returnReceipt();
     review.replaceChildren();
     destination.replaceChildren(selectors);
     selectors.querySelector('.op-channel').replaceChildren();
     selectors.querySelector('.op-thread').replaceChildren();
   }
-  async function loadChannel(channel, threadId, notice = '') {
+  async function loadChannel(channel, threadId, notice = '', partialReceipt) {
     say(notice);
     const version = ++sequence;
     dismissConfirmations(); resetDestination();
@@ -345,6 +353,14 @@ export function createOperatorUI({ session, read, route }) {
         const canCreate = rights('task_manage') && session.server.capabilities?.includes('yak.tasks');
         content.append(rights('post') ? disclosure(canCreate ? 'Reply or create a task' : 'Reply', composer()) : composer());
       } else content.append(...entries, composer());
+      if (partialReceipt && task && partialReceipt.querySelector('button')) {
+        const heading = panel.querySelector('[aria-label="Task actions"] h3');
+        heading.after(selectedReceipt);
+        partialReceipt.replaceWith(receiptPosition);
+        selectedReceipt.append(partialReceipt);
+        partialReceipt.tabIndex = -1;
+        if (document.activeElement === document.body) partialReceipt.focus();
+      }
     } catch (e) {
       if (version === sequence && session.active && !session.ending) {
         const reason = e.status === 404 ? 'Item gone or hidden.' : `Read failed: ${e.message}`;
