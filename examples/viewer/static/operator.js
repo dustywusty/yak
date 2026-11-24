@@ -6,7 +6,10 @@ export function credentialRefusal(me, server, date) {
   if (me.delegation != null || c?.delegation_id != null) return 'Delegated credentials cannot enter operator mode.';
   if (!me.actor.id || !c?.id) return 'Missing actor or credential identity.';
   if (!c || !Array.isArray(c.scopes)) return 'Missing credential scopes.';
-  for (const s of c.scopes) if (!scopes.has(s)) return `Refused credential scope: ${s}`;
+  for (const s of c.scopes) {
+    if (s === '*') return 'This token grants all permissions (*). Request a token for your human account limited to this board, with only the permissions you need listed by name (such as read or post).';
+    if (!scopes.has(s)) return `Refused credential scope: ${s}`;
+  }
   if (!Array.isArray(c.board_ids) || !c.board_ids.length) return 'Refused credential board_ids: a board restriction is required.';
   const expiry = Date.parse(c.expires_at);
   if (!Number.isFinite(date) || !Number.isFinite(expiry) || expiry <= date || expiry - date > 43200000) return 'Refused expires_at: valid server time and a remaining lifetime of at most 12 hours are required.';
