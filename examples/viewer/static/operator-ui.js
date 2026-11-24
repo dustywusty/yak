@@ -61,6 +61,52 @@ export function createOperatorUI({ session, read, route }) {
     if (!valid(snapshot, version)) throw new Error('View changed. Review the task again.');
     return { task, thread: th.thread };
   }
+  function conflictFacts(task) {
+    return { state: task.state, assignee: task.assignee_actor_id ?? null, claim: task.current_claim?.actor_id ?? null,
+      brief_revision: task.brief_revision, revision: task.revision, direct_action_required: task.direct_action_required };
+  }
+  async function showConflict(box, intent, source, snapshot, version, statusCode) {
+    const here = () => valid(snapshot, version);
+    box.classList.add('op-conflict');
+    box.replaceChildren('Request rejected. Return to the original destination to review its current state.');
+    if (!here()) return;
+    source.after(box);
+    const before = intent.task && conflictFacts(intent.task);
+    const place = intent.task?.title || snapshot.thread?.title || snapshot.channel;
+    const heading = h('strong', {}, `${source.textContent} rejected · ${place}`);
+    const facts = h('div', {}, before ? 'Reading updated task…' : 'Review the current destination before trying again.');
+    const inspect = button(before ? 'Review updated task' : 'Review current destination', () => {
+      if (here()) loadChannel(snapshot.channel, snapshot.thread?.id);
+    });
+    const request = intent.steps[0];
+    const details = { status: statusCode, method: request.method, path: request.path };
+    const technical = h('pre', {});
+    box.replaceChildren(heading, facts, inspect, disclosure('Request details', technical));
+    technical.textContent = JSON.stringify(details, null, 2);
+    if (!before) return;
+    try {
+      const updated = await refreshTask();
+      if (!here()) return;
+      const after = conflictFacts(updated.task);
+      const who = (id) => snapshot.actors.find((a) => a.id === id)?.handle;
+      const person = (id, empty) => !id ? empty : who(id) ? `@${who(id)}` : 'Unknown actor';
+      const changes = [];
+      const compare = (name, old, now, format = String) => {
+        if (old !== now) changes.push(h('li', {}, `${name}: ${format(old)} → ${format(now)}`));
+      };
+      compare('Assignee', before.assignee, after.assignee, (id) => person(id, 'Unassigned'));
+      compare('State', before.state, after.state);
+      compare('Approval required', before.direct_action_required, after.direct_action_required, (v) => v === true ? 'Yes' : v === false ? 'No' : 'Unknown');
+      compare('Gate label', intent.labels?.gate, updated.thread.labels?.gate, (v) => v ?? 'No label');
+      compare('Gate reason', intent.task.block?.reason, updated.task.block?.reason, (v) => v ?? 'No reason');
+      compare('Claim holder', before.claim, after.claim, (id) => person(id, 'Unclaimed'));
+      compare('Brief revision', before.brief_revision, after.brief_revision);
+      facts.replaceChildren(changes.length ? h('ul', {}, changes) : 'The reviewed task facts are unchanged.');
+      technical.textContent = JSON.stringify({ ...details, before, current: after, previous_labels: intent.labels, current_labels: updated.thread.labels }, null, 2);
+    } catch {
+      if (here()) facts.textContent = 'The updated task could not be read. Review it again before acting.';
+    }
+  }
   function pendingButtons(i, source, done) {
     const snapshot = current, version = sequence;
     source.disabled = true;
@@ -78,6 +124,11 @@ export function createOperatorUI({ session, read, route }) {
       } catch (e) {
         if (!session.active || i.generation !== session.generation) return;
         const cosmetic = i.index > 0;
+        if (!cosmetic && [409, 412].includes(e.status)) {
+          session.pending.delete(i); source.disabled = false;
+          await showConflict(box, i, source, snapshot, version, e.status);
+          return;
+        }
         const message = e.status === 404 ? 'Item gone or hidden.' : `${e.problem?.code || 'Request failed'}: ${e.problem?.reason || e.message}${e.problem?.current_state || e.problem?.state ? `; state ${e.problem.current_state || e.problem.state}` : ''}`;
         box.replaceChildren(cosmetic ? `${i.kind === 'approve' ? 'Approved; label not updated' : 'Reply posted; label not updated'}. ${message}` : message);
         box.append(h('p', {}, `Pending destination: ${i.steps[i.index].method} ${i.steps[i.index].path}. Retry sends the original values.`));
@@ -85,16 +136,6 @@ export function createOperatorUI({ session, read, route }) {
         if (cosmetic || ambiguous) box.append(button(cosmetic ? 'Retry label only' : 'Retry same intent', execute));
         else {
           session.pending.delete(i); source.disabled = false;
-          if ([409, 412].includes(e.status)) {
-            if (!valid(snapshot, version)) { box.append(' Return to the original destination and review its current state before confirming a new action. No retry was sent.'); return; }
-            const before = i.task;
-            try {
-              const refreshed = await refreshTask(), after = refreshed?.task;
-              const values = (t) => t ? JSON.stringify({ state: t.state, assignee: t.assignee_actor_id, claim: t.current_claim?.actor_id || null, brief_revision: t.brief_revision, revision: t.revision, direct_action_required: t.direct_action_required }) : 'none';
-              box.append(h('pre', {}, `Previously read: ${values(before)}\nNow: ${values(after)}\nLabels previously: ${JSON.stringify(i.labels || {})}\nLabels now: ${JSON.stringify(refreshed?.thread.labels || {})}`), button('Review current state', () => valid(snapshot, version) && loadChannel(snapshot.channel, snapshot.thread?.id)));
-              box.append(' Review the current state and confirm a new action. No retry was sent.');
-            } catch { box.append(' Could not refresh; refresh before acting again.'); }
-          }
         }
       }
     };
