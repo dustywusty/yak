@@ -375,7 +375,7 @@ The extension depends on PAR-014 typed blocks, P2 tasks, and ADR-0021 inbox deli
   The caller owns the task. The registered runner is its assignee.
 - **CMD-008** For command-created tasks, the server MUST amend TASK-014 and TASK-021 with `origin: command` and call-message brief provenance.
   The initial brief copies canonical argument JSON and the command name from the call message.
-  The brief source has `source_kind: command`, `message_id`, and `message_revision`.
+  The brief source has `kind: command`, `message_id`, and `message_revision`.
 - **CMD-009** The server MUST protect authoritative call messages from ordinary edits or deletion with `409 task_root_protected`.
   Task-aware redaction MUST scrub their brief copies and cancel unfinished work. Root redaction also scrubs command briefs.
 - **CMD-010** The inbox producer MUST use `source_kind: command` and the stable call ID as `source_id`, with the call message and thread references.
