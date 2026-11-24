@@ -266,6 +266,74 @@ const state = () => ev(`JSON.stringify({ hash: location.hash, liveInDoc: documen
   rows: [...window.__live.querySelectorAll('#feed li')].map((l) => l.textContent), banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent,
   term: !document.getElementById('term').hidden, calls: window.__fake.calls })`).then(JSON.parse);
 
+async function checkChatJump(until) {
+  await cmd('Page.bringToFront');
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  const thread = '#/b/brd_test?ch=ops&t=thr_ops';
+  await cmd('Page.navigate', { url: ORIGIN + '/index.html?chat-jump' + thread });
+  await until("document.querySelector('.t-close')");
+  const key = async (key, code, modifiers = 0) => {
+    const event = { key, windowsVirtualKeyCode: code, modifiers };
+    await cmd('Input.dispatchKeyEvent', { ...event, type: 'keyDown', text: key === 'Enter' ? '\r' : '' });
+    await cmd('Input.dispatchKeyEvent', { ...event, type: 'keyUp' });
+  };
+  await ev("window.openerButton = document.querySelector('.t-jump'); window.openerButton.focus()");
+  await key('Enter', 13);
+  const selected = (label) => ev(`(() => {
+    const input = document.activeElement;
+    const list = document.getElementById(input.getAttribute('aria-controls'));
+    const options = list?.querySelectorAll('[role=option][aria-selected=true]');
+    return list?.role === 'listbox' && options.length === 1 && options[0].textContent === ${JSON.stringify(label)}
+      && options[0].id === input.getAttribute('aria-activedescendant') && options[0].getClientRects().length > 0;
+  })()`);
+  const named = await ev(`document.activeElement.role === 'combobox' && document.activeElement.matches(':focus-visible') &&
+    document.activeElement.getAttribute('aria-expanded') === 'true' && !!document.querySelector('.jump:modal[aria-label]')`);
+  check('Keyboard Jump opens a named modal with visible combobox focus', named);
+  if (!named) return;
+  const tree = (await cmd('Accessibility.getFullAXTree')).result.nodes;
+  check('Accessibility tree names the Jump dialog, combobox and result list',
+    ['dialog', 'combobox', 'listbox'].every(role => tree.some(n => n.role.value === role && n.name?.value)));
+  check('Jump limits its unfiltered list to twelve destinations', await ev("document.querySelectorAll('.jump [role=option]').length === 12"));
+  await key('ArrowDown', 40);
+  check('Down announces Mentions as the sole selected option', await selected('@ Mentions'));
+  await key('ArrowUp', 38);
+  check('Up announces Activity as the sole selected option', await selected('~ Activity'));
+  for (const modifiers of [0, 8]) {
+    await key('Tab', 9, modifiers);
+    check('Tab stays in Jump, modifiers ' + modifiers, await ev("document.activeElement.role === 'combobox'"));
+  }
+  await cmd('Input.insertText', { text: 'no such destination' });
+  await key('Enter', 13);
+  check('Empty Enter retains Jump with no active descendant or options', await ev(`location.hash === ${JSON.stringify(thread)} &&
+    document.activeElement.role === 'combobox' && !document.activeElement.hasAttribute('aria-activedescendant') &&
+    !document.querySelector('.jump [role=option]')`));
+  await ev("window.__addTask('jump_redraw', 'Jump redraw', 'ready')");
+  await until("!window.openerButton.isConnected");
+  await key('Escape', 27);
+  check('Escape restores the redrawn Jump button without closing its thread', await ev(`location.hash === ${JSON.stringify(thread)} &&
+    document.activeElement.matches('.t-jump:focus-visible') && !document.querySelector('.jump')`));
+  await ev("document.querySelector('.t-close').focus()");
+  await key('k', 75, 2);
+  await ev("window.oldClose = document.querySelector('.t-close'); window.__addTask('jump_again', 'Another redraw', 'ready')");
+  await until("!window.oldClose.isConnected");
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await cmd('Input.dispatchMouseEvent', { type, button: 'left', clickCount: 1, x: 2, y: 2 });
+  }
+  check('Backdrop restores the shortcut opener on the same thread', await ev(`location.hash === ${JSON.stringify(thread)} &&
+    document.activeElement.matches('.t-close') && !document.querySelector('.jump')`));
+  await key('k', 75, 4);
+  await cmd('Input.insertText', { text: 'mention' });
+  check('Typing filters to the selected Mentions destination', await selected('@ Mentions'));
+  await ev(`window.jumpRoutes = []; addEventListener('hashchange', e => window.jumpRoutes.push(new URL(e.newURL).hash));`);
+  await key('Enter', 13);
+  await until("location.hash.endsWith('?v=mentions') && !document.querySelector('.jump')");
+  await until('window.jumpRoutes.length > 0');
+  check('Enter navigates to Mentions once', await ev("window.jumpRoutes.length === 1 && window.jumpRoutes[0] === '#/b/brd_test?v=mentions'"));
+  await key('k', 75, 2);
+  await ev("document.querySelector('.jump [role=option]').click()");
+  await until("location.hash.endsWith('?v=activity') && !document.querySelector('.jump')");
+}
+
 async function checkClearLaneFilters(until) {
   const hash = '#/board?b=brd_test&view=compact';
   await cmd('Page.navigate', { url: ORIGIN + '/index.html?clear-filters' + hash });
@@ -890,6 +958,7 @@ try {
   await checkLaneTouch(until);
   await checkLaneJump(until);
   await checkClearLaneFilters(until);
+  await checkChatJump(until);
 
   const unexpected = errors.filter((e) => !e.includes('Activity feed: draw failed')); // that one is provoked above
   check('no uncaught exceptions or console errors', unexpected.length === 0, unexpected.join(' | '));
